@@ -49,13 +49,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if teacher:
         message = f"""👋 Welcome back, {teacher.get('name', 'Teacher')}!
 
-📚 *Commands:*
-/students - View your students
-/submissions - Pending submissions
-/assignments - View assignments with summaries
-/summary - Get class summary for an assignment
-/report - Download PDF report
-/help - Show all commands
+🎯 *Quick Start:*
+/menu - Main menu with all actions
+/messages - Reply to students
+/help - Interactive help guide
+
+📚 *More Commands:*
+/students, /submissions, /assignments, /report
 
 You will receive notifications for new submissions and can reply to students here."""
     else:
@@ -657,6 +657,9 @@ async def chat_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("❌ Error loading conversation.")
         return
     
+    # Store current conversation in context for quick reply
+    context.user_data['reply_to_student'] = student_id
+    
     # Get recent messages
     messages = list(db.messages.find({
         'student_id': student_id,
@@ -684,15 +687,110 @@ async def chat_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         text += "_No messages yet_\n\n"
     
-    text += f"📝 *To reply, use:*\n`/reply {student_id} Your message here`"
+    text += "💡 _Click Reply to send a message_"
     
     keyboard = [
+        [InlineKeyboardButton("✏️ Reply", callback_data=f"quickreply_{student_id}")],
         [InlineKeyboardButton("🗑️ Clear Conversation", callback_data=f"purge_{student_id}")],
         [InlineKeyboardButton("🔙 Back to Messages", callback_data="back_messages")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+
+async def quickreply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle quick reply button - prompts teacher to type a message"""
+    query = update.callback_query
+    await query.answer()
+    
+    if not query.data.startswith('quickreply_'):
+        return
+    
+    student_id = query.data.replace('quickreply_', '')
+    student = db.students.find_one({'student_id': student_id})
+    
+    if not student:
+        await query.edit_message_text("❌ Student not found.")
+        return
+    
+    # Store the student ID for the next message
+    context.user_data['reply_to_student'] = student_id
+    context.user_data['awaiting_reply'] = True
+    
+    await query.edit_message_text(
+        f"✏️ *Reply to {student.get('name')}*\n\n"
+        f"Type your message below and send it.\n"
+        f"Your next message will be sent to this student.\n\n"
+        f"_Or use /cancel to cancel_",
+        parse_mode='Markdown'
+    )
+
+async def handle_quick_reply_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle messages when awaiting a reply"""
+    if not context.user_data.get('awaiting_reply'):
+        return False
+    
+    student_id = context.user_data.get('reply_to_student')
+    if not student_id:
+        context.user_data['awaiting_reply'] = False
+        return False
+    
+    chat_id = update.effective_chat.id
+    teacher = db.teachers.find_one({'telegram_id': chat_id})
+    
+    if not teacher:
+        return False
+    
+    student = db.students.find_one({'student_id': student_id})
+    if not student:
+        await update.message.reply_text("❌ Student not found.")
+        context.user_data['awaiting_reply'] = False
+        return True
+    
+    # Verify teacher is linked to student
+    if teacher['teacher_id'] not in student.get('teachers', []):
+        await update.message.reply_text("⚠️ You are not assigned to this student.")
+        context.user_data['awaiting_reply'] = False
+        return True
+    
+    message_text = update.message.text
+    
+    # Save the message
+    db.messages.insert_one({
+        'student_id': student['student_id'],
+        'teacher_id': teacher['teacher_id'],
+        'message': message_text,
+        'from_student': False,
+        'timestamp': datetime.utcnow(),
+        'read': False,
+        'sent_via': 'telegram'
+    })
+    
+    # Clear the awaiting state
+    context.user_data['awaiting_reply'] = False
+    
+    # Offer to send another message
+    keyboard = [
+        [InlineKeyboardButton("✏️ Send Another", callback_data=f"quickreply_{student_id}")],
+        [InlineKeyboardButton("💬 Back to Messages", callback_data="back_messages")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        f"✅ *Message sent to {student.get('name')}!*\n\n"
+        f"_{message_text}_",
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+    
+    return True
+
+async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Cancel any pending operation"""
+    context.user_data['awaiting_reply'] = False
+    context.user_data['reply_to_student'] = None
+    
+    await update.message.reply_text("❌ Cancelled. Use /messages to start a new conversation.")
 
 async def reply_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Reply to a specific student: /reply STUDENT_ID message"""
@@ -926,9 +1024,15 @@ async def purge_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def handle_teacher_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Process replies to student messages"""
+    """Process replies to student messages or quick replies"""
     if db is None:
         return
+    
+    # First check if this is a quick reply (awaiting_reply mode)
+    if context.user_data.get('awaiting_reply'):
+        handled = await handle_quick_reply_message(update, context)
+        if handled:
+            return
     
     chat_id = update.effective_chat.id
     teacher = db.teachers.find_one({'telegram_id': chat_id})
@@ -984,40 +1088,312 @@ async def handle_teacher_reply(update: Update, context: ContextTypes.DEFAULT_TYP
     )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show help"""
-    help_text = """📚 *School Portal Bot - Teacher Commands*
-
-*Account:*
-/verify <id> - Link your teacher account
-/start - Welcome message
-
-*View Data:*
-/students - View your students list
-/submissions - Pending submissions
-/assignments - Assignments with summaries
-
-*Reports:*
-/summary - Assignment summary (same as /assignments)
-/report - Download PDF report for assignment
-
-*Communication:*
-/messages - View conversations with students
-/reply <id> <msg> - Reply to a specific student
-/purge <id> - Delete conversation with a student
-
-*Quick Reply:*
-• Reply directly to any notification to respond
-• Or use: `/reply STUDENT_ID Your message`
-
-*Notifications You'll Receive:*
-📬 New assignment submissions
-📱 Student messages
-✅ Review completion alerts
-
-*Web Portal:*
-Full features available at the web portal including detailed review interface."""
+    """Show interactive help menu"""
+    keyboard = [
+        [InlineKeyboardButton("📱 Getting Started", callback_data="help_start")],
+        [InlineKeyboardButton("💬 Messages & Replies", callback_data="help_messages")],
+        [InlineKeyboardButton("📝 Assignments & Reports", callback_data="help_assignments")],
+        [InlineKeyboardButton("📚 All Commands", callback_data="help_commands")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await update.message.reply_text(help_text, parse_mode='Markdown')
+    await update.message.reply_text(
+        "📚 *School Portal Bot Help*\n\n"
+        "Select a topic below:",
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+
+async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show main menu with quick actions"""
+    chat_id = update.effective_chat.id
+    teacher = db.teachers.find_one({'telegram_id': chat_id}) if db else None
+    
+    if not teacher:
+        keyboard = [
+            [InlineKeyboardButton("🔗 Link Account", callback_data="help_start")],
+            [InlineKeyboardButton("❓ Help", callback_data="help_commands")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(
+            "👋 *Welcome!*\n\n"
+            "You need to link your teacher account first.\n"
+            "Use `/verify YOUR_TEACHER_ID`",
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+        return
+    
+    # Get quick stats
+    unread_count = db.messages.count_documents({
+        'teacher_id': teacher['teacher_id'],
+        'from_student': True,
+        'read': False
+    })
+    
+    pending_submissions = 0
+    assignments = list(db.assignments.find({'teacher_id': teacher['teacher_id']}))
+    for a in assignments:
+        pending_submissions += db.submissions.count_documents({
+            'assignment_id': a['assignment_id'],
+            'status': {'$in': ['submitted', 'ai_reviewed']}
+        })
+    
+    unread_badge = f" 🔴{unread_count}" if unread_count > 0 else ""
+    pending_badge = f" 🟡{pending_submissions}" if pending_submissions > 0 else ""
+    
+    keyboard = [
+        [InlineKeyboardButton(f"💬 Messages{unread_badge}", callback_data="menu_messages"),
+         InlineKeyboardButton(f"📝 Submissions{pending_badge}", callback_data="menu_submissions")],
+        [InlineKeyboardButton("📚 Assignments", callback_data="menu_assignments"),
+         InlineKeyboardButton("👥 Students", callback_data="menu_students")],
+        [InlineKeyboardButton("📥 Download Report", callback_data="menu_report")],
+        [InlineKeyboardButton("❓ Help", callback_data="help_commands")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        f"👋 *Hi {teacher.get('name', 'Teacher')}!*\n\n"
+        f"📬 Unread messages: {unread_count}\n"
+        f"📝 Pending reviews: {pending_submissions}\n\n"
+        "What would you like to do?",
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+
+async def help_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle help menu selections"""
+    query = update.callback_query
+    await query.answer()
+    
+    back_button = [[InlineKeyboardButton("🔙 Back to Help Menu", callback_data="help_back")]]
+    
+    if query.data == "help_start":
+        text = """📱 *Getting Started*
+
+*1. Link Your Account*
+Send: `/verify YOUR_TEACHER_ID`
+
+Example: `/verify T001`
+
+*2. You'll Receive Notifications For:*
+• 📬 New student submissions
+• 📱 Student messages
+• ✅ Review completions
+
+*3. Access the Menu*
+Type /menu anytime for quick actions!"""
+        
+    elif query.data == "help_messages":
+        text = """💬 *Messages & Replies*
+
+*View Conversations:*
+Type /messages to see all student chats
+
+*Reply to Students:*
+1️⃣ *Easy way:* 
+   • Type /messages
+   • Click on a student
+   • Click "✏️ Reply"
+   • Type your message
+
+2️⃣ *Quick way:*
+   `/reply STUDENT_ID Your message`
+   
+3️⃣ *Reply to notification:*
+   Just reply to any message notification
+
+*Delete Conversations:*
+`/purge STUDENT_ID` or use the button"""
+        
+    elif query.data == "help_assignments":
+        text = """📝 *Assignments & Reports*
+
+*View Assignments:*
+/assignments - See all with submission stats
+
+*View Pending Work:*
+/submissions - Items needing review
+
+*Get Reports:*
+/report - Download PDF report
+
+*Assignment Summary Shows:*
+• Submission counts
+• Score statistics
+• Class performance
+• Areas of strength/weakness"""
+        
+    elif query.data == "help_commands" or query.data == "help_back":
+        if query.data == "help_back":
+            keyboard = [
+                [InlineKeyboardButton("📱 Getting Started", callback_data="help_start")],
+                [InlineKeyboardButton("💬 Messages & Replies", callback_data="help_messages")],
+                [InlineKeyboardButton("📝 Assignments & Reports", callback_data="help_assignments")],
+                [InlineKeyboardButton("📚 All Commands", callback_data="help_commands")]
+            ]
+            await query.edit_message_text(
+                "📚 *School Portal Bot Help*\n\n"
+                "Select a topic below:",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode='Markdown'
+            )
+            return
+        
+        text = """📚 *All Commands*
+
+*Account*
+/start - Welcome message
+/verify <id> - Link account
+/menu - Main menu
+
+*Students & Messages*
+/students - Your students list
+/messages - Conversations
+/reply <id> <msg> - Reply to student
+/purge <id> - Delete conversation
+/cancel - Cancel current action
+
+*Assignments*
+/assignments - View with stats
+/submissions - Pending reviews
+/summary - Class summary
+/report - Download PDF
+
+*Help*
+/help - This menu
+/menu - Quick actions"""
+        
+    else:
+        return
+    
+    reply_markup = InlineKeyboardMarkup(back_button)
+    await query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+
+async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle menu button clicks"""
+    query = update.callback_query
+    await query.answer()
+    
+    # Map menu callbacks to commands
+    if query.data == "menu_messages":
+        # Show messages inline
+        chat_id = update.effective_chat.id
+        teacher = db.teachers.find_one({'telegram_id': chat_id})
+        
+        if not teacher:
+            await query.edit_message_text("⚠️ Not linked. Use /verify")
+            return
+        
+        pipeline = [
+            {'$match': {'teacher_id': teacher['teacher_id']}},
+            {'$sort': {'timestamp': -1}},
+            {'$group': {
+                '_id': '$student_id',
+                'last_message': {'$first': '$message'},
+                'last_time': {'$first': '$timestamp'},
+                'from_student': {'$first': '$from_student'},
+                'unread': {'$sum': {'$cond': [{'$and': [{'$eq': ['$from_student', True]}, {'$eq': ['$read', False]}]}, 1, 0]}}
+            }},
+            {'$sort': {'last_time': -1}},
+            {'$limit': 10}
+        ]
+        
+        conversations = list(db.messages.aggregate(pipeline))
+        
+        if not conversations:
+            keyboard = [[InlineKeyboardButton("🔙 Back to Menu", callback_data="menu_back")]]
+            await query.edit_message_text(
+                "💬 No conversations yet.\n\nStudents can message you through the web portal.",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            return
+        
+        keyboard = []
+        message_text = "💬 *Your Conversations*\n\n"
+        
+        for conv in conversations:
+            student = db.students.find_one({'student_id': conv['_id']})
+            if not student:
+                continue
+            
+            name = student.get('name', 'Unknown')
+            student_id = student['student_id']
+            unread = conv.get('unread', 0)
+            
+            preview = conv.get('last_message', '')[:25] + ('...' if len(conv.get('last_message', '')) > 25 else '')
+            direction = '📥' if conv.get('from_student') else '📤'
+            unread_badge = f" 🔴{unread}" if unread > 0 else ""
+            
+            message_text += f"{direction} *{name}*{unread_badge}: _{preview}_\n"
+            
+            btn_label = f"💬 {name[:15]}" + (f" ({unread})" if unread > 0 else "")
+            keyboard.append([InlineKeyboardButton(btn_label, callback_data=f"chat_{student_id}")])
+        
+        keyboard.append([InlineKeyboardButton("🔙 Back to Menu", callback_data="menu_back")])
+        
+        await query.edit_message_text(
+            message_text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+        
+    elif query.data == "menu_back":
+        # Go back to main menu
+        chat_id = update.effective_chat.id
+        teacher = db.teachers.find_one({'telegram_id': chat_id})
+        
+        if not teacher:
+            await query.edit_message_text("⚠️ Session expired. Use /menu")
+            return
+        
+        unread_count = db.messages.count_documents({
+            'teacher_id': teacher['teacher_id'],
+            'from_student': True,
+            'read': False
+        })
+        
+        pending_submissions = 0
+        assignments = list(db.assignments.find({'teacher_id': teacher['teacher_id']}))
+        for a in assignments:
+            pending_submissions += db.submissions.count_documents({
+                'assignment_id': a['assignment_id'],
+                'status': {'$in': ['submitted', 'ai_reviewed']}
+            })
+        
+        unread_badge = f" 🔴{unread_count}" if unread_count > 0 else ""
+        pending_badge = f" 🟡{pending_submissions}" if pending_submissions > 0 else ""
+        
+        keyboard = [
+            [InlineKeyboardButton(f"💬 Messages{unread_badge}", callback_data="menu_messages"),
+             InlineKeyboardButton(f"📝 Submissions{pending_badge}", callback_data="menu_submissions")],
+            [InlineKeyboardButton("📚 Assignments", callback_data="menu_assignments"),
+             InlineKeyboardButton("👥 Students", callback_data="menu_students")],
+            [InlineKeyboardButton("📥 Download Report", callback_data="menu_report")],
+            [InlineKeyboardButton("❓ Help", callback_data="help_commands")]
+        ]
+        
+        await query.edit_message_text(
+            f"👋 *Hi {teacher.get('name', 'Teacher')}!*\n\n"
+            f"📬 Unread messages: {unread_count}\n"
+            f"📝 Pending reviews: {pending_submissions}\n\n"
+            "What would you like to do?",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+        
+    elif query.data == "menu_submissions":
+        await query.edit_message_text("Loading submissions... Use /submissions")
+        
+    elif query.data == "menu_assignments":
+        await query.edit_message_text("Loading assignments... Use /assignments")
+        
+    elif query.data == "menu_students":
+        await query.edit_message_text("Loading students... Use /students")
+        
+    elif query.data == "menu_report":
+        await query.edit_message_text("Loading reports... Use /report")
 
 async def handle_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle unknown commands"""
@@ -1036,6 +1412,7 @@ def main():
     # Command handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("verify", verify_teacher))
+    application.add_handler(CommandHandler("menu", menu_command))
     application.add_handler(CommandHandler("students", list_students))
     application.add_handler(CommandHandler("submissions", list_submissions))
     application.add_handler(CommandHandler("assignments", list_assignments))
@@ -1044,6 +1421,7 @@ def main():
     application.add_handler(CommandHandler("messages", messages_command))
     application.add_handler(CommandHandler("reply", reply_command))
     application.add_handler(CommandHandler("purge", purge_command))
+    application.add_handler(CommandHandler("cancel", cancel_command))
     application.add_handler(CommandHandler("help", help_command))
     
     # Callback handlers for inline buttons
@@ -1052,7 +1430,10 @@ def main():
     application.add_handler(CallbackQueryHandler(pdf_callback, pattern="^pdf_"))
     application.add_handler(CallbackQueryHandler(back_to_assignments, pattern="^back_assignments"))
     application.add_handler(CallbackQueryHandler(chat_callback, pattern="^chat_"))
+    application.add_handler(CallbackQueryHandler(quickreply_callback, pattern="^quickreply_"))
     application.add_handler(CallbackQueryHandler(purge_callback, pattern="^purge_|^confirm_purge_|^cancel_purge|^back_messages"))
+    application.add_handler(CallbackQueryHandler(help_callback, pattern="^help_"))
+    application.add_handler(CallbackQueryHandler(menu_callback, pattern="^menu_"))
     
     # Handle teacher replies
     application.add_handler(MessageHandler(
