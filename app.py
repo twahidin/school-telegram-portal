@@ -962,6 +962,201 @@ def teacher_assignments():
                          teacher=teacher,
                          assignments=assignments)
 
+@app.route('/teacher/assignment/<assignment_id>/summary')
+@teacher_required
+def assignment_summary(assignment_id):
+    """View detailed assignment summary with class statistics"""
+    teacher = Teacher.find_one({'teacher_id': session['teacher_id']})
+    assignment = Assignment.find_one({
+        'assignment_id': assignment_id,
+        'teacher_id': session['teacher_id']
+    })
+    
+    if not assignment:
+        return redirect(url_for('teacher_assignments'))
+    
+    # Get all students assigned to this teacher
+    all_students = list(Student.find({'teachers': session['teacher_id']}))
+    total_students = len(all_students)
+    
+    # Get all submissions for this assignment
+    submissions = list(Submission.find({
+        'assignment_id': assignment_id,
+        'status': {'$in': ['submitted', 'ai_reviewed', 'reviewed']}
+    }))
+    
+    submission_map = {s['student_id']: s for s in submissions}
+    
+    # Calculate statistics
+    reviewed_count = len([s for s in submissions if s['status'] == 'reviewed'])
+    pending_count = len(submissions) - reviewed_count
+    
+    scores = [s['final_marks'] for s in submissions if s.get('final_marks') is not None]
+    total_marks = assignment.get('total_marks', 100)
+    
+    avg_marks = sum(scores) / len(scores) if scores else 0
+    avg_score = (avg_marks / total_marks * 100) if total_marks > 0 else 0
+    pass_count = len([s for s in scores if s >= total_marks * 0.5])
+    pass_rate = (pass_count / len(scores) * 100) if scores else 0
+    
+    stats = {
+        'total_students': total_students,
+        'submitted': len(submissions),
+        'reviewed': reviewed_count,
+        'pending': pending_count,
+        'avg_marks': avg_marks,
+        'avg_score': avg_score,
+        'pass_rate': round(pass_rate)
+    }
+    
+    # Score distribution
+    score_distribution = {
+        'A (80-100%)': {'count': 0, 'percentage': 0, 'color': 'bg-success'},
+        'B (60-79%)': {'count': 0, 'percentage': 0, 'color': 'bg-info'},
+        'C (40-59%)': {'count': 0, 'percentage': 0, 'color': 'bg-warning'},
+        'D (0-39%)': {'count': 0, 'percentage': 0, 'color': 'bg-danger'}
+    }
+    
+    for score in scores:
+        pct = (score / total_marks * 100) if total_marks > 0 else 0
+        if pct >= 80:
+            score_distribution['A (80-100%)']['count'] += 1
+        elif pct >= 60:
+            score_distribution['B (60-79%)']['count'] += 1
+        elif pct >= 40:
+            score_distribution['C (40-59%)']['count'] += 1
+        else:
+            score_distribution['D (0-39%)']['count'] += 1
+    
+    if scores:
+        for grade in score_distribution:
+            score_distribution[grade]['percentage'] = round(score_distribution[grade]['count'] / len(scores) * 100)
+    
+    # Analyze class insights from AI feedback
+    insights = analyze_class_insights(submissions)
+    
+    # Build student submission list
+    student_submissions = []
+    for student in sorted(all_students, key=lambda x: x.get('name', '')):
+        sub = submission_map.get(student['student_id'])
+        percentage = 0
+        if sub and sub.get('final_marks') is not None:
+            percentage = (sub['final_marks'] / total_marks * 100) if total_marks > 0 else 0
+        
+        student_submissions.append({
+            'student': student,
+            'submission': sub,
+            'status': sub['status'] if sub else 'not_submitted',
+            'percentage': percentage
+        })
+    
+    # Sort: pending first, then by score descending
+    student_submissions.sort(key=lambda x: (
+        0 if x['status'] in ['submitted', 'ai_reviewed'] else 1,
+        -x['percentage']
+    ))
+    
+    return render_template('teacher_assignment_summary.html',
+                         teacher=teacher,
+                         assignment=assignment,
+                         stats=stats,
+                         score_distribution=score_distribution,
+                         insights=insights,
+                         student_submissions=student_submissions)
+
+def analyze_class_insights(submissions: list) -> dict:
+    """Analyze AI feedback to identify class-wide patterns"""
+    strengths = []
+    improvements = []
+    
+    question_stats = {}
+    
+    for sub in submissions:
+        ai_feedback = sub.get('ai_feedback', {})
+        questions = ai_feedback.get('questions', [])
+        
+        for q in questions:
+            q_num = q.get('question_num', 0)
+            if q_num not in question_stats:
+                question_stats[q_num] = {'correct': 0, 'incorrect': 0, 'total': 0}
+            
+            question_stats[q_num]['total'] += 1
+            if q.get('is_correct') == True:
+                question_stats[q_num]['correct'] += 1
+            elif q.get('is_correct') == False:
+                question_stats[q_num]['incorrect'] += 1
+    
+    for q_num, stats in sorted(question_stats.items()):
+        if stats['total'] > 0:
+            correct_pct = stats['correct'] / stats['total'] * 100
+            incorrect_pct = stats['incorrect'] / stats['total'] * 100
+            
+            if correct_pct >= 70:
+                strengths.append({
+                    'question': q_num,
+                    'correct': stats['correct'],
+                    'total': stats['total'],
+                    'percentage': round(correct_pct)
+                })
+            
+            if incorrect_pct >= 50:
+                improvements.append({
+                    'question': q_num,
+                    'incorrect': stats['incorrect'],
+                    'total': stats['total'],
+                    'percentage': round(incorrect_pct)
+                })
+    
+    # Sort by percentage
+    strengths.sort(key=lambda x: -x['percentage'])
+    improvements.sort(key=lambda x: -x['percentage'])
+    
+    return {
+        'strengths': strengths[:5],
+        'improvements': improvements[:5]
+    }
+
+@app.route('/teacher/assignment/<assignment_id>/report')
+@teacher_required
+def download_assignment_report(assignment_id):
+    """Generate and download consolidated PDF report for assignment"""
+    from utils.pdf_generator import generate_class_report_pdf
+    
+    assignment = Assignment.find_one({
+        'assignment_id': assignment_id,
+        'teacher_id': session['teacher_id']
+    })
+    
+    if not assignment:
+        return 'Assignment not found', 404
+    
+    teacher = Teacher.find_one({'teacher_id': session['teacher_id']})
+    
+    # Get all students and submissions
+    students = list(Student.find({'teachers': session['teacher_id']}))
+    students_map = {s['student_id']: s for s in students}
+    
+    submissions = list(Submission.find({
+        'assignment_id': assignment_id,
+        'status': {'$in': ['submitted', 'ai_reviewed', 'reviewed']}
+    }))
+    
+    try:
+        pdf_content = generate_class_report_pdf(assignment, submissions, students_map, teacher)
+        
+        filename = f"report_{assignment['title'].replace(' ', '_')}_{datetime.utcnow().strftime('%Y%m%d')}.pdf"
+        
+        return Response(
+            pdf_content,
+            mimetype='application/pdf',
+            headers={
+                'Content-Disposition': f'attachment; filename="{filename}"'
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error generating report: {e}")
+        return f'Error generating report: {str(e)}', 500
+
 @app.route('/teacher/assignments/create', methods=['GET', 'POST'])
 @teacher_required
 def create_assignment():

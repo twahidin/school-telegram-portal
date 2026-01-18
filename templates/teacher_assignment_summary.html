@@ -1,0 +1,267 @@
+{% extends "base.html" %}
+
+{% block title %}Assignment Summary - Teacher Portal{% endblock %}
+
+{% block navbar %}
+<nav class="navbar navbar-expand-lg navbar-dark teacher-nav">
+    <div class="container">
+        <a class="navbar-brand" href="{{ url_for('teacher_dashboard') }}">
+            <i class="bi bi-mortarboard-fill me-2"></i>Teacher Portal
+        </a>
+        <div class="navbar-nav ms-auto">
+            <a class="nav-link" href="{{ url_for('teacher_assignments') }}">Assignments</a>
+            <a class="nav-link" href="{{ url_for('teacher_logout') }}">Logout</a>
+        </div>
+    </div>
+</nav>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{{ url_for('teacher_assignments') }}">Assignments</a></li>
+                    <li class="breadcrumb-item active">Summary Report</li>
+                </ol>
+            </nav>
+            
+            <div class="d-flex justify-content-between align-items-start">
+                <div>
+                    <h3><i class="bi bi-bar-chart me-2"></i>{{ assignment.title }}</h3>
+                    <p class="text-muted mb-0">
+                        <span class="badge bg-primary me-2">{{ assignment.subject }}</span>
+                        Total Marks: {{ assignment.total_marks }}
+                        {% if assignment.due_date %} | Due: {{ assignment.due_date }}{% endif %}
+                    </p>
+                </div>
+                <div class="btn-group">
+                    <a href="{{ url_for('download_assignment_report', assignment_id=assignment.assignment_id) }}" class="btn btn-primary">
+                        <i class="bi bi-download me-1"></i>Download PDF Report
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Stats Cards -->
+    <div class="row g-3 mb-4">
+        <div class="col-md-3">
+            <div class="card text-center h-100">
+                <div class="card-body">
+                    <h2 class="text-primary mb-0">{{ stats.submitted }}</h2>
+                    <p class="text-muted mb-0">Submissions</p>
+                    <small class="text-muted">of {{ stats.total_students }} students</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-center h-100">
+                <div class="card-body">
+                    <h2 class="text-success mb-0">{{ stats.reviewed }}</h2>
+                    <p class="text-muted mb-0">Reviewed</p>
+                    <small class="text-muted">{{ stats.pending }} pending</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-center h-100">
+                <div class="card-body">
+                    <h2 class="{% if stats.avg_score >= 70 %}text-success{% elif stats.avg_score >= 50 %}text-warning{% else %}text-danger{% endif %} mb-0">
+                        {{ "%.1f"|format(stats.avg_score) }}%
+                    </h2>
+                    <p class="text-muted mb-0">Average Score</p>
+                    <small class="text-muted">{{ "%.1f"|format(stats.avg_marks) }}/{{ assignment.total_marks }}</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-center h-100">
+                <div class="card-body">
+                    <h2 class="text-info mb-0">{{ stats.pass_rate }}%</h2>
+                    <p class="text-muted mb-0">Pass Rate</p>
+                    <small class="text-muted">≥50% threshold</small>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row">
+        <!-- Left Column: Score Distribution & Insights -->
+        <div class="col-lg-5 mb-4">
+            <!-- Score Distribution -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-pie-chart me-2"></i>Score Distribution</h5>
+                </div>
+                <div class="card-body">
+                    {% for grade, data in score_distribution.items() %}
+                    <div class="mb-3">
+                        <div class="d-flex justify-content-between mb-1">
+                            <span>{{ grade }}</span>
+                            <span>{{ data.count }} students ({{ data.percentage }}%)</span>
+                        </div>
+                        <div class="progress" style="height: 25px;">
+                            <div class="progress-bar {{ data.color }}" style="width: {{ data.percentage }}%">
+                                {{ data.count }}
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            
+            <!-- Areas of Strength & Improvement -->
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-lightbulb me-2"></i>Class Insights</h5>
+                </div>
+                <div class="card-body">
+                    {% if insights.strengths %}
+                    <h6 class="text-success"><i class="bi bi-check-circle me-1"></i>Areas of Strength</h6>
+                    <ul class="list-unstyled mb-4">
+                        {% for item in insights.strengths %}
+                        <li class="mb-2">
+                            <div class="d-flex align-items-center">
+                                <span class="badge bg-success me-2">Q{{ item.question }}</span>
+                                {{ item.correct }}/{{ item.total }} correct ({{ item.percentage }}%)
+                            </div>
+                            <div class="progress mt-1" style="height: 6px;">
+                                <div class="progress-bar bg-success" style="width: {{ item.percentage }}%"></div>
+                            </div>
+                        </li>
+                        {% endfor %}
+                    </ul>
+                    {% endif %}
+                    
+                    {% if insights.improvements %}
+                    <h6 class="text-danger"><i class="bi bi-exclamation-triangle me-1"></i>Areas to Address</h6>
+                    <ul class="list-unstyled">
+                        {% for item in insights.improvements %}
+                        <li class="mb-2">
+                            <div class="d-flex align-items-center">
+                                <span class="badge bg-danger me-2">Q{{ item.question }}</span>
+                                {{ item.incorrect }}/{{ item.total }} need improvement ({{ item.percentage }}%)
+                            </div>
+                            <div class="progress mt-1" style="height: 6px;">
+                                <div class="progress-bar bg-danger" style="width: {{ item.percentage }}%"></div>
+                            </div>
+                        </li>
+                        {% endfor %}
+                    </ul>
+                    {% endif %}
+                    
+                    {% if not insights.strengths and not insights.improvements %}
+                    <p class="text-muted mb-0">Insights will appear after more submissions are graded.</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        
+        <!-- Right Column: Student List -->
+        <div class="col-lg-7 mb-4">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0"><i class="bi bi-people me-2"></i>Student Submissions</h5>
+                    <div class="btn-group btn-group-sm">
+                        <button class="btn btn-outline-secondary active" onclick="filterStudents('all')">All</button>
+                        <button class="btn btn-outline-success" onclick="filterStudents('reviewed')">Reviewed</button>
+                        <button class="btn btn-outline-warning" onclick="filterStudents('pending')">Pending</button>
+                        <button class="btn btn-outline-danger" onclick="filterStudents('not_submitted')">Not Submitted</button>
+                    </div>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive" style="max-height: 600px; overflow-y: auto;">
+                        <table class="table table-hover mb-0" id="students-table">
+                            <thead class="table-light sticky-top">
+                                <tr>
+                                    <th>Student</th>
+                                    <th>Class</th>
+                                    <th>Status</th>
+                                    <th>Score</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for item in student_submissions %}
+                                <tr data-status="{{ item.status }}">
+                                    <td>
+                                        <strong>{{ item.student.name }}</strong>
+                                        <br><small class="text-muted">{{ item.student.student_id }}</small>
+                                    </td>
+                                    <td>{{ item.student.class }}</td>
+                                    <td>
+                                        {% if item.status == 'reviewed' %}
+                                        <span class="badge bg-success">Reviewed</span>
+                                        {% elif item.status == 'ai_reviewed' %}
+                                        <span class="badge bg-info">AI Reviewed</span>
+                                        {% elif item.status == 'submitted' %}
+                                        <span class="badge bg-warning text-dark">Pending</span>
+                                        {% else %}
+                                        <span class="badge bg-secondary">Not Submitted</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if item.submission and item.submission.final_marks is not none %}
+                                        <span class="{% if item.percentage >= 70 %}text-success{% elif item.percentage >= 50 %}text-warning{% else %}text-danger{% endif %} fw-bold">
+                                            {{ item.submission.final_marks }}/{{ assignment.total_marks }}
+                                        </span>
+                                        <br><small class="text-muted">{{ "%.0f"|format(item.percentage) }}%</small>
+                                        {% else %}
+                                        <span class="text-muted">-</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if item.submission %}
+                                        <a href="{{ url_for('review_submission', submission_id=item.submission.submission_id) }}" 
+                                           class="btn btn-sm btn-outline-primary">
+                                            <i class="bi bi-eye"></i>
+                                        </a>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.sticky-top {
+    background: white;
+    z-index: 10;
+}
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function filterStudents(status) {
+    const rows = document.querySelectorAll('#students-table tbody tr');
+    const buttons = document.querySelectorAll('.btn-group .btn');
+    
+    buttons.forEach(btn => btn.classList.remove('active'));
+    event.target.classList.add('active');
+    
+    rows.forEach(row => {
+        const rowStatus = row.dataset.status;
+        
+        if (status === 'all') {
+            row.style.display = '';
+        } else if (status === 'reviewed') {
+            row.style.display = rowStatus === 'reviewed' ? '' : 'none';
+        } else if (status === 'pending') {
+            row.style.display = ['submitted', 'ai_reviewed'].includes(rowStatus) ? '' : 'none';
+        } else if (status === 'not_submitted') {
+            row.style.display = rowStatus === 'not_submitted' ? '' : 'none';
+        }
+    });
+}
+</script>
+{% endblock %}

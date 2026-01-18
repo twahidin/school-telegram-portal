@@ -294,6 +294,287 @@ def generate_feedback_pdf(submission: dict, assignment: dict, student: dict) -> 
     """Legacy function - redirects to generate_review_pdf"""
     return generate_review_pdf(submission, assignment, student)
 
+def generate_class_report_pdf(assignment: dict, submissions: list, students_map: dict, teacher: dict = None) -> bytes:
+    """
+    Generate a comprehensive class report for an assignment
+    
+    Args:
+        assignment: Assignment document
+        submissions: List of all submissions
+        students_map: Dictionary mapping student_id to student document
+        teacher: Teacher document
+    
+    Returns:
+        PDF content as bytes
+    """
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=1.5*cm,
+        leftMargin=1.5*cm,
+        topMargin=1.5*cm,
+        bottomMargin=1.5*cm
+    )
+    
+    styles = get_styles()
+    story = []
+    
+    total_marks = assignment.get('total_marks', 100)
+    total_students = len(students_map)
+    
+    # ==================== PAGE 1: SUMMARY ====================
+    
+    # Title
+    story.append(Paragraph("📊 Class Assignment Report", styles['Title_Custom']))
+    story.append(Spacer(1, 5))
+    
+    # Assignment info box
+    info_data = [
+        ['Assignment:', assignment.get('title', 'Untitled'), 'Subject:', assignment.get('subject', 'N/A')],
+        ['Teacher:', teacher.get('name', 'N/A') if teacher else 'N/A', 'Total Marks:', str(total_marks)],
+        ['Date:', datetime.utcnow().strftime('%d %B %Y'), 'Students:', str(total_students)]
+    ]
+    
+    info_table = Table(info_data, colWidths=[2.5*cm, 5.5*cm, 2.5*cm, 5.5*cm])
+    info_table.setStyle(TableStyle([
+        ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+        ('FONTNAME', (2, 0), (2, -1), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 9),
+        ('BACKGROUND', (0, 0), (-1, -1), LIGHT_GRAY),
+        ('BOX', (0, 0), (-1, -1), 1, BORDER_COLOR),
+        ('GRID', (0, 0), (-1, -1), 0.5, BORDER_COLOR),
+        ('PADDING', (0, 0), (-1, -1), 6),
+    ]))
+    story.append(info_table)
+    story.append(Spacer(1, 20))
+    
+    # Calculate statistics
+    scores = [s['final_marks'] for s in submissions if s.get('final_marks') is not None]
+    reviewed_count = len([s for s in submissions if s['status'] == 'reviewed'])
+    
+    if scores:
+        avg_score = sum(scores) / len(scores)
+        min_score = min(scores)
+        max_score = max(scores)
+        pass_count = len([s for s in scores if s >= total_marks * 0.5])
+        pass_rate = pass_count / len(scores) * 100
+    else:
+        avg_score = min_score = max_score = pass_rate = 0
+        pass_count = 0
+    
+    # Stats summary
+    story.append(Paragraph("📈 Performance Summary", styles['Heading_Custom']))
+    
+    stats_data = [
+        ['Metric', 'Value', 'Metric', 'Value'],
+        ['Submissions', f'{len(submissions)}/{total_students}', 'Reviewed', str(reviewed_count)],
+        ['Average Score', f'{avg_score:.1f}/{total_marks} ({avg_score/total_marks*100:.0f}%)' if total_marks > 0 else 'N/A', 
+         'Pass Rate', f'{pass_rate:.0f}%'],
+        ['Highest', f'{max_score}/{total_marks}' if scores else 'N/A',
+         'Lowest', f'{min_score}/{total_marks}' if scores else 'N/A']
+    ]
+    
+    stats_table = Table(stats_data, colWidths=[4*cm, 4*cm, 4*cm, 4*cm])
+    stats_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), PRIMARY_COLOR),
+        ('TEXTCOLOR', (0, 0), (-1, 0), white),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTNAME', (0, 1), (0, -1), 'Helvetica-Bold'),
+        ('FONTNAME', (2, 1), (2, -1), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 9),
+        ('ALIGN', (1, 0), (1, -1), 'CENTER'),
+        ('ALIGN', (3, 0), (3, -1), 'CENTER'),
+        ('BOX', (0, 0), (-1, -1), 1, BORDER_COLOR),
+        ('GRID', (0, 0), (-1, -1), 0.5, BORDER_COLOR),
+        ('PADDING', (0, 0), (-1, -1), 8),
+    ]))
+    story.append(stats_table)
+    story.append(Spacer(1, 20))
+    
+    # Score distribution
+    story.append(Paragraph("📊 Score Distribution", styles['Heading_Custom']))
+    
+    distribution = {'A (80-100%)': 0, 'B (60-79%)': 0, 'C (40-59%)': 0, 'D (0-39%)': 0}
+    for score in scores:
+        pct = (score / total_marks * 100) if total_marks > 0 else 0
+        if pct >= 80:
+            distribution['A (80-100%)'] += 1
+        elif pct >= 60:
+            distribution['B (60-79%)'] += 1
+        elif pct >= 40:
+            distribution['C (40-59%)'] += 1
+        else:
+            distribution['D (0-39%)'] += 1
+    
+    dist_data = [['Grade', 'Count', 'Percentage']]
+    colors = {'A': SUCCESS_COLOR, 'B': HexColor('#17a2b8'), 'C': WARNING_COLOR, 'D': DANGER_COLOR}
+    
+    for grade, count in distribution.items():
+        pct = (count / len(scores) * 100) if scores else 0
+        dist_data.append([grade, str(count), f'{pct:.0f}%'])
+    
+    dist_table = Table(dist_data, colWidths=[5*cm, 3*cm, 3*cm])
+    dist_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), PRIMARY_COLOR),
+        ('TEXTCOLOR', (0, 0), (-1, 0), white),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 9),
+        ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
+        ('BOX', (0, 0), (-1, -1), 1, BORDER_COLOR),
+        ('GRID', (0, 0), (-1, -1), 0.5, BORDER_COLOR),
+        ('PADDING', (0, 0), (-1, -1), 6),
+    ]))
+    story.append(dist_table)
+    story.append(Spacer(1, 20))
+    
+    # Analyze class insights
+    strengths, improvements = analyze_feedback_patterns(submissions)
+    
+    if strengths or improvements:
+        story.append(Paragraph("💡 Class Insights", styles['Heading_Custom']))
+        
+        if strengths:
+            story.append(Paragraph("<b>✅ Areas of Strength:</b>", styles['Body_Custom']))
+            for s in strengths[:5]:
+                story.append(Paragraph(f"• Question {s['q']}: {s['correct']}/{s['total']} correct ({s['pct']:.0f}%)", styles['Body_Custom']))
+            story.append(Spacer(1, 10))
+        
+        if improvements:
+            story.append(Paragraph("<b>⚠️ Areas Needing Attention:</b>", styles['Body_Custom']))
+            for i in improvements[:5]:
+                story.append(Paragraph(f"• Question {i['q']}: {i['incorrect']}/{i['total']} need improvement ({i['pct']:.0f}%)", styles['Body_Custom']))
+    
+    # ==================== PAGE 2: STUDENT LIST ====================
+    story.append(PageBreak())
+    story.append(Paragraph("👥 Individual Student Results", styles['Title_Custom']))
+    story.append(Spacer(1, 10))
+    
+    # Sort submissions by score (highest first), then by name
+    sorted_submissions = []
+    for student_id, student in students_map.items():
+        sub = next((s for s in submissions if s['student_id'] == student_id), None)
+        sorted_submissions.append({
+            'student': student,
+            'submission': sub,
+            'score': sub.get('final_marks') if sub else None
+        })
+    
+    sorted_submissions.sort(key=lambda x: (x['score'] is None, -(x['score'] or 0)))
+    
+    # Student results table
+    student_data = [['#', 'Student Name', 'Class', 'Status', 'Score', 'Grade']]
+    
+    for idx, item in enumerate(sorted_submissions, 1):
+        student = item['student']
+        sub = item['submission']
+        
+        name = student.get('name', 'Unknown')[:25]
+        cls = student.get('class', 'N/A')
+        
+        if sub:
+            if sub['status'] == 'reviewed':
+                status = 'Reviewed'
+            elif sub['status'] == 'ai_reviewed':
+                status = 'AI Reviewed'
+            else:
+                status = 'Pending'
+            
+            if sub.get('final_marks') is not None:
+                score = f"{sub['final_marks']}/{total_marks}"
+                pct = (sub['final_marks'] / total_marks * 100) if total_marks > 0 else 0
+                grade = get_grade(pct)
+            else:
+                score = '-'
+                grade = '-'
+        else:
+            status = 'Not Submitted'
+            score = '-'
+            grade = '-'
+        
+        student_data.append([str(idx), name, cls, status, score, grade])
+    
+    # Create table (split if too many students)
+    student_table = Table(student_data, colWidths=[1*cm, 5*cm, 2*cm, 3*cm, 2.5*cm, 2*cm])
+    student_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), PRIMARY_COLOR),
+        ('TEXTCOLOR', (0, 0), (-1, 0), white),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 8),
+        ('ALIGN', (0, 0), (0, -1), 'CENTER'),
+        ('ALIGN', (3, 0), (-1, -1), 'CENTER'),
+        ('BOX', (0, 0), (-1, -1), 1, BORDER_COLOR),
+        ('GRID', (0, 0), (-1, -1), 0.5, BORDER_COLOR),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [white, LIGHT_GRAY]),
+        ('PADDING', (0, 0), (-1, -1), 4),
+    ]))
+    story.append(student_table)
+    
+    # Footer
+    story.append(Spacer(1, 30))
+    story.append(HRFlowable(width="100%", thickness=1, color=BORDER_COLOR))
+    story.append(Spacer(1, 5))
+    story.append(Paragraph(
+        f"Generated: {datetime.utcnow().strftime('%d %B %Y, %H:%M UTC')} | Teacher: {teacher.get('name', 'N/A') if teacher else 'N/A'}",
+        styles['Footer']
+    ))
+    
+    try:
+        doc.build(story)
+        buffer.seek(0)
+        return buffer.getvalue()
+    except Exception as e:
+        logger.error(f"Error generating class report: {e}")
+        raise
+
+def analyze_feedback_patterns(submissions: list) -> tuple:
+    """Analyze submission feedback to find patterns"""
+    question_stats = {}
+    
+    for sub in submissions:
+        ai_feedback = sub.get('ai_feedback', {})
+        questions = ai_feedback.get('questions', [])
+        
+        for q in questions:
+            q_num = q.get('question_num', 0)
+            if q_num not in question_stats:
+                question_stats[q_num] = {'correct': 0, 'incorrect': 0, 'total': 0}
+            
+            question_stats[q_num]['total'] += 1
+            if q.get('is_correct') == True:
+                question_stats[q_num]['correct'] += 1
+            elif q.get('is_correct') == False:
+                question_stats[q_num]['incorrect'] += 1
+    
+    strengths = []
+    improvements = []
+    
+    for q_num, stats in question_stats.items():
+        if stats['total'] > 0:
+            correct_pct = stats['correct'] / stats['total'] * 100
+            incorrect_pct = stats['incorrect'] / stats['total'] * 100
+            
+            if correct_pct >= 70:
+                strengths.append({
+                    'q': q_num,
+                    'correct': stats['correct'],
+                    'total': stats['total'],
+                    'pct': correct_pct
+                })
+            
+            if incorrect_pct >= 50:
+                improvements.append({
+                    'q': q_num,
+                    'incorrect': stats['incorrect'],
+                    'total': stats['total'],
+                    'pct': incorrect_pct
+                })
+    
+    strengths.sort(key=lambda x: -x['pct'])
+    improvements.sort(key=lambda x: -x['pct'])
+    
+    return strengths, improvements
+
 def generate_batch_feedback_pdf(submissions: list, assignment: dict, students_map: dict, teacher: dict = None) -> bytes:
     """
     Generate a batch PDF with feedback for multiple students
