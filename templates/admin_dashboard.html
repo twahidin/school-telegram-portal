@@ -338,6 +338,7 @@
                                             <th>Subjects</th>
                                             <th>Telegram</th>
                                             <th>Students</th>
+                                            <th>Actions</th>
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -355,6 +356,13 @@
                                                 {% endif %}
                                             </td>
                                             <td>{{ t.student_count or 0 }}</td>
+                                            <td>
+                                                <button class="btn btn-outline-warning btn-sm reset-teacher-pwd-btn" 
+                                                        data-teacher-id="{{ t.teacher_id }}" data-teacher-name="{{ t.name }}"
+                                                        title="Reset Password">
+                                                    <i class="bi bi-key"></i>
+                                                </button>
+                                            </td>
                                         </tr>
                                         {% endfor %}
                                     </tbody>
@@ -1214,6 +1222,65 @@
                             <code style="font-size: 1.2rem; user-select: all;">${data.new_password}</code>
                         </div>
                         <p class="text-muted small">Please share this password with the student securely.</p>
+                    </div>
+                `;
+                document.getElementById('reset-password-footer').innerHTML = `
+                    <button type="button" class="btn btn-primary" data-bs-dismiss="modal">Done</button>
+                `;
+            } else {
+                alert(data.error || 'Password reset failed');
+            }
+        } catch (e) {
+            console.error('Password reset failed:', e);
+            alert('Password reset failed');
+        }
+    }
+    
+    // Teacher password reset
+    let resetTeacherId = null;
+    
+    document.querySelectorAll('.reset-teacher-pwd-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            resetTeacherId = btn.dataset.teacherId;
+            const teacherName = btn.dataset.teacherName;
+            
+            document.getElementById('reset-password-body').innerHTML = `
+                <p>Reset password for teacher:</p>
+                <p><strong>${teacherName}</strong> (<code>${resetTeacherId}</code>)</p>
+                <p class="text-muted small mb-0">The password will be reset to the teacher ID: <code>${resetTeacherId}</code></p>
+            `;
+            document.getElementById('reset-password-footer').innerHTML = `
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-warning" id="confirm-reset-teacher-btn">Reset Password</button>
+            `;
+            
+            document.getElementById('confirm-reset-teacher-btn').addEventListener('click', confirmResetTeacherPassword);
+            resetPasswordModal.show();
+        });
+    });
+    
+    async function confirmResetTeacherPassword() {
+        if (!resetTeacherId) return;
+        
+        try {
+            const response = await fetch('/admin/reset_teacher_password', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ teacher_id: resetTeacherId })
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                document.getElementById('reset-password-body').innerHTML = `
+                    <div class="text-center">
+                        <i class="bi bi-check-circle-fill text-success" style="font-size: 3rem;"></i>
+                        <h5 class="mt-3">Password Reset Successful!</h5>
+                        <p>New password for <strong>${resetTeacherId}</strong>:</p>
+                        <div class="alert alert-warning">
+                            <code style="font-size: 1.2rem; user-select: all;">${data.new_password}</code>
+                        </div>
+                        <p class="text-muted small">Please share this password with the teacher securely.</p>
                     </div>
                 `;
                 document.getElementById('reset-password-footer').innerHTML = `

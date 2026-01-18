@@ -99,6 +99,33 @@
                     </div>
                 </div>
                 
+                <!-- Change Password -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-key me-2"></i>Change Password</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label class="form-label">Current Password</label>
+                                    <input type="password" class="form-control" id="current_password" placeholder="Enter current password">
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label class="form-label">New Password</label>
+                                    <input type="password" class="form-control" id="new_password" placeholder="Enter new password">
+                                </div>
+                            </div>
+                        </div>
+                        <button type="button" class="btn btn-warning" id="change-password-btn">
+                            <i class="bi bi-key me-1"></i>Change Password
+                        </button>
+                        <div id="password-result" class="mt-2"></div>
+                    </div>
+                </div>
+                
                 <!-- Telegram Integration -->
                 <div class="card mb-4">
                     <div class="card-header">
@@ -187,6 +214,85 @@
                     </button>
                 </div>
             </form>
+            
+            <!-- Manage My Classes (outside main form) -->
+            <div class="card mb-4 mt-4">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-collection me-2"></i>My Classes</h5>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted">Select which classes you teach. Students in these classes will be assigned to you.</p>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">Assign Class to Yourself</label>
+                        <div class="input-group">
+                            <select class="form-select" id="assign-class-select">
+                                <option value="">Select a class...</option>
+                                {% for c in classes %}
+                                <option value="{{ c.class_id }}">{{ c.class_id }}{% if c.name and c.name != c.class_id %} ({{ c.name }}){% endif %}</option>
+                                {% endfor %}
+                            </select>
+                            <button type="button" class="btn btn-primary" id="assign-class-btn">
+                                <i class="bi bi-plus-lg"></i> Assign
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">Currently Assigned Classes</label>
+                        <div id="my-classes-list">
+                            {% if teacher.classes %}
+                            {% for cls in teacher.classes %}
+                            <span class="badge bg-info me-1 mb-1 d-inline-flex align-items-center" style="font-size: 0.9rem;">
+                                {{ cls }}
+                                <button type="button" class="btn-close btn-close-white ms-2 remove-class-btn" 
+                                        data-class-id="{{ cls }}" style="font-size: 0.6rem;"></button>
+                            </span>
+                            {% endfor %}
+                            {% else %}
+                            <span class="text-muted">No classes assigned</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div id="class-result"></div>
+                </div>
+            </div>
+            
+            <!-- Add Students -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-person-plus me-2"></i>Add Students</h5>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted">Add students to your classes. They will automatically be linked to you as their teacher.</p>
+                    
+                    <form id="add-student-form">
+                        <div class="row">
+                            <div class="col-md-4 mb-3">
+                                <label class="form-label">Student ID *</label>
+                                <input type="text" class="form-control" id="student_id" placeholder="e.g., S001" required>
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <label class="form-label">Name *</label>
+                                <input type="text" class="form-control" id="student_name" placeholder="Full name" required>
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <label class="form-label">Class</label>
+                                <select class="form-select" id="student_class">
+                                    <option value="">No class</option>
+                                    {% for c in classes %}
+                                    <option value="{{ c.class_id }}">{{ c.class_id }}{% if c.name and c.name != c.class_id %} ({{ c.name }}){% endif %}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        </div>
+                        <button type="submit" class="btn btn-success">
+                            <i class="bi bi-plus-circle me-1"></i>Add Student
+                        </button>
+                    </form>
+                    <div id="add-student-result" class="mt-2"></div>
+                </div>
+            </div>
         </div>
         
         <div class="col-lg-4">
@@ -214,4 +320,130 @@
         </div>
     </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Change Password
+    document.getElementById('change-password-btn').addEventListener('click', async () => {
+        const currentPassword = document.getElementById('current_password').value;
+        const newPassword = document.getElementById('new_password').value;
+        const resultDiv = document.getElementById('password-result');
+        
+        if (!currentPassword || !newPassword) {
+            resultDiv.innerHTML = '<div class="alert alert-warning">Please enter both current and new password</div>';
+            return;
+        }
+        
+        if (newPassword.length < 4) {
+            resultDiv.innerHTML = '<div class="alert alert-warning">New password must be at least 4 characters</div>';
+            return;
+        }
+        
+        try {
+            const response = await fetch('/teacher/change_password', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ current_password: currentPassword, new_password: newPassword })
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                resultDiv.innerHTML = '<div class="alert alert-success"><i class="bi bi-check-circle me-1"></i>Password changed successfully!</div>';
+                document.getElementById('current_password').value = '';
+                document.getElementById('new_password').value = '';
+            } else {
+                resultDiv.innerHTML = `<div class="alert alert-danger"><i class="bi bi-x-circle me-1"></i>${data.error || 'Failed to change password'}</div>`;
+            }
+        } catch (e) {
+            resultDiv.innerHTML = '<div class="alert alert-danger">Error changing password</div>';
+        }
+    });
+    
+    // Assign Class to Self
+    document.getElementById('assign-class-btn').addEventListener('click', async () => {
+        const classId = document.getElementById('assign-class-select').value;
+        const resultDiv = document.getElementById('class-result');
+        
+        if (!classId) {
+            resultDiv.innerHTML = '<div class="alert alert-warning">Please select a class</div>';
+            return;
+        }
+        
+        try {
+            const response = await fetch('/teacher/assign_class', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ class_id: classId })
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                location.reload();
+            } else {
+                resultDiv.innerHTML = `<div class="alert alert-danger">${data.error || 'Failed to assign class'}</div>`;
+            }
+        } catch (e) {
+            resultDiv.innerHTML = '<div class="alert alert-danger">Error assigning class</div>';
+        }
+    });
+    
+    // Remove Class from Self
+    document.querySelectorAll('.remove-class-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const classId = btn.dataset.classId;
+            
+            try {
+                const response = await fetch('/teacher/remove_class', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ class_id: classId })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    location.reload();
+                } else {
+                    alert(data.error || 'Failed to remove class');
+                }
+            } catch (e) {
+                alert('Error removing class');
+            }
+        });
+    });
+    
+    // Add Student
+    document.getElementById('add-student-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const resultDiv = document.getElementById('add-student-result');
+        
+        const data = {
+            student_id: document.getElementById('student_id').value,
+            name: document.getElementById('student_name').value,
+            class_id: document.getElementById('student_class').value
+        };
+        
+        try {
+            const response = await fetch('/teacher/add_student', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                resultDiv.innerHTML = `<div class="alert alert-success"><i class="bi bi-check-circle me-1"></i>Student ${data.student_id} added successfully! Password: <code>${result.password}</code></div>`;
+                document.getElementById('add-student-form').reset();
+            } else {
+                resultDiv.innerHTML = `<div class="alert alert-danger"><i class="bi bi-x-circle me-1"></i>${result.error || 'Failed to add student'}</div>`;
+            }
+        } catch (e) {
+            resultDiv.innerHTML = '<div class="alert alert-danger">Error adding student</div>';
+        }
+    });
+</script>
 {% endblock %}

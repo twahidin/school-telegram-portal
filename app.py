@@ -1729,15 +1729,158 @@ def teacher_settings():
             
             return render_template('teacher_settings.html',
                                  teacher=teacher,
+                                 classes=list(db.db.classes.find()),
                                  success='Settings updated successfully')
             
         except Exception as e:
             logger.error(f"Error updating settings: {e}")
             return render_template('teacher_settings.html',
                                  teacher=teacher,
+                                 classes=list(db.db.classes.find()),
                                  error='Failed to update settings')
     
-    return render_template('teacher_settings.html', teacher=teacher)
+    classes = list(db.db.classes.find())
+    return render_template('teacher_settings.html', teacher=teacher, classes=classes)
+
+@app.route('/teacher/change_password', methods=['POST'])
+@teacher_required
+def teacher_change_password():
+    """Teacher changes their own password"""
+    try:
+        data = request.get_json()
+        current_password = data.get('current_password')
+        new_password = data.get('new_password')
+        
+        if not current_password or not new_password:
+            return jsonify({'error': 'Current and new passwords required'}), 400
+        
+        teacher = Teacher.find_one({'teacher_id': session['teacher_id']})
+        if not teacher:
+            return jsonify({'error': 'Teacher not found'}), 404
+        
+        # Verify current password
+        if not verify_password(current_password, teacher.get('password_hash', '')):
+            return jsonify({'error': 'Current password is incorrect'}), 400
+        
+        # Update password
+        hashed = hash_password(new_password)
+        Teacher.update_one(
+            {'teacher_id': session['teacher_id']},
+            {'$set': {'password_hash': hashed, 'updated_at': datetime.utcnow()}}
+        )
+        
+        return jsonify({'success': True, 'message': 'Password changed successfully'})
+        
+    except Exception as e:
+        logger.error(f"Error changing teacher password: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/teacher/assign_class', methods=['POST'])
+@teacher_required
+def teacher_assign_class():
+    """Teacher assigns a class to themselves"""
+    try:
+        data = request.get_json()
+        class_id = data.get('class_id')
+        
+        if not class_id:
+            return jsonify({'error': 'Class ID required'}), 400
+        
+        # Check if class exists
+        cls = db.db.classes.find_one({'class_id': class_id})
+        if not cls:
+            return jsonify({'error': 'Class not found'}), 404
+        
+        # Add class to teacher's classes list
+        Teacher.update_one(
+            {'teacher_id': session['teacher_id']},
+            {'$addToSet': {'classes': class_id}, '$set': {'updated_at': datetime.utcnow()}}
+        )
+        
+        # Add teacher to all students in this class
+        Student.update_many(
+            {'class': class_id},
+            {'$addToSet': {'teachers': session['teacher_id']}}
+        )
+        
+        return jsonify({'success': True, 'message': f'Class {class_id} assigned'})
+        
+    except Exception as e:
+        logger.error(f"Error assigning class to teacher: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/teacher/remove_class', methods=['POST'])
+@teacher_required
+def teacher_remove_class():
+    """Teacher removes a class from themselves"""
+    try:
+        data = request.get_json()
+        class_id = data.get('class_id')
+        
+        if not class_id:
+            return jsonify({'error': 'Class ID required'}), 400
+        
+        # Remove class from teacher's classes list
+        Teacher.update_one(
+            {'teacher_id': session['teacher_id']},
+            {'$pull': {'classes': class_id}, '$set': {'updated_at': datetime.utcnow()}}
+        )
+        
+        # Remove teacher from students in this class
+        Student.update_many(
+            {'class': class_id, 'teachers': session['teacher_id']},
+            {'$pull': {'teachers': session['teacher_id']}}
+        )
+        
+        return jsonify({'success': True, 'message': f'Class {class_id} removed'})
+        
+    except Exception as e:
+        logger.error(f"Error removing class from teacher: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/teacher/add_student', methods=['POST'])
+@teacher_required
+def teacher_add_student():
+    """Teacher adds a new student"""
+    try:
+        data = request.get_json()
+        student_id = data.get('student_id')
+        name = data.get('name')
+        class_id = data.get('class_id', '')
+        
+        if not student_id or not name:
+            return jsonify({'error': 'Student ID and name required'}), 400
+        
+        # Check if student already exists
+        existing = Student.find_one({'student_id': student_id})
+        if existing:
+            return jsonify({'error': 'Student ID already exists'}), 400
+        
+        # Create student with password = student_id
+        password = student_id
+        hashed = hash_password(password)
+        
+        student_data = {
+            'student_id': student_id,
+            'name': name,
+            'password_hash': hashed,
+            'class': class_id,
+            'teachers': [session['teacher_id']],
+            'created_at': datetime.utcnow(),
+            'updated_at': datetime.utcnow()
+        }
+        
+        Student.insert_one(student_data)
+        
+        return jsonify({
+            'success': True, 
+            'message': f'Student {student_id} created',
+            'password': password
+        })
+        
+    except Exception as e:
+        logger.error(f"Error adding student: {e}")
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/teacher/messages')
 @teacher_required
@@ -2146,6 +2289,41 @@ def reset_student_password():
         
     except Exception as e:
         logger.error(f"Error resetting password: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/admin/reset_teacher_password', methods=['POST'])
+@admin_required
+def reset_teacher_password():
+    """Reset a teacher's password to their teacher ID"""
+    try:
+        data = request.get_json()
+        teacher_id = data.get('teacher_id')
+        
+        if not teacher_id:
+            return jsonify({'error': 'Teacher ID required'}), 400
+        
+        # Find the teacher
+        teacher = db.db.teachers.find_one({'teacher_id': teacher_id})
+        if not teacher:
+            return jsonify({'error': 'Teacher not found'}), 404
+        
+        # Reset password to teacher ID
+        new_password = teacher_id
+        hashed = hash_password(new_password)
+        
+        db.db.teachers.update_one(
+            {'teacher_id': teacher_id},
+            {'$set': {'password_hash': hashed}}
+        )
+        
+        return jsonify({
+            'success': True, 
+            'new_password': new_password,
+            'message': f'Password reset to: {new_password}'
+        })
+        
+    except Exception as e:
+        logger.error(f"Error resetting teacher password: {e}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/admin/delete_teachers', methods=['POST'])
