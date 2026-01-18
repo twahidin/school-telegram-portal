@@ -4,13 +4,13 @@
 
 {% block navbar %}
 <nav class="navbar navbar-expand-lg navbar-dark teacher-nav">
-    <div class="container">
+    <div class="container-fluid">
         <a class="navbar-brand" href="{{ url_for('teacher_dashboard') }}">
             <i class="bi bi-mortarboard-fill me-2"></i>Teacher Portal
         </a>
         <div class="navbar-nav ms-auto">
-            <a class="nav-link" href="{{ url_for('teacher_logout') }}">
-                <i class="bi bi-box-arrow-right me-1"></i>Logout
+            <a class="nav-link" href="{{ url_for('teacher_submissions') }}">
+                <i class="bi bi-arrow-left me-1"></i>Back to Submissions
             </a>
         </div>
     </div>
@@ -18,239 +18,337 @@
 {% endblock %}
 
 {% block content %}
-<div class="container-fluid py-4">
-    <nav aria-label="breadcrumb" class="mb-3">
-        <ol class="breadcrumb">
-            <li class="breadcrumb-item"><a href="{{ url_for('teacher_submissions') }}">Submissions</a></li>
-            <li class="breadcrumb-item active">Review</li>
-        </ol>
-    </nav>
-    
-    <div class="row">
-        <!-- Left Side: Submission Details -->
-        <div class="col-lg-7">
-            <div class="review-header mb-4">
-                <div class="d-flex justify-content-between align-items-start">
-                    <div>
-                        <h1>{{ assignment.title }}</h1>
-                        <div class="meta">
-                            <span class="badge bg-primary me-2">{{ assignment.subject }}</span>
-                            <span><i class="bi bi-star me-1"></i>{{ assignment.total_marks }} marks</span>
-                        </div>
-                    </div>
-                    <div class="student-info-card">
-                        <strong>{{ student.name if student else 'Unknown' }}</strong>
-                        <small class="d-block text-muted">{{ student.student_id if student else '' }} • Class {{ student.class if student else 'N/A' }}</small>
-                    </div>
+<div class="container-fluid py-3">
+    <!-- Header -->
+    <div class="row mb-3">
+        <div class="col">
+            <div class="d-flex justify-content-between align-items-start">
+                <div>
+                    <h4 class="mb-1">
+                        <i class="bi bi-clipboard-check me-2"></i>Review: {{ assignment.title }}
+                    </h4>
+                    <p class="text-muted mb-0">
+                        <strong>{{ student.name }}</strong> ({{ student.student_id }}) 
+                        | {{ assignment.subject }}
+                        | Submitted: {{ submission.submitted_at.strftime('%d %b %Y %H:%M') if submission.submitted_at else 'N/A' }}
+                    </p>
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-success" onclick="sendFeedback()">
+                        <i class="bi bi-send me-1"></i>Send Feedback
+                    </button>
+                    <button class="btn btn-outline-primary" onclick="downloadPDF()">
+                        <i class="bi bi-file-pdf me-1"></i>Download PDF
+                    </button>
                 </div>
             </div>
-            
-            <!-- Questions and Answers -->
-            <div class="qa-review-container">
-                {% for question in assignment.questions %}
-                <div class="qa-review-card">
-                    <div class="question-section">
-                        <div class="q-header">
-                            <span class="q-number">Q{{ loop.index }}</span>
-                            <span class="q-marks">{{ question.marks }} marks</span>
-                        </div>
-                        <p class="q-text">{{ question.question }}</p>
-                        {% if question.model_answer %}
-                        <details class="model-answer">
-                            <summary><i class="bi bi-lightbulb me-1"></i>Model Answer</summary>
-                            <p>{{ question.model_answer }}</p>
-                        </details>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Left Panel: Submission Pages -->
+        <div class="col-lg-6">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0"><i class="bi bi-file-earmark me-2"></i>Student Submission</h6>
+                    <div class="btn-group btn-group-sm">
+                        <button class="btn btn-outline-secondary" onclick="prevPage()" id="prev-btn" disabled>
+                            <i class="bi bi-chevron-left"></i>
+                        </button>
+                        <span class="btn btn-outline-secondary disabled" id="page-indicator">Page 1/{{ page_count }}</span>
+                        <button class="btn btn-outline-secondary" onclick="nextPage()" id="next-btn" {% if page_count <= 1 %}disabled{% endif %}>
+                            <i class="bi bi-chevron-right"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body p-0" style="height: 70vh; overflow: auto;">
+                    <div id="submission-viewer">
+                        {% if submission.file_type == 'pdf' %}
+                        <iframe id="pdf-viewer" src="{{ url_for('view_submission_file', submission_id=submission.submission_id, file_index=0) }}" 
+                                style="width: 100%; height: 100%; border: none;"></iframe>
+                        {% else %}
+                        <img id="page-image" src="{{ url_for('view_submission_file', submission_id=submission.submission_id, file_index=0) }}" 
+                             style="width: 100%; height: auto;">
                         {% endif %}
                     </div>
-                    
-                    <div class="answer-section">
-                        <h6><i class="bi bi-pencil me-2"></i>Student's Answer</h6>
-                        <div class="answer-content">
-                            {{ submission.answers.get(loop.index|string, submission.answers.get('q' ~ loop.index, 'No answer provided')) }}
-                        </div>
-                    </div>
-                </div>
-                {% endfor %}
-            </div>
-            
-            <!-- AI Feedback -->
-            {% if submission.ai_feedback and submission.ai_feedback.overall %}
-            <div class="ai-feedback-card mt-4">
-                <div class="card-header bg-info text-white">
-                    <i class="bi bi-robot me-2"></i>AI-Generated Feedback
-                </div>
-                <div class="card-body">
-                    <div class="ai-feedback-content">
-                        {{ submission.ai_feedback.overall | replace('\n', '<br>') | safe }}
-                    </div>
                 </div>
             </div>
-            {% endif %}
         </div>
-        
-        <!-- Right Side: Grading Panel -->
-        <div class="col-lg-5">
-            <div class="grading-panel sticky-top" style="top: 20px;">
-                <div class="card">
-                    <div class="card-header">
-                        <h5 class="mb-0"><i class="bi bi-clipboard-check me-2"></i>Grade Submission</h5>
-                    </div>
-                    <div class="card-body">
-                        <form id="review-form" data-submission-id="{{ submission.submission_id }}">
-                            <!-- Score Input -->
-                            <div class="mb-4">
-                                <label class="form-label">Final Score</label>
-                                <div class="input-group input-group-lg">
-                                    <input type="number" class="form-control text-center" id="final_score" 
-                                           name="final_score" min="0" max="{{ assignment.total_marks }}"
-                                           value="{{ submission.teacher_review.final_score if submission.teacher_review else '' }}"
-                                           placeholder="0">
-                                    <span class="input-group-text">/ {{ assignment.total_marks }}</span>
-                                </div>
-                                <div class="score-slider mt-2">
-                                    <input type="range" class="form-range" id="score_slider" 
-                                           min="0" max="{{ assignment.total_marks }}"
-                                           value="{{ submission.teacher_review.final_score if submission.teacher_review else 0 }}">
-                                </div>
-                            </div>
-                            
-                            <!-- Comments -->
-                            <div class="mb-4">
-                                <label class="form-label">Comments for Student</label>
-                                <textarea class="form-control" id="comments" name="comments" rows="6"
-                                          placeholder="Provide feedback and comments...">{{ submission.teacher_review.comments if submission.teacher_review else '' }}</textarea>
-                            </div>
-                            
-                            <!-- Quick Comments -->
-                            <div class="mb-4">
-                                <label class="form-label">Quick Comments</label>
-                                <div class="quick-comments">
-                                    <button type="button" class="btn btn-outline-secondary btn-sm quick-comment" data-text="Excellent work! Well done.">
-                                        👏 Excellent
-                                    </button>
-                                    <button type="button" class="btn btn-outline-secondary btn-sm quick-comment" data-text="Good effort. Keep it up!">
-                                        👍 Good effort
-                                    </button>
-                                    <button type="button" class="btn btn-outline-secondary btn-sm quick-comment" data-text="Please review the material and try again.">
-                                        📚 Review needed
-                                    </button>
-                                    <button type="button" class="btn btn-outline-secondary btn-sm quick-comment" data-text="See me for additional help.">
-                                        🤝 See me
-                                    </button>
-                                </div>
-                            </div>
-                            
-                            <!-- Actions -->
-                            <div class="d-grid gap-2">
-                                <button type="button" class="btn btn-primary" id="save-review-btn">
-                                    <i class="bi bi-save me-1"></i>Save Review
-                                </button>
-                                
-                                {% if submission.status != 'approved' %}
-                                <button type="button" class="btn btn-success btn-lg" id="approve-btn">
-                                    <i class="bi bi-check-circle me-1"></i>Approve & Finalize
-                                </button>
-                                {% else %}
-                                <div class="alert alert-success mb-0">
-                                    <i class="bi bi-check-circle me-2"></i>This submission has been approved.
-                                </div>
-                                {% endif %}
-                            </div>
-                        </form>
-                    </div>
+
+        <!-- Right Panel: Feedback Table -->
+        <div class="col-lg-6">
+            <div class="card">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="bi bi-table me-2"></i>Feedback Table</h6>
                 </div>
-                
-                <div class="mt-3">
-                    <a href="{{ url_for('teacher_submissions') }}" class="btn btn-outline-secondary w-100">
-                        <i class="bi bi-arrow-left me-1"></i>Back to Submissions
-                    </a>
+                <div class="card-body p-0" style="height: 70vh; overflow: auto;">
+                    <form id="feedback-form">
+                        <table class="table table-bordered mb-0" id="feedback-table">
+                            <thead class="table-light sticky-top">
+                                <tr>
+                                    <th style="width: 60px;">Q#</th>
+                                    <th style="width: 25%;">Student Answer</th>
+                                    <th style="width: 25%;">Correct Answer</th>
+                                    <th style="width: 25%;">Feedback</th>
+                                    <th style="width: 80px;">Marks</th>
+                                </tr>
+                            </thead>
+                            <tbody id="feedback-tbody">
+                                {% if ai_feedback and ai_feedback.questions %}
+                                    {% for q in ai_feedback.questions %}
+                                    <tr class="{% if q.needs_review %}table-warning{% elif q.is_correct %}table-success{% elif q.is_correct == false %}table-danger{% endif %}"
+                                        data-question="{{ q.question_num }}">
+                                        <td class="text-center fw-bold">
+                                            {{ q.question_num }}
+                                            {% if q.needs_review %}
+                                            <br><span class="badge bg-warning text-dark" title="Needs Review">⚠️</span>
+                                            {% endif %}
+                                        </td>
+                                        <td class="small">
+                                            {% if q.student_answer == 'UNCLEAR' or q.needs_review %}
+                                            <span class="text-muted fst-italic">Unclear/Empty</span>
+                                            {% else %}
+                                            {{ q.student_answer[:100] }}{% if q.student_answer|length > 100 %}...{% endif %}
+                                            {% endif %}
+                                        </td>
+                                        <td class="small">
+                                            <textarea class="form-control form-control-sm" 
+                                                      name="correct_{{ q.question_num }}" rows="2"
+                                                      placeholder="Correct answer">{{ q.correct_answer or '' }}</textarea>
+                                        </td>
+                                        <td>
+                                            <textarea class="form-control form-control-sm feedback-input" 
+                                                      name="feedback_{{ q.question_num }}" rows="2"
+                                                      placeholder="{% if q.needs_review %}Enter feedback...{% else %}{{ q.feedback }}{% endif %}">{{ q.feedback if not q.needs_review else '' }}</textarea>
+                                            {% if q.improvement %}
+                                            <small class="text-muted d-block mt-1">💡 {{ q.improvement }}</small>
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            <div class="input-group input-group-sm">
+                                                <input type="number" class="form-control marks-input" 
+                                                       name="marks_{{ q.question_num }}" 
+                                                       value="{{ q.marks_awarded if q.marks_awarded is not none and not q.needs_review else '' }}"
+                                                       min="0" max="{{ q.marks_total or 10 }}"
+                                                       placeholder="?">
+                                                <span class="input-group-text">/{{ q.marks_total or '?' }}</span>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                {% else %}
+                                    <tr>
+                                        <td colspan="5" class="text-center text-muted py-4">
+                                            <i class="bi bi-hourglass me-2"></i>
+                                            No AI feedback available yet. Click "Generate AI Feedback" to analyze.
+                                        </td>
+                                    </tr>
+                                {% endif %}
+                            </tbody>
+                            <tfoot class="table-light">
+                                <tr>
+                                    <td colspan="4" class="text-end fw-bold">Total:</td>
+                                    <td>
+                                        <div class="input-group input-group-sm">
+                                            <input type="number" class="form-control fw-bold" id="total-marks" 
+                                                   value="{{ ai_feedback.total_marks if ai_feedback and ai_feedback.total_marks else '' }}"
+                                                   readonly>
+                                            <span class="input-group-text">/{{ assignment.total_marks or 100 }}</span>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </form>
+                    
+                    <!-- Overall Feedback -->
+                    <div class="p-3 border-top">
+                        <label class="form-label fw-bold">Overall Feedback</label>
+                        <textarea class="form-control" id="overall-feedback" rows="3" 
+                                  placeholder="Overall comments and suggestions...">{{ ai_feedback.overall_feedback if ai_feedback else '' }}</textarea>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
 </div>
+
+<!-- Toast for notifications -->
+<div class="position-fixed bottom-0 end-0 p-3" style="z-index: 1050">
+    <div id="toast" class="toast" role="alert">
+        <div class="toast-header">
+            <strong class="me-auto" id="toast-title">Notification</strong>
+            <button type="button" class="btn-close" data-bs-dismiss="toast"></button>
+        </div>
+        <div class="toast-body" id="toast-message"></div>
+    </div>
+</div>
+
+<style>
+.feedback-input:focus, .marks-input:focus {
+    border-color: #0d6efd;
+    box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.25);
+}
+
+.table-warning {
+    background-color: #fff3cd !important;
+}
+
+.table-success {
+    background-color: #d1e7dd !important;
+}
+
+.table-danger {
+    background-color: #f8d7da !important;
+}
+
+#feedback-table textarea {
+    font-size: 0.85rem;
+}
+
+#feedback-table td {
+    vertical-align: top;
+}
+</style>
 {% endblock %}
 
 {% block scripts %}
 <script>
-    const submissionId = '{{ submission.submission_id }}';
-    const totalMarks = {{ assignment.total_marks }};
+    const submissionId = "{{ submission.submission_id }}";
+    const pageCount = {{ page_count }};
+    const fileType = "{{ submission.file_type }}";
+    let currentPage = 0;
     
-    // Sync slider with input
-    document.getElementById('score_slider').addEventListener('input', (e) => {
-        document.getElementById('final_score').value = e.target.value;
+    // Page navigation
+    function updatePageView() {
+        document.getElementById('page-indicator').textContent = `Page ${currentPage + 1}/${pageCount}`;
+        document.getElementById('prev-btn').disabled = currentPage === 0;
+        document.getElementById('next-btn').disabled = currentPage >= pageCount - 1;
+        
+        if (fileType === 'pdf') {
+            document.getElementById('pdf-viewer').src = `/teacher/submission/${submissionId}/file/${currentPage}`;
+        } else {
+            document.getElementById('page-image').src = `/teacher/submission/${submissionId}/file/${currentPage}`;
+        }
+    }
+    
+    function nextPage() {
+        if (currentPage < pageCount - 1) {
+            currentPage++;
+            updatePageView();
+        }
+    }
+    
+    function prevPage() {
+        if (currentPage > 0) {
+            currentPage--;
+            updatePageView();
+        }
+    }
+    
+    // Calculate total marks
+    document.querySelectorAll('.marks-input').forEach(input => {
+        input.addEventListener('input', calculateTotal);
     });
     
-    document.getElementById('final_score').addEventListener('input', (e) => {
-        const val = Math.min(Math.max(0, parseInt(e.target.value) || 0), totalMarks);
-        document.getElementById('score_slider').value = val;
-    });
-    
-    // Quick comments
-    document.querySelectorAll('.quick-comment').forEach(btn => {
-        btn.addEventListener('click', () => {
-            const textarea = document.getElementById('comments');
-            const text = btn.dataset.text;
-            textarea.value = textarea.value ? textarea.value + '\n\n' + text : text;
+    function calculateTotal() {
+        let total = 0;
+        document.querySelectorAll('.marks-input').forEach(input => {
+            const val = parseFloat(input.value) || 0;
+            total += val;
         });
-    });
+        document.getElementById('total-marks').value = total;
+    }
     
-    // Save review
-    document.getElementById('save-review-btn').addEventListener('click', async () => {
+    // Save feedback
+    async function saveFeedback() {
+        const formData = new FormData(document.getElementById('feedback-form'));
         const data = {
-            final_score: parseInt(document.getElementById('final_score').value) || 0,
-            comments: document.getElementById('comments').value
+            overall_feedback: document.getElementById('overall-feedback').value,
+            total_marks: document.getElementById('total-marks').value,
+            questions: {}
         };
         
+        // Collect question data
+        document.querySelectorAll('#feedback-tbody tr').forEach(row => {
+            const qNum = row.dataset.question;
+            if (qNum) {
+                data.questions[qNum] = {
+                    correct_answer: formData.get(`correct_${qNum}`),
+                    feedback: formData.get(`feedback_${qNum}`),
+                    marks: formData.get(`marks_${qNum}`)
+                };
+            }
+        });
+        
         try {
-            const response = await fetch(`/teacher/submissions/${submissionId}/review`, {
+            const response = await fetch(`/teacher/review/${submissionId}/save`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify(data)
             });
             
             const result = await response.json();
-            if (result.success) {
-                showToast('Success', 'Review saved successfully', 'success');
-            } else {
-                showToast('Error', result.error || 'Failed to save', 'danger');
-            }
-        } catch (error) {
-            showToast('Error', 'Failed to save review', 'danger');
+            showToast(result.success ? 'Success' : 'Error', result.message || 'Saved');
+            return result.success;
+        } catch (e) {
+            showToast('Error', 'Failed to save');
+            return false;
         }
+    }
+    
+    // Send feedback to student
+    async function sendFeedback() {
+        if (!confirm('Send feedback to student? This will mark the submission as reviewed.')) return;
+        
+        // Save first
+        const saved = await saveFeedback();
+        if (!saved) return;
+        
+        try {
+            const response = await fetch(`/teacher/review/${submissionId}/send`, {
+                method: 'POST'
+            });
+            
+            const result = await response.json();
+            if (result.success) {
+                showToast('Success', 'Feedback sent to student!');
+                // Update UI to show reviewed status
+                setTimeout(() => location.reload(), 1500);
+            } else {
+                showToast('Error', result.error || 'Failed to send');
+            }
+        } catch (e) {
+            showToast('Error', 'Failed to send feedback');
+        }
+    }
+    
+    // Download PDF report
+    async function downloadPDF() {
+        // Save first
+        await saveFeedback();
+        
+        // Trigger download
+        window.open(`/teacher/review/${submissionId}/pdf`, '_blank');
+    }
+    
+    // Toast notification
+    function showToast(title, message) {
+        document.getElementById('toast-title').textContent = title;
+        document.getElementById('toast-message').textContent = message;
+        new bootstrap.Toast(document.getElementById('toast')).show();
+    }
+    
+    // Auto-save on change
+    let saveTimeout;
+    document.querySelectorAll('#feedback-form input, #feedback-form textarea, #overall-feedback').forEach(el => {
+        el.addEventListener('change', () => {
+            clearTimeout(saveTimeout);
+            saveTimeout = setTimeout(saveFeedback, 2000);
+        });
     });
     
-    // Approve
-    const approveBtn = document.getElementById('approve-btn');
-    if (approveBtn) {
-        approveBtn.addEventListener('click', async () => {
-            if (!confirm('Are you sure you want to approve this submission? The student will be notified.')) {
-                return;
-            }
-            
-            const data = {
-                final_score: parseInt(document.getElementById('final_score').value) || 0,
-                comments: document.getElementById('comments').value
-            };
-            
-            try {
-                const response = await fetch(`/teacher/submissions/${submissionId}/approve`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(data)
-                });
-                
-                const result = await response.json();
-                if (result.success) {
-                    showToast('Success', 'Submission approved!', 'success');
-                    setTimeout(() => window.location.href = '{{ url_for("teacher_submissions") }}', 1500);
-                } else {
-                    showToast('Error', result.error || 'Failed to approve', 'danger');
-                }
-            } catch (error) {
-                showToast('Error', 'Failed to approve submission', 'danger');
-            }
-        });
-    }
+    // Initial total calculation
+    calculateTotal();
 </script>
 {% endblock %}

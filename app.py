@@ -1005,10 +1005,11 @@ def teacher_submissions():
                          status_filter=status_filter,
                          assignment_filter=assignment_filter)
 
-@app.route('/teacher/submissions/<submission_id>/review', methods=['GET', 'POST'])
+@app.route('/teacher/submissions/<submission_id>/review', methods=['GET'])
+@app.route('/teacher/review/<submission_id>', methods=['GET'])
 @teacher_required
 def review_submission(submission_id):
-    """Review a student submission"""
+    """Review a student submission with side-by-side feedback"""
     teacher = Teacher.find_one({'teacher_id': session['teacher_id']})
     submission = Submission.find_one({'submission_id': submission_id})
     
@@ -1022,37 +1023,197 @@ def review_submission(submission_id):
     
     student = Student.find_one({'student_id': submission['student_id']})
     
-    if request.method == 'POST':
-        # This handles AJAX updates
-        try:
-            data = request.get_json()
-            
-            teacher_review = {
-                'comments': data.get('comments', ''),
-                'final_score': int(data.get('final_score', 0)),
-                'reviewed_at': datetime.utcnow(),
-                'reviewed_by': session['teacher_id']
-            }
-            
-            Submission.update_one(
-                {'submission_id': submission_id},
-                {'$set': {
-                    'teacher_review': teacher_review,
-                    'updated_at': datetime.utcnow()
-                }}
-            )
-            
-            return jsonify({'success': True})
-            
-        except Exception as e:
-            logger.error(f"Error saving review: {e}")
-            return jsonify({'error': 'Failed to save'}), 500
+    # Get AI feedback if available
+    ai_feedback = submission.get('ai_feedback', {})
+    
+    # Get page count
+    page_count = submission.get('page_count', len(submission.get('file_ids', [1])))
     
     return render_template('teacher_review.html',
                          teacher=teacher,
                          submission=submission,
                          assignment=assignment,
-                         student=student)
+                         student=student,
+                         ai_feedback=ai_feedback,
+                         page_count=page_count)
+
+@app.route('/teacher/submission/<submission_id>/file/<int:file_index>')
+@teacher_required
+def view_submission_file(submission_id, file_index):
+    """Serve submission file (image or PDF page)"""
+    from gridfs import GridFS
+    
+    submission = Submission.find_one({'submission_id': submission_id})
+    if not submission:
+        return 'Not found', 404
+    
+    # Verify teacher access
+    assignment = Assignment.find_one({'assignment_id': submission['assignment_id']})
+    if not assignment or assignment['teacher_id'] != session['teacher_id']:
+        return 'Unauthorized', 403
+    
+    file_ids = submission.get('file_ids', [])
+    if file_index >= len(file_ids):
+        return 'File not found', 404
+    
+    fs = GridFS(db.db)
+    try:
+        from bson import ObjectId
+        file_data = fs.get(ObjectId(file_ids[file_index]))
+        content_type = file_data.content_type or 'application/octet-stream'
+        return Response(
+            file_data.read(),
+            mimetype=content_type,
+            headers={'Content-Disposition': 'inline'}
+        )
+    except Exception as e:
+        logger.error(f"Error serving file: {e}")
+        return 'File not found', 404
+
+@app.route('/teacher/review/<submission_id>/save', methods=['POST'])
+@teacher_required
+def save_review_feedback(submission_id):
+    """Save teacher feedback edits"""
+    try:
+        data = request.get_json()
+        
+        submission = Submission.find_one({'submission_id': submission_id})
+        if not submission:
+            return jsonify({'error': 'Submission not found'}), 404
+        
+        assignment = Assignment.find_one({'assignment_id': submission['assignment_id']})
+        if not assignment or assignment['teacher_id'] != session['teacher_id']:
+            return jsonify({'error': 'Unauthorized'}), 403
+        
+        # Update teacher feedback
+        teacher_feedback = {
+            'questions': data.get('questions', {}),
+            'overall_feedback': data.get('overall_feedback', ''),
+            'total_marks': data.get('total_marks'),
+            'edited_at': datetime.utcnow(),
+            'edited_by': session['teacher_id']
+        }
+        
+        Submission.update_one(
+            {'submission_id': submission_id},
+            {'$set': {
+                'teacher_feedback': teacher_feedback,
+                'final_marks': data.get('total_marks'),
+                'updated_at': datetime.utcnow()
+            }}
+        )
+        
+        return jsonify({'success': True, 'message': 'Feedback saved'})
+        
+    except Exception as e:
+        logger.error(f"Error saving feedback: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/teacher/review/<submission_id>/send', methods=['POST'])
+@teacher_required
+def send_feedback_to_student(submission_id):
+    """Send feedback to student via Telegram"""
+    try:
+        submission = Submission.find_one({'submission_id': submission_id})
+        if not submission:
+            return jsonify({'error': 'Submission not found'}), 404
+        
+        assignment = Assignment.find_one({'assignment_id': submission['assignment_id']})
+        if not assignment or assignment['teacher_id'] != session['teacher_id']:
+            return jsonify({'error': 'Unauthorized'}), 403
+        
+        student = Student.find_one({'student_id': submission['student_id']})
+        teacher = Teacher.find_one({'teacher_id': session['teacher_id']})
+        
+        # Update status
+        Submission.update_one(
+            {'submission_id': submission_id},
+            {'$set': {
+                'status': 'reviewed',
+                'reviewed_at': datetime.utcnow()
+            }}
+        )
+        
+        # Send Telegram notification if student has linked account
+        if student and student.get('telegram_id'):
+            try:
+                from telegram import Bot
+                bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
+                if bot_token:
+                    import asyncio
+                    
+                    async def send_notification():
+                        bot = Bot(token=bot_token)
+                        
+                        # Format feedback message
+                        feedback = submission.get('teacher_feedback', {})
+                        marks = submission.get('final_marks', 'N/A')
+                        total = assignment.get('total_marks', 100)
+                        
+                        message = (
+                            f"📬 *Assignment Feedback*\n\n"
+                            f"📝 {assignment.get('title')}\n"
+                            f"📊 Marks: *{marks}/{total}*\n\n"
+                        )
+                        
+                        if feedback.get('overall_feedback'):
+                            message += f"💬 {feedback['overall_feedback']}\n\n"
+                        
+                        message += f"👨‍🏫 Reviewed by: {teacher.get('name', 'Teacher')}"
+                        
+                        await bot.send_message(
+                            chat_id=student['telegram_id'],
+                            text=message,
+                            parse_mode='Markdown'
+                        )
+                    
+                    # Run async function
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    loop.run_until_complete(send_notification())
+                    loop.close()
+                    
+            except Exception as e:
+                logger.error(f"Failed to send Telegram notification: {e}")
+        
+        return jsonify({'success': True, 'message': 'Feedback sent to student'})
+        
+    except Exception as e:
+        logger.error(f"Error sending feedback: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/teacher/review/<submission_id>/pdf')
+@teacher_required
+def download_feedback_pdf(submission_id):
+    """Generate and download PDF feedback report"""
+    from utils.pdf_generator import generate_review_pdf
+    
+    submission = Submission.find_one({'submission_id': submission_id})
+    if not submission:
+        return 'Not found', 404
+    
+    assignment = Assignment.find_one({'assignment_id': submission['assignment_id']})
+    if not assignment or assignment['teacher_id'] != session['teacher_id']:
+        return 'Unauthorized', 403
+    
+    student = Student.find_one({'student_id': submission['student_id']})
+    teacher = Teacher.find_one({'teacher_id': session['teacher_id']})
+    
+    try:
+        pdf_content = generate_review_pdf(submission, assignment, student, teacher)
+        
+        filename = f"feedback_{student['student_id']}_{assignment['assignment_id']}.pdf"
+        
+        return Response(
+            pdf_content,
+            mimetype='application/pdf',
+            headers={
+                'Content-Disposition': f'attachment; filename="{filename}"'
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error generating PDF: {e}")
+        return f'Error generating PDF: {str(e)}', 500
 
 @app.route('/teacher/submissions/<submission_id>/approve', methods=['POST'])
 @teacher_required
