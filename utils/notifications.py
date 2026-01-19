@@ -20,6 +20,7 @@ def notify_submission_ready(submission: dict, assignment: dict, student: dict, t
         
         data = {
             'student_name': student.get('name', 'Unknown'),
+            'student_class': student.get('class'),
             'student_id': student.get('student_id', 'N/A'),
             'assignment_title': assignment.get('title', 'Untitled'),
             'subject': assignment.get('subject', 'N/A'),
@@ -77,7 +78,8 @@ def notify_new_message(teacher: dict, student: dict, message: str):
             telegram_id=telegram_id,
             student_name=student.get('name', 'Unknown'),
             message=message,
-            teacher_id=teacher.get('teacher_id', '')
+            teacher_id=teacher.get('teacher_id', ''),
+            student_class=student.get('class')
         )
         
     except ImportError:

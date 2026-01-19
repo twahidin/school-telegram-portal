@@ -9,14 +9,17 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 bot = Bot(token=BOT_TOKEN) if BOT_TOKEN else None
 
-def send_to_teacher(telegram_id: int, student_name: str, message: str, teacher_id: str):
+def send_to_teacher(telegram_id: int, student_name: str, message: str, teacher_id: str, student_class: str = None):
     """Send a message from a student to a teacher via Telegram"""
     if not bot:
         logger.error("Bot token not configured")
         return False
     
     try:
-        formatted_message = f"📱 {student_name}: {message}"
+        if student_class:
+            formatted_message = f"📱 {student_name} ({student_class}): {message}"
+        else:
+            formatted_message = f"📱 {student_name}: {message}"
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         loop.run_until_complete(
@@ -38,9 +41,12 @@ def send_notification(telegram_id: int, notification_type: str, data: dict):
     try:
         if notification_type == 'new_submission':
             web_url = os.getenv('WEB_URL', 'http://localhost:5000')
+            student_display = data.get('student_name', 'Unknown')
+            if data.get('student_class'):
+                student_display = f"{student_display} ({data.get('student_class')})"
             message = f"""📚 *New Assignment Submission*
 
-👤 Student: {data.get('student_name', 'Unknown')}
+👤 Student: {student_display}
 📝 Assignment: {data.get('assignment_title', 'Untitled')}
 📖 Subject: {data.get('subject', 'N/A')}
 🕐 Submitted: {data.get('submitted_at', 'Just now')}
@@ -48,9 +54,12 @@ def send_notification(telegram_id: int, notification_type: str, data: dict):
 🔗 [Review Submission]({web_url}/teacher/submissions/{data.get('submission_id', '')}/review)"""
         
         elif notification_type == 'new_message':
+            student_display = data.get('student_name', 'Unknown')
+            if data.get('student_class'):
+                student_display = f"{student_display} ({data.get('student_class')})"
             message = f"""💬 *New Message*
 
-👤 From: {data.get('student_name', 'Unknown')}
+👤 From: {student_display}
 📝 Message: {data.get('message', '')}"""
         
         elif notification_type == 'assignment_reminder':

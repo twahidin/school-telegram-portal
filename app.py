@@ -288,7 +288,8 @@ def send_message():
                     telegram_id=teacher['telegram_id'],
                     student_name=student.get('name', 'Student'),
                     message=message_text,
-                    teacher_id=teacher_id
+                    teacher_id=teacher_id,
+                    student_class=student.get('class')
                 )
         except Exception as e:
             logger.warning(f"Could not send Telegram notification: {e}")
