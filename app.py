@@ -1979,14 +1979,21 @@ def get_drive_service_account_info():
     """Get Google Drive service account information for folder sharing"""
     try:
         from utils.google_drive import get_service_account_email, is_drive_configured
+        import os
         
         configured = is_drive_configured()
         email = get_service_account_email() if configured else None
         
+        # Debug info
+        has_file_env = bool(os.getenv('GOOGLE_SERVICE_ACCOUNT_FILE'))
+        has_json_env = bool(os.getenv('GOOGLE_SERVICE_ACCOUNT_JSON'))
+        
+        debug_info = f"FILE_ENV: {has_file_env}, JSON_ENV: {has_json_env}"
+        
         return jsonify({
             'configured': configured,
             'email': email,
-            'message': 'Share your Google Drive folder with this email address and grant Editor access.' if email else 'Google Drive service account not configured. Contact your administrator.'
+            'message': 'Share your Google Drive folder with this email address and grant Editor access.' if email else f'Google Drive service account not configured. Debug: {debug_info}'
         })
     except Exception as e:
         logger.error(f"Error getting service account info: {e}")
