@@ -60,7 +60,7 @@
     <!-- Quick Stats -->
     <div class="row g-4 mb-5">
         <div class="col-md-4">
-            <div class="stat-card stat-primary">
+            <div class="stat-card stat-primary" style="cursor: pointer;" data-bs-toggle="modal" data-bs-target="#teachersModal">
                 <div class="stat-icon">
                     <i class="bi bi-people"></i>
                 </div>
@@ -148,5 +148,88 @@
         <p>You haven't been assigned to any teachers yet. Please contact your administrator.</p>
     </div>
     {% endif %}
+</div>
+
+<!-- My Teachers Modal -->
+<div class="modal fade" id="teachersModal" tabindex="-1" aria-labelledby="teachersModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content">
+            <div class="modal-header bg-primary text-white">
+                <h5 class="modal-title" id="teachersModalLabel">
+                    <i class="bi bi-people-fill me-2"></i>My Teachers
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                {% if teachers %}
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle">
+                        <thead class="table-light">
+                            <tr>
+                                <th scope="col">Teacher</th>
+                                <th scope="col">Subject(s)</th>
+                                <th scope="col">Class(es)</th>
+                                <th scope="col">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for teacher in teachers %}
+                            <tr>
+                                <td>
+                                    <div class="d-flex align-items-center">
+                                        <div class="teacher-avatar-sm me-3">
+                                            <i class="bi bi-person-workspace"></i>
+                                        </div>
+                                        <div>
+                                            <strong>{{ teacher.name }}</strong>
+                                        </div>
+                                    </div>
+                                </td>
+                                <td>
+                                    {% if teacher.subjects %}
+                                        {% for subject in teacher.subjects %}
+                                        <span class="badge bg-info text-dark me-1">{{ subject }}</span>
+                                        {% endfor %}
+                                    {% else %}
+                                        <span class="text-muted">No subjects assigned</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if teacher.shared_classes %}
+                                        {% for cls in teacher.shared_classes %}
+                                        <span class="badge bg-secondary me-1">{{ cls }}</span>
+                                        {% endfor %}
+                                    {% else %}
+                                        <span class="text-muted">-</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if teacher.telegram_id %}
+                                    <span class="badge bg-success">
+                                        <i class="bi bi-telegram me-1"></i>Connected
+                                    </span>
+                                    {% else %}
+                                    <span class="badge bg-secondary">
+                                        <i class="bi bi-circle me-1"></i>Not connected
+                                    </span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="text-center py-4">
+                    <i class="bi bi-people text-muted" style="font-size: 3rem;"></i>
+                    <p class="text-muted mt-3">No teachers assigned yet.</p>
+                </div>
+                {% endif %}
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
 </div>
 {% endblock %}
