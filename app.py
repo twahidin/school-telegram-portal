@@ -2500,6 +2500,50 @@ def admin_update_teacher():
         logger.error(f"Error updating teacher: {e}")
         return jsonify({'error': str(e)}), 500
 
+@app.route('/admin/update_student', methods=['POST'])
+@admin_required
+def admin_update_student():
+    """Admin updates a student's information"""
+    try:
+        data = request.get_json()
+        student_id = data.get('student_id')
+        name = data.get('name')
+        student_class = data.get('class', '')
+        teachers = data.get('teachers', [])
+        
+        if not student_id:
+            return jsonify({'error': 'Student ID required'}), 400
+        
+        if not name or not name.strip():
+            return jsonify({'error': 'Name is required'}), 400
+        
+        # Find the student
+        student = db.db.students.find_one({'student_id': student_id})
+        if not student:
+            return jsonify({'error': 'Student not found'}), 404
+        
+        # Update student
+        update_data = {
+            'name': name.strip(),
+            'class': student_class,
+            'teachers': teachers,
+            'updated_at': datetime.utcnow()
+        }
+        
+        db.db.students.update_one(
+            {'student_id': student_id},
+            {'$set': update_data}
+        )
+        
+        return jsonify({
+            'success': True,
+            'message': f'Student {student_id} updated successfully'
+        })
+        
+    except Exception as e:
+        logger.error(f"Error updating student: {e}")
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/admin/delete_teachers', methods=['POST'])
 @admin_required
 def delete_teachers():

@@ -97,8 +97,81 @@
         <!-- Students Tab -->
         <div class="tab-pane fade show active" id="students" role="tabpanel">
             <div class="row g-4">
-                <!-- Import Students -->
+                <!-- Manage Students (First) -->
                 <div class="col-lg-7">
+                    <div class="card">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <h5 class="mb-0"><i class="bi bi-people me-2"></i>Manage Students</h5>
+                            <div class="btn-group btn-group-sm">
+                                <button class="btn btn-outline-danger" id="delete-selected-students" disabled>
+                                    <i class="bi bi-trash me-1"></i>Delete Selected
+                                </button>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <!-- Filter -->
+                            <div class="row mb-3">
+                                <div class="col">
+                                    <select class="form-select form-select-sm" id="filter-class">
+                                        <option value="">All Classes</option>
+                                        {% for c in classes %}
+                                        <option value="{{ c.class_id }}">{{ c.class_id }}{% if c.name and c.name != c.class_id %} ({{ c.name }}){% endif %}</option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                                <div class="col-auto">
+                                    <button class="btn btn-outline-danger btn-sm" id="delete-by-class" disabled>
+                                        <i class="bi bi-trash me-1"></i>Delete Class
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            <!-- Assign to Class -->
+                            <div class="row mb-3 align-items-center" id="assign-class-section" style="display: none;">
+                                <div class="col">
+                                    <div class="input-group input-group-sm">
+                                        <span class="input-group-text bg-primary text-white">
+                                            <i class="bi bi-arrow-right-circle me-1"></i>Assign to
+                                        </span>
+                                        <select class="form-select form-select-sm" id="assign-to-class">
+                                            <option value="">Select class...</option>
+                                            {% for c in classes %}
+                                            <option value="{{ c.class_id }}">{{ c.class_id }}{% if c.name and c.name != c.class_id %} ({{ c.name }}){% endif %}</option>
+                                            {% endfor %}
+                                        </select>
+                                        <button class="btn btn-primary btn-sm" id="assign-class-btn" disabled>
+                                            <i class="bi bi-check-lg"></i> Assign
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="col-auto">
+                                    <small class="text-muted"><span id="selected-count">0</span> selected</small>
+                                </div>
+                            </div>
+
+                            <!-- Students Table -->
+                            <div class="table-responsive" style="max-height: 450px; overflow-y: auto;">
+                                <table class="table table-sm table-hover" id="students-table">
+                                    <thead class="sticky-top bg-white">
+                                        <tr>
+                                            <th><input type="checkbox" id="select-all-students"></th>
+                                            <th>Name</th>
+                                            <th>Class</th>
+                                            <th>Teachers</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="students-tbody">
+                                        <tr><td colspan="5" class="text-center text-muted">Loading...</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Import Students (Second) -->
+                <div class="col-lg-5">
                     <div class="card">
                         <div class="card-header">
                             <h5 class="mb-0"><i class="bi bi-upload me-2"></i>Import Students</h5>
@@ -114,11 +187,6 @@
                                 <li class="nav-item" role="presentation">
                                     <button class="nav-link" data-bs-toggle="pill" data-bs-target="#csv-upload">
                                         <i class="bi bi-file-earmark-csv me-1"></i>CSV Upload
-                                    </button>
-                                </li>
-                                <li class="nav-item" role="presentation">
-                                    <button class="nav-link" data-bs-toggle="pill" data-bs-target="#json-import">
-                                        <i class="bi bi-code me-1"></i>JSON
                                     </button>
                                 </li>
                             </ul>
@@ -183,99 +251,9 @@
                                         <i class="bi bi-download me-1"></i>Download Template
                                     </a>
                                 </div>
-
-                                <!-- JSON Import -->
-                                <div class="tab-pane fade" id="json-import">
-                                    <textarea class="form-control font-monospace" id="students-json" rows="8" placeholder='[
-  {
-    "student_id": "S001",
-    "name": "John Doe",
-    "class": "10A",
-    "password": "student123",
-    "teachers": ["T001"]
-  }
-]'></textarea>
-                                    <button class="btn btn-primary mt-3" id="import-json-btn">
-                                        <i class="bi bi-upload me-1"></i>Import JSON
-                                    </button>
-                                </div>
                             </div>
 
                             <div id="import-result" class="mt-3" style="display: none;"></div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Manage Students -->
-                <div class="col-lg-5">
-                    <div class="card">
-                        <div class="card-header d-flex justify-content-between align-items-center">
-                            <h5 class="mb-0"><i class="bi bi-people me-2"></i>Manage Students</h5>
-                            <div class="btn-group btn-group-sm">
-                                <button class="btn btn-outline-danger" id="delete-selected-students" disabled>
-                                    <i class="bi bi-trash me-1"></i>Delete Selected
-                                </button>
-                            </div>
-                        </div>
-                        <div class="card-body">
-                            <!-- Filter -->
-                            <div class="row mb-3">
-                                <div class="col">
-                                    <select class="form-select form-select-sm" id="filter-class">
-                                        <option value="">All Classes</option>
-                                        {% for c in classes %}
-                                        <option value="{{ c.class_id }}">{{ c.class_id }}{% if c.name and c.name != c.class_id %} ({{ c.name }}){% endif %}</option>
-                                        {% endfor %}
-                                    </select>
-                                </div>
-                                <div class="col-auto">
-                                    <button class="btn btn-outline-danger btn-sm" id="delete-by-class" disabled>
-                                        <i class="bi bi-trash me-1"></i>Delete Class
-                                    </button>
-                                </div>
-                            </div>
-                            
-                            <!-- Assign to Class -->
-                            <div class="row mb-3 align-items-center" id="assign-class-section" style="display: none;">
-                                <div class="col">
-                                    <div class="input-group input-group-sm">
-                                        <span class="input-group-text bg-primary text-white">
-                                            <i class="bi bi-arrow-right-circle me-1"></i>Assign to
-                                        </span>
-                                        <select class="form-select form-select-sm" id="assign-to-class">
-                                            <option value="">Select class...</option>
-                                            {% for c in classes %}
-                                            <option value="{{ c.class_id }}">{{ c.class_id }}{% if c.name and c.name != c.class_id %} ({{ c.name }}){% endif %}</option>
-                                            {% endfor %}
-                                        </select>
-                                        <button class="btn btn-primary btn-sm" id="assign-class-btn" disabled>
-                                            <i class="bi bi-check-lg"></i> Assign
-                                        </button>
-                                    </div>
-                                </div>
-                                <div class="col-auto">
-                                    <small class="text-muted"><span id="selected-count">0</span> selected</small>
-                                </div>
-                            </div>
-
-                            <!-- Students Table -->
-                            <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
-                                <table class="table table-sm table-hover" id="students-table">
-                                    <thead class="sticky-top bg-white">
-                                        <tr>
-                                            <th><input type="checkbox" id="select-all-students"></th>
-                                            <th>ID</th>
-                                            <th>Name</th>
-                                            <th>Class</th>
-                                            <th>Teachers</th>
-                                            <th>Actions</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="students-tbody">
-                                        <tr><td colspan="6" class="text-center text-muted">Loading...</td></tr>
-                                    </tbody>
-                                </table>
-                            </div>
                         </div>
                     </div>
                 </div>
@@ -546,6 +524,51 @@
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
                 <button type="button" class="btn btn-primary" id="save-teacher-btn">
+                    <i class="bi bi-save me-1"></i>Save Changes
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Student Modal -->
+<div class="modal fade" id="edit-student-modal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header bg-primary text-white">
+                <h5 class="modal-title"><i class="bi bi-pencil me-2"></i>Edit Student</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="edit-student-form">
+                    <input type="hidden" id="edit-student-id">
+                    <div class="mb-3">
+                        <label class="form-label">Student ID</label>
+                        <input type="text" class="form-control" id="edit-student-id-display" disabled>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Name *</label>
+                        <input type="text" class="form-control" id="edit-student-name" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Class</label>
+                        <select class="form-select" id="edit-student-class">
+                            <option value="">No class</option>
+                            {% for c in classes %}
+                            <option value="{{ c.class_id }}">{{ c.class_id }}{% if c.name and c.name != c.class_id %} ({{ c.name }}){% endif %}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Teachers (semicolon-separated IDs)</label>
+                        <input type="text" class="form-control" id="edit-student-teachers" placeholder="e.g., T001;T002">
+                        <small class="text-muted">Enter teacher IDs separated by semicolons</small>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="save-student-btn">
                     <i class="bi bi-save me-1"></i>Save Changes
                 </button>
             </div>
@@ -919,17 +942,6 @@
         await importStudents(students);
     });
 
-    // JSON Import
-    document.getElementById('import-json-btn').addEventListener('click', async () => {
-        const jsonText = document.getElementById('students-json').value;
-        try {
-            const students = JSON.parse(jsonText);
-            await importStudents(students);
-        } catch (e) {
-            showResult('import-result', 'Invalid JSON format', 'danger');
-        }
-    });
-
     // Download CSV Template
     document.getElementById('download-template').addEventListener('click', (e) => {
         e.preventDefault();
@@ -973,18 +985,25 @@
             
             const tbody = document.getElementById('students-tbody');
             if (data.students.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">No students found</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">No students found</td></tr>';
                 return;
             }
             
             tbody.innerHTML = data.students.map(s => `
                 <tr data-id="${s.student_id}">
                     <td><input type="checkbox" class="student-checkbox" value="${s.student_id}"></td>
-                    <td><code>${s.student_id}</code></td>
-                    <td>${s.name}</td>
+                    <td>${s.name}<br><small class="text-muted">${s.student_id}</small></td>
                     <td>${s.class || '-'}</td>
                     <td>${(s.teachers || []).join(', ') || '-'}</td>
                     <td>
+                        <button class="btn btn-outline-primary btn-sm edit-student-btn me-1" 
+                                data-student-id="${s.student_id}" 
+                                data-student-name="${s.name}"
+                                data-student-class="${s.class || ''}"
+                                data-student-teachers="${(s.teachers || []).join(';')}"
+                                title="Edit Student">
+                            <i class="bi bi-pencil"></i>
+                        </button>
                         <button class="btn btn-outline-warning btn-sm reset-pwd-btn" 
                                 data-student-id="${s.student_id}" data-student-name="${s.name}"
                                 title="Reset Password">
@@ -995,6 +1014,7 @@
             `).join('');
             
             attachResetPasswordListeners();
+            attachEditStudentListeners();
             updateDeleteButtons();
         } catch (e) {
             console.error('Failed to load students:', e);
@@ -1013,18 +1033,25 @@
             
             const tbody = document.getElementById('students-tbody');
             if (data.students.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">No students found</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">No students found</td></tr>';
                 return;
             }
             
             tbody.innerHTML = data.students.map(s => `
                 <tr data-id="${s.student_id}">
                     <td><input type="checkbox" class="student-checkbox" value="${s.student_id}"></td>
-                    <td><code>${s.student_id}</code></td>
-                    <td>${s.name}</td>
+                    <td>${s.name}<br><small class="text-muted">${s.student_id}</small></td>
                     <td>${s.class || '-'}</td>
                     <td>${(s.teachers || []).join(', ') || '-'}</td>
                     <td>
+                        <button class="btn btn-outline-primary btn-sm edit-student-btn me-1" 
+                                data-student-id="${s.student_id}" 
+                                data-student-name="${s.name}"
+                                data-student-class="${s.class || ''}"
+                                data-student-teachers="${(s.teachers || []).join(';')}"
+                                title="Edit Student">
+                            <i class="bi bi-pencil"></i>
+                        </button>
                         <button class="btn btn-outline-warning btn-sm reset-pwd-btn" 
                                 data-student-id="${s.student_id}" data-student-name="${s.name}"
                                 title="Reset Password">
@@ -1034,6 +1061,7 @@
                 </tr>
             `).join('');
             attachResetPasswordListeners();
+            attachEditStudentListeners();
         } catch (e) {
             console.error('Failed to filter students:', e);
         }
@@ -1388,6 +1416,68 @@
         } catch (e) {
             console.error('Update failed:', e);
             alert('Failed to update teacher');
+        }
+    });
+    
+    // ================== EDIT STUDENT ==================
+    
+    const editStudentModal = new bootstrap.Modal(document.getElementById('edit-student-modal'));
+    
+    function attachEditStudentListeners() {
+        document.querySelectorAll('.edit-student-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const studentId = btn.dataset.studentId;
+                const studentName = btn.dataset.studentName;
+                const studentClass = btn.dataset.studentClass;
+                const studentTeachers = btn.dataset.studentTeachers;
+                
+                document.getElementById('edit-student-id').value = studentId;
+                document.getElementById('edit-student-id-display').value = studentId;
+                document.getElementById('edit-student-name').value = studentName;
+                document.getElementById('edit-student-class').value = studentClass;
+                document.getElementById('edit-student-teachers').value = studentTeachers;
+                
+                editStudentModal.show();
+            });
+        });
+    }
+    
+    document.getElementById('save-student-btn').addEventListener('click', async () => {
+        const studentId = document.getElementById('edit-student-id').value;
+        const name = document.getElementById('edit-student-name').value.trim();
+        const studentClass = document.getElementById('edit-student-class').value;
+        const teachers = document.getElementById('edit-student-teachers').value;
+        
+        if (!name) {
+            alert('Name is required');
+            return;
+        }
+        
+        try {
+            const response = await fetch('/admin/update_student', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    student_id: studentId,
+                    name: name,
+                    class: studentClass,
+                    teachers: teachers.split(';').map(t => t.trim()).filter(t => t)
+                })
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                editStudentModal.hide();
+                loadStudents();
+                // Show success message
+                alert('✅ Student updated successfully');
+            } else {
+                alert(data.error || 'Failed to update student');
+            }
+        } catch (e) {
+            console.error('Update failed:', e);
+            alert('Failed to update student');
         }
     });
 
