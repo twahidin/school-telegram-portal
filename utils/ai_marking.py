@@ -312,6 +312,163 @@ Format your response as structured feedback."""
             'overall': f'Error generating feedback: {str(e)}'
         }
 
+def get_preview_feedback(pages: list, assignment: dict, feedback_type: str = 'overall', teacher: dict = None) -> dict:
+    """
+    Get preview feedback for student work without final submission.
+    Adjusts scaffolding based on how much work is completed.
+    
+    Args:
+        pages: List of page dictionaries with 'type' and 'data' keys
+        assignment: Assignment document with details
+        feedback_type: 'overall', 'hints', or 'check'
+        teacher: Teacher document for API key
+    
+    Returns:
+        Dictionary with feedback based on type requested
+    """
+    client = get_teacher_ai_service(teacher)
+    if not client:
+        return {
+            'error': 'AI service not available',
+            'feedback': 'AI feedback unavailable - no API key configured'
+        }
+    
+    try:
+        content = []
+        
+        # Different prompts based on feedback type
+        if feedback_type == 'overall':
+            system_prompt = f"""You are a helpful teaching assistant reviewing a student's work before final submission.
+
+Assignment: {assignment.get('title', 'Assignment')}
+Subject: {assignment.get('subject', 'General')}
+Total Marks: {assignment.get('total_marks', 100)}
+
+TASK: Provide overall feedback and areas to improve.
+
+IMPORTANT RULES FOR BLANK/INCOMPLETE SUBMISSIONS:
+- If the submission appears mostly BLANK (many unanswered questions), DO NOT provide detailed hints or scaffolding.
+- For blank submissions, simply note which questions need to be attempted and encourage the student to try first.
+- Only provide specific improvement areas for questions that have actual attempts.
+
+Respond with JSON:
+{{
+    "overall": "2-3 sentence overall assessment of their work so far",
+    "areas_to_improve": ["specific area 1", "specific area 2", "specific area 3"],
+    "warning": "optional warning if submission is mostly blank or incomplete"
+}}"""
+
+        elif feedback_type == 'hints':
+            system_prompt = f"""You are a helpful teaching assistant providing hints for stuck students.
+
+Assignment: {assignment.get('title', 'Assignment')}
+Subject: {assignment.get('subject', 'General')}
+Total Marks: {assignment.get('total_marks', 100)}
+
+TASK: Provide starting hints for questions where the student seems stuck.
+
+CRITICAL RULES - READ CAREFULLY:
+1. If a question is LEFT BLANK or has no attempt, DO NOT give hints for it. The student must attempt it first.
+2. Only provide hints for questions where the student has STARTED but seems stuck or confused.
+3. For blank questions, respond: "Please attempt this question first before requesting hints."
+4. Hints should guide thinking, NOT give away answers.
+5. If most questions are blank, provide only general study advice, not specific hints.
+
+Respond with JSON:
+{{
+    "hints": ["hint for Q1 if attempted", "hint for Q2 if attempted"],
+    "feedback": "general message about their progress",
+    "warning": "message if too many questions are blank - encourage attempting first"
+}}"""
+
+        elif feedback_type == 'check':
+            system_prompt = f"""You are a teaching assistant checking student answers.
+
+Assignment: {assignment.get('title', 'Assignment')}
+Subject: {assignment.get('subject', 'General')}
+Total Marks: {assignment.get('total_marks', 100)}
+
+TASK: Check the student's answers and indicate which are on track.
+
+RULES:
+1. For BLANK answers, mark as "Not attempted - please answer first"
+2. For attempted answers, indicate: "On track", "Partially correct", or "Needs revision"
+3. Do NOT provide correct answers - just indicate if they're on the right track
+4. If most answers are blank, note this and encourage the student to attempt more questions.
+
+Respond with JSON:
+{{
+    "check_result": "Summary of how many questions are on track vs need work",
+    "questions_status": "Q1: On track | Q2: Not attempted | Q3: Needs revision | ...",
+    "warning": "message if submission is mostly blank"
+}}"""
+        
+        else:
+            return {'error': 'Invalid feedback type', 'feedback': 'Please select a valid feedback type.'}
+        
+        content.append({
+            "type": "text",
+            "text": "STUDENT'S WORK:"
+        })
+        
+        # Add student submission pages
+        for i, page in enumerate(pages):
+            if page['type'] == 'image':
+                image_b64 = base64.standard_b64encode(page['data']).decode('utf-8')
+                content.append({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/jpeg",
+                        "data": image_b64
+                    }
+                })
+                content.append({
+                    "type": "text",
+                    "text": f"(Page {i+1})"
+                })
+            elif page['type'] == 'pdf':
+                pdf_b64 = base64.standard_b64encode(page['data']).decode('utf-8')
+                content.append({
+                    "type": "document",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "application/pdf",
+                        "data": pdf_b64
+                    }
+                })
+        
+        content.append({
+            "type": "text",
+            "text": "\nProvide your feedback as JSON:"
+        })
+        
+        # Make API call
+        message = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=1500,
+            messages=[
+                {
+                    "role": "user",
+                    "content": content
+                }
+            ],
+            system=system_prompt
+        )
+        
+        response_text = message.content[0].text
+        
+        # Parse JSON response
+        result = parse_ai_response(response_text)
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error getting preview feedback: {e}")
+        return {
+            'error': str(e),
+            'feedback': f'Error generating feedback: {str(e)}'
+        }
+
 def get_quick_feedback(answer: str, question: str, model_answer: str = None, teacher: dict = None) -> str:
     """Get quick feedback on a single text answer"""
     client = get_teacher_ai_service(teacher)

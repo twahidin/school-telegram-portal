@@ -784,6 +784,54 @@ def student_submit_files():
         logger.error(f"Submission error: {e}")
         return jsonify({'error': str(e)}), 500
 
+@app.route('/student/preview-feedback', methods=['POST'])
+@login_required
+@limiter.limit("20 per hour")
+def student_preview_feedback():
+    """Get AI feedback on work without submitting (for review)"""
+    from utils.ai_marking import get_preview_feedback
+    
+    try:
+        assignment_id = request.form.get('assignment_id')
+        feedback_type = request.form.get('feedback_type', 'overall')
+        file_type = request.form.get('file_type', 'images')
+        files = request.files.getlist('files')
+        
+        if not assignment_id or not files:
+            return jsonify({'error': 'Missing assignment or files'}), 400
+        
+        assignment = Assignment.find_one({'assignment_id': assignment_id})
+        if not assignment:
+            return jsonify({'error': 'Assignment not found'}), 404
+        
+        teacher = Teacher.find_one({'teacher_id': assignment['teacher_id']})
+        
+        # Build pages list
+        pages = []
+        for i, file in enumerate(files):
+            file_data = file.read()
+            if file.filename.lower().endswith('.pdf'):
+                page_type = 'pdf'
+            else:
+                page_type = 'image'
+            pages.append({
+                'type': page_type,
+                'data': file_data,
+                'page_num': i + 1
+            })
+        
+        # Get preview feedback
+        feedback = get_preview_feedback(pages, assignment, feedback_type, teacher)
+        
+        return jsonify({
+            'success': True,
+            'feedback': feedback
+        })
+        
+    except Exception as e:
+        logger.error(f"Preview feedback error: {e}")
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/student/submission/<submission_id>/file/<int:file_index>')
 @login_required
 def view_student_submission_file(submission_id, file_index):

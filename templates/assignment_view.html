@@ -98,7 +98,7 @@
             </div>
         </div>
         
-        <!-- Right: Upload Section -->
+        <!-- Right: Upload & Feedback Section -->
         <div class="col-lg-6 mb-4">
             {% if existing_submission %}
             <!-- Already submitted - show status -->
@@ -135,17 +135,110 @@
                 </div>
             </div>
             {% else %}
-            <!-- Upload Form -->
-            <div class="card h-100">
-                <div class="card-header bg-primary text-white">
-                    <h5 class="mb-0"><i class="bi bi-upload me-2"></i>Submit Your Work</h5>
+            <!-- Review My Work Section -->
+            <div class="card mb-4">
+                <div class="card-header bg-info text-white">
+                    <h5 class="mb-0"><i class="bi bi-search me-2"></i>Review My Work (Get AI Feedback)</h5>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted small mb-3">Upload your work to get AI feedback <strong>before</strong> final submission. This won't count as your submission.</p>
+                    
+                    <!-- Upload Method Tabs for Review -->
+                    <ul class="nav nav-pills nav-fill mb-3" role="tablist">
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link active" data-bs-toggle="pill" data-bs-target="#review-photo-upload" type="button">
+                                <i class="bi bi-camera me-1"></i>Photos
+                            </button>
+                        </li>
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link" data-bs-toggle="pill" data-bs-target="#review-pdf-upload" type="button">
+                                <i class="bi bi-file-pdf me-1"></i>PDF
+                            </button>
+                        </li>
+                    </ul>
+                    
+                    <div class="tab-content">
+                        <!-- Photo Upload for Review -->
+                        <div class="tab-pane fade show active" id="review-photo-upload">
+                            <div class="upload-zone upload-zone-sm" id="review-photo-zone">
+                                <input type="file" class="d-none" id="review-photo-input" name="review_photos" 
+                                       accept="image/*" multiple capture="environment">
+                                <label for="review-photo-input" class="upload-label">
+                                    <i class="bi bi-camera" style="font-size: 2rem; color: #17a2b8;"></i>
+                                    <p class="mb-0 mt-2 small">Click to upload photos for review</p>
+                                </label>
+                            </div>
+                            
+                            <div id="review-photo-preview" class="photo-preview mt-2" style="display: none;">
+                                <div class="preview-grid preview-grid-sm" id="review-preview-grid"></div>
+                            </div>
+                        </div>
+                        
+                        <!-- PDF Upload for Review -->
+                        <div class="tab-pane fade" id="review-pdf-upload">
+                            <div class="upload-zone upload-zone-sm" id="review-pdf-zone">
+                                <input type="file" class="d-none" id="review-pdf-input" name="review_pdf" accept=".pdf">
+                                <label for="review-pdf-input" class="upload-label">
+                                    <i class="bi bi-file-earmark-pdf" style="font-size: 2rem; color: #dc3545;"></i>
+                                    <p class="mb-0 mt-2 small">Click to upload PDF for review</p>
+                                </label>
+                            </div>
+                            
+                            <div id="review-pdf-preview" class="mt-2" style="display: none;">
+                                <div class="alert alert-success py-2 small">
+                                    <i class="bi bi-check-circle me-1"></i>
+                                    <span id="review-pdf-filename">file.pdf</span>
+                                    <button type="button" class="btn-close btn-close-sm float-end" onclick="clearReviewPdf()"></button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- AI Feedback Type Buttons -->
+                    <div class="feedback-buttons mt-3">
+                        <p class="text-muted small mb-2"><i class="bi bi-robot me-1"></i>Select feedback type:</p>
+                        <div class="d-grid gap-2">
+                            <button type="button" class="btn btn-outline-primary feedback-btn" id="btn-overall-feedback" disabled
+                                    onclick="getAIFeedback('overall')">
+                                <i class="bi bi-clipboard-check me-1"></i>Overall Feedback & Areas to Improve
+                            </button>
+                            <button type="button" class="btn btn-outline-success feedback-btn" id="btn-starting-hints" disabled
+                                    onclick="getAIFeedback('hints')">
+                                <i class="bi bi-lightbulb me-1"></i>Starting Hints (For Stuck Questions)
+                            </button>
+                            <button type="button" class="btn btn-outline-warning feedback-btn" id="btn-check-answers" disabled
+                                    onclick="getAIFeedback('check')">
+                                <i class="bi bi-check2-square me-1"></i>Check My Answers
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- AI Feedback Result -->
+                    <div id="ai-feedback-result" class="mt-3" style="display: none;">
+                        <div class="card border-info">
+                            <div class="card-header bg-light py-2">
+                                <span class="small fw-bold"><i class="bi bi-robot me-1"></i>AI Feedback</span>
+                                <button type="button" class="btn-close btn-close-sm float-end" onclick="closeFeedback()"></button>
+                            </div>
+                            <div class="card-body" id="ai-feedback-content">
+                                <!-- Feedback will be inserted here -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Final Submission Section -->
+            <div class="card">
+                <div class="card-header bg-success text-white">
+                    <h5 class="mb-0"><i class="bi bi-send-check me-2"></i>Final Submission</h5>
                 </div>
                 <div class="card-body">
                     <form id="submission-form" enctype="multipart/form-data">
                         <input type="hidden" name="assignment_id" value="{{ assignment.assignment_id }}">
                         
                         <!-- Upload Method Tabs -->
-                        <ul class="nav nav-pills mb-4" role="tablist">
+                        <ul class="nav nav-pills nav-fill mb-3" role="tablist">
                             <li class="nav-item" role="presentation">
                                 <button class="nav-link active" data-bs-toggle="pill" data-bs-target="#photo-upload" type="button">
                                     <i class="bi bi-camera me-1"></i>Photos
@@ -161,33 +254,29 @@
                         <div class="tab-content">
                             <!-- Photo Upload -->
                             <div class="tab-pane fade show active" id="photo-upload">
-                                <p class="text-muted small">Take photos of each page of your work. Multiple photos allowed.</p>
-                                
                                 <div class="upload-zone" id="photo-zone">
                                     <input type="file" class="d-none" id="photo-input" name="photos" 
                                            accept="image/*" multiple capture="environment">
                                     <label for="photo-input" class="upload-label">
-                                        <i class="bi bi-camera" style="font-size: 3rem; color: #667eea;"></i>
-                                        <h6 class="mt-2">Click to take/upload photos</h6>
+                                        <i class="bi bi-camera" style="font-size: 2.5rem; color: #28a745;"></i>
+                                        <h6 class="mt-2">Click to upload final submission</h6>
                                         <p class="text-muted small mb-0">Or drag and drop images here</p>
                                     </label>
                                 </div>
                                 
                                 <!-- Preview -->
                                 <div id="photo-preview" class="photo-preview mt-3" style="display: none;">
-                                    <h6><i class="bi bi-images me-1"></i>Uploaded Pages:</h6>
+                                    <h6 class="small"><i class="bi bi-images me-1"></i>Pages to submit:</h6>
                                     <div class="preview-grid" id="preview-grid"></div>
                                 </div>
                             </div>
                             
                             <!-- PDF Upload -->
                             <div class="tab-pane fade" id="pdf-upload">
-                                <p class="text-muted small">Upload your work as a single PDF file.</p>
-                                
                                 <div class="upload-zone" id="pdf-zone">
                                     <input type="file" class="d-none" id="pdf-input" name="pdf" accept=".pdf">
                                     <label for="pdf-input" class="upload-label">
-                                        <i class="bi bi-file-earmark-pdf" style="font-size: 3rem; color: #dc3545;"></i>
+                                        <i class="bi bi-file-earmark-pdf" style="font-size: 2.5rem; color: #dc3545;"></i>
                                         <h6 class="mt-2">Click to upload PDF</h6>
                                         <p class="text-muted small mb-0">Or drag and drop here</p>
                                     </label>
@@ -204,15 +293,15 @@
                         </div>
                         
                         <!-- Submit Button -->
-                        <div class="d-grid gap-2 mt-4">
+                        <div class="d-grid gap-2 mt-3">
                             <button type="submit" class="btn btn-success btn-lg" id="submit-btn" disabled>
-                                <i class="bi bi-send me-1"></i>Submit Assignment
+                                <i class="bi bi-send-fill me-1"></i>Submit Assignment
                             </button>
                         </div>
                         
-                        <div class="alert alert-warning mt-3 small">
+                        <div class="alert alert-warning mt-3 small py-2">
                             <i class="bi bi-exclamation-triangle me-1"></i>
-                            <strong>Note:</strong> Once submitted, you cannot change your answers. AI will provide initial feedback, then your teacher will review.
+                            <strong>Note:</strong> Once submitted, you cannot change your answers. AI will provide feedback, then your teacher will review.
                         </div>
                     </form>
                 </div>
@@ -249,6 +338,10 @@
     background: #fafafa;
 }
 
+.upload-zone-sm {
+    padding: 20px 15px;
+}
+
 .upload-zone:hover, .upload-zone.dragover {
     border-color: #667eea;
     background: #f0f4ff;
@@ -269,6 +362,11 @@
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
     gap: 10px;
+}
+
+.preview-grid-sm {
+    grid-template-columns: repeat(auto-fill, minmax(60px, 1fr));
+    gap: 6px;
 }
 
 .preview-item {
@@ -315,15 +413,52 @@
     background: linear-gradient(135deg, #f0fff4, #e8f5e9);
     border-radius: 12px;
 }
+
+.feedback-buttons .btn {
+    text-align: left;
+    padding: 10px 15px;
+}
+
+.feedback-buttons .btn i {
+    width: 20px;
+}
+
+#ai-feedback-content {
+    max-height: 300px;
+    overflow-y: auto;
+    font-size: 0.9rem;
+}
+
+#ai-feedback-content .feedback-section {
+    margin-bottom: 15px;
+    padding-bottom: 15px;
+    border-bottom: 1px solid #eee;
+}
+
+#ai-feedback-content .feedback-section:last-child {
+    border-bottom: none;
+    margin-bottom: 0;
+    padding-bottom: 0;
+}
+
+.btn-close-sm {
+    font-size: 0.6rem;
+    padding: 0.3rem;
+}
 </style>
 {% endblock %}
 
 {% block scripts %}
 <script>
+    // === FINAL SUBMISSION UPLOADS ===
     let uploadedPhotos = [];
     let uploadedPdf = null;
     
-    // Photo input handling
+    // === REVIEW UPLOADS ===
+    let reviewPhotos = [];
+    let reviewPdf = null;
+    
+    // Photo input handling for final submission
     const photoInput = document.getElementById('photo-input');
     const photoZone = document.getElementById('photo-zone');
     const photoPreview = document.getElementById('photo-preview');
@@ -331,36 +466,16 @@
     
     if (photoInput) {
         photoInput.addEventListener('change', handlePhotoSelect);
-        
-        // Drag and drop
-        photoZone.addEventListener('dragover', (e) => {
-            e.preventDefault();
-            photoZone.classList.add('dragover');
-        });
-        
-        photoZone.addEventListener('dragleave', () => {
-            photoZone.classList.remove('dragover');
-        });
-        
-        photoZone.addEventListener('drop', (e) => {
-            e.preventDefault();
-            photoZone.classList.remove('dragover');
-            if (e.dataTransfer.files.length) {
-                photoInput.files = e.dataTransfer.files;
-                handlePhotoSelect({ target: photoInput });
-            }
-        });
+        setupDragDrop(photoZone, photoInput, handlePhotoSelect);
     }
     
     function handlePhotoSelect(e) {
         const files = Array.from(e.target.files);
-        
-        files.forEach((file, idx) => {
+        files.forEach((file) => {
             if (file.type.startsWith('image/')) {
                 uploadedPhotos.push(file);
             }
         });
-        
         updatePhotoPreview();
         updateSubmitButton();
     }
@@ -371,11 +486,9 @@
             photoZone.classList.remove('has-files');
             return;
         }
-        
         photoPreview.style.display = 'block';
         photoZone.classList.add('has-files');
         previewGrid.innerHTML = '';
-        
         uploadedPhotos.forEach((file, idx) => {
             const reader = new FileReader();
             reader.onload = (e) => {
@@ -383,7 +496,7 @@
                 div.className = 'preview-item';
                 div.innerHTML = `
                     <img src="${e.target.result}" alt="Page ${idx + 1}">
-                    <span class="page-num">Page ${idx + 1}</span>
+                    <span class="page-num">${idx + 1}</span>
                     <button type="button" class="remove-btn" onclick="removePhoto(${idx})">×</button>
                 `;
                 previewGrid.appendChild(div);
@@ -398,31 +511,14 @@
         updateSubmitButton();
     }
     
-    // PDF input handling
+    // PDF input handling for final submission
     const pdfInput = document.getElementById('pdf-input');
     const pdfZone = document.getElementById('pdf-zone');
     const pdfPreview = document.getElementById('pdf-preview');
     
     if (pdfInput) {
         pdfInput.addEventListener('change', handlePdfSelect);
-        
-        pdfZone.addEventListener('dragover', (e) => {
-            e.preventDefault();
-            pdfZone.classList.add('dragover');
-        });
-        
-        pdfZone.addEventListener('dragleave', () => {
-            pdfZone.classList.remove('dragover');
-        });
-        
-        pdfZone.addEventListener('drop', (e) => {
-            e.preventDefault();
-            pdfZone.classList.remove('dragover');
-            if (e.dataTransfer.files.length && e.dataTransfer.files[0].type === 'application/pdf') {
-                pdfInput.files = e.dataTransfer.files;
-                handlePdfSelect({ target: pdfInput });
-            }
-        });
+        setupDragDrop(pdfZone, pdfInput, handlePdfSelect, 'application/pdf');
     }
     
     function handlePdfSelect(e) {
@@ -451,7 +547,239 @@
         }
     }
     
-    // Form submission
+    // === REVIEW SECTION HANDLERS ===
+    const reviewPhotoInput = document.getElementById('review-photo-input');
+    const reviewPhotoZone = document.getElementById('review-photo-zone');
+    const reviewPhotoPreview = document.getElementById('review-photo-preview');
+    const reviewPreviewGrid = document.getElementById('review-preview-grid');
+    
+    if (reviewPhotoInput) {
+        reviewPhotoInput.addEventListener('change', handleReviewPhotoSelect);
+        setupDragDrop(reviewPhotoZone, reviewPhotoInput, handleReviewPhotoSelect);
+    }
+    
+    function handleReviewPhotoSelect(e) {
+        const files = Array.from(e.target.files);
+        files.forEach((file) => {
+            if (file.type.startsWith('image/')) {
+                reviewPhotos.push(file);
+            }
+        });
+        updateReviewPhotoPreview();
+        updateFeedbackButtons();
+    }
+    
+    function updateReviewPhotoPreview() {
+        if (reviewPhotos.length === 0) {
+            reviewPhotoPreview.style.display = 'none';
+            reviewPhotoZone.classList.remove('has-files');
+            return;
+        }
+        reviewPhotoPreview.style.display = 'block';
+        reviewPhotoZone.classList.add('has-files');
+        reviewPreviewGrid.innerHTML = '';
+        reviewPhotos.forEach((file, idx) => {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const div = document.createElement('div');
+                div.className = 'preview-item';
+                div.innerHTML = `
+                    <img src="${e.target.result}" alt="Page ${idx + 1}">
+                    <span class="page-num">${idx + 1}</span>
+                    <button type="button" class="remove-btn" onclick="removeReviewPhoto(${idx})">×</button>
+                `;
+                reviewPreviewGrid.appendChild(div);
+            };
+            reader.readAsDataURL(file);
+        });
+    }
+    
+    function removeReviewPhoto(index) {
+        reviewPhotos.splice(index, 1);
+        updateReviewPhotoPreview();
+        updateFeedbackButtons();
+    }
+    
+    // Review PDF handling
+    const reviewPdfInput = document.getElementById('review-pdf-input');
+    const reviewPdfZone = document.getElementById('review-pdf-zone');
+    const reviewPdfPreview = document.getElementById('review-pdf-preview');
+    
+    if (reviewPdfInput) {
+        reviewPdfInput.addEventListener('change', handleReviewPdfSelect);
+        setupDragDrop(reviewPdfZone, reviewPdfInput, handleReviewPdfSelect, 'application/pdf');
+    }
+    
+    function handleReviewPdfSelect(e) {
+        const file = e.target.files[0];
+        if (file && file.type === 'application/pdf') {
+            reviewPdf = file;
+            reviewPdfZone.classList.add('has-files');
+            reviewPdfPreview.style.display = 'block';
+            document.getElementById('review-pdf-filename').textContent = file.name;
+            updateFeedbackButtons();
+        }
+    }
+    
+    function clearReviewPdf() {
+        reviewPdf = null;
+        reviewPdfInput.value = '';
+        reviewPdfZone.classList.remove('has-files');
+        reviewPdfPreview.style.display = 'none';
+        updateFeedbackButtons();
+    }
+    
+    function updateFeedbackButtons() {
+        const hasFiles = reviewPhotos.length > 0 || reviewPdf;
+        document.querySelectorAll('.feedback-btn').forEach(btn => {
+            btn.disabled = !hasFiles;
+        });
+    }
+    
+    // Helper function for drag and drop
+    function setupDragDrop(zone, input, handler, fileType = null) {
+        if (!zone) return;
+        zone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            zone.classList.add('dragover');
+        });
+        zone.addEventListener('dragleave', () => {
+            zone.classList.remove('dragover');
+        });
+        zone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            zone.classList.remove('dragover');
+            if (e.dataTransfer.files.length) {
+                if (fileType && e.dataTransfer.files[0].type !== fileType) return;
+                input.files = e.dataTransfer.files;
+                handler({ target: input });
+            }
+        });
+    }
+    
+    // === AI FEEDBACK FUNCTION ===
+    async function getAIFeedback(feedbackType) {
+        if (reviewPhotos.length === 0 && !reviewPdf) {
+            alert('Please upload your work first to get AI feedback.');
+            return;
+        }
+        
+        const feedbackResult = document.getElementById('ai-feedback-result');
+        const feedbackContent = document.getElementById('ai-feedback-content');
+        
+        // Show loading state
+        feedbackContent.innerHTML = `
+            <div class="text-center py-4">
+                <div class="spinner-border text-primary mb-2" role="status"></div>
+                <p class="mb-0 text-muted">AI is reviewing your work...</p>
+            </div>
+        `;
+        feedbackResult.style.display = 'block';
+        
+        // Disable buttons while loading
+        document.querySelectorAll('.feedback-btn').forEach(btn => btn.disabled = true);
+        
+        const formData = new FormData();
+        formData.append('assignment_id', '{{ assignment.assignment_id }}');
+        formData.append('feedback_type', feedbackType);
+        
+        if (reviewPhotos.length > 0) {
+            reviewPhotos.forEach((photo, idx) => {
+                formData.append('files', photo, `page_${idx + 1}.jpg`);
+            });
+            formData.append('file_type', 'images');
+        } else if (reviewPdf) {
+            formData.append('files', reviewPdf);
+            formData.append('file_type', 'pdf');
+        }
+        
+        try {
+            const response = await fetch('/student/preview-feedback', {
+                method: 'POST',
+                body: formData
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                feedbackContent.innerHTML = formatFeedback(result.feedback, feedbackType);
+            } else {
+                feedbackContent.innerHTML = `
+                    <div class="alert alert-danger mb-0">
+                        <i class="bi bi-exclamation-circle me-1"></i>
+                        ${result.error || 'Failed to get feedback. Please try again.'}
+                    </div>
+                `;
+            }
+        } catch (error) {
+            feedbackContent.innerHTML = `
+                <div class="alert alert-danger mb-0">
+                    <i class="bi bi-exclamation-circle me-1"></i>
+                    Error connecting to server. Please try again.
+                </div>
+            `;
+            console.error(error);
+        }
+        
+        // Re-enable buttons
+        updateFeedbackButtons();
+    }
+    
+    function formatFeedback(feedback, feedbackType) {
+        let html = '';
+        
+        if (feedback.warning) {
+            html += `<div class="alert alert-warning py-2 mb-3"><i class="bi bi-exclamation-triangle me-1"></i>${feedback.warning}</div>`;
+        }
+        
+        if (feedbackType === 'overall') {
+            html += `<div class="feedback-section">
+                <h6 class="text-primary"><i class="bi bi-clipboard-check me-1"></i>Overall Feedback</h6>
+                <p class="mb-2">${feedback.overall || feedback.feedback || 'No feedback available.'}</p>
+            </div>`;
+            if (feedback.areas_to_improve && feedback.areas_to_improve.length > 0) {
+                html += `<div class="feedback-section">
+                    <h6 class="text-warning"><i class="bi bi-arrow-up-circle me-1"></i>Areas to Improve</h6>
+                    <ul class="mb-0 ps-3">`;
+                feedback.areas_to_improve.forEach(area => {
+                    html += `<li>${area}</li>`;
+                });
+                html += `</ul></div>`;
+            }
+        } else if (feedbackType === 'hints') {
+            html += `<div class="feedback-section">
+                <h6 class="text-success"><i class="bi bi-lightbulb me-1"></i>Starting Hints</h6>`;
+            if (feedback.hints && feedback.hints.length > 0) {
+                html += `<ul class="mb-0 ps-3">`;
+                feedback.hints.forEach(hint => {
+                    html += `<li class="mb-2">${hint}</li>`;
+                });
+                html += `</ul>`;
+            } else {
+                html += `<p class="mb-0">${feedback.feedback || 'No hints available for completed questions.'}</p>`;
+            }
+            html += `</div>`;
+        } else if (feedbackType === 'check') {
+            html += `<div class="feedback-section">
+                <h6 class="text-info"><i class="bi bi-check2-square me-1"></i>Answer Check</h6>
+                <p class="mb-0">${feedback.check_result || feedback.feedback || 'Unable to check answers.'}</p>
+            </div>`;
+            if (feedback.questions_status) {
+                html += `<div class="feedback-section">
+                    <h6><i class="bi bi-list-check me-1"></i>Question Status</h6>
+                    <div class="small">${feedback.questions_status}</div>
+                </div>`;
+            }
+        }
+        
+        return html || `<p class="mb-0">${feedback.feedback || feedback.overall || 'Feedback not available.'}</p>`;
+    }
+    
+    function closeFeedback() {
+        document.getElementById('ai-feedback-result').style.display = 'none';
+    }
+    
+    // === FORM SUBMISSION ===
     const form = document.getElementById('submission-form');
     if (form) {
         form.addEventListener('submit', async (e) => {
@@ -489,11 +817,9 @@
                 });
                 
                 const result = await response.json();
-                
                 loadingModal.hide();
                 
                 if (result.success) {
-                    // Show success and redirect
                     alert('Assignment submitted successfully! AI is generating feedback...');
                     window.location.href = result.redirect || '/student/submissions';
                 } else {
