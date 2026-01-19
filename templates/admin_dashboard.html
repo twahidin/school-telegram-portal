@@ -90,6 +90,11 @@
                 <i class="bi bi-collection me-1"></i>Classes
             </button>
         </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="prompts-tab" data-bs-toggle="tab" data-bs-target="#prompts" type="button">
+                <i class="bi bi-robot me-1"></i>AI Prompts
+            </button>
+        </li>
     </ul>
 
     <!-- Tab Content -->
@@ -449,6 +454,45 @@
                                 <div class="list-group-item text-muted text-center">No classes yet</div>
                                 {% endfor %}
                             </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- AI Prompts Tab -->
+        <div class="tab-pane fade" id="prompts" role="tabpanel">
+            <div class="row">
+                <div class="col-12">
+                    <div class="card">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <h5 class="mb-0"><i class="bi bi-robot me-2"></i>AI Help Prompts</h5>
+                            <div>
+                                <button class="btn btn-outline-secondary btn-sm me-2" id="reset-prompts-btn">
+                                    <i class="bi bi-arrow-counterclockwise me-1"></i>Reset to Defaults
+                                </button>
+                                <button class="btn btn-success btn-sm" id="save-prompts-btn">
+                                    <i class="bi bi-save me-1"></i>Save All Changes
+                                </button>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <p class="text-muted mb-4">
+                                Configure the AI prompts used when students request help with questions. 
+                                Use <code>{subject}</code>, <code>{assignment_title}</code>, <code>{question}</code>, 
+                                <code>{student_answer}</code>, and <code>{answer_context}</code> as placeholders.
+                            </p>
+                            
+                            <div id="prompts-loading" class="text-center py-5">
+                                <div class="spinner-border text-primary" role="status"></div>
+                                <p class="text-muted mt-2">Loading prompts...</p>
+                            </div>
+                            
+                            <div id="prompts-container" style="display: none;">
+                                <!-- Prompts will be loaded here -->
+                            </div>
+                            
+                            <div id="prompts-result" class="mt-3" style="display: none;"></div>
                         </div>
                     </div>
                 </div>
@@ -1571,5 +1615,172 @@
         el.className = `mt-3 alert alert-${type}`;
         el.innerHTML = `<i class="bi bi-${type === 'success' ? 'check-circle' : type === 'warning' ? 'exclamation-triangle' : 'x-circle'} me-2"></i>${message}`;
     }
+
+    // ================== AI PROMPTS MANAGEMENT ==================
+    
+    let currentPrompts = {};
+    let defaultPrompts = {};
+    
+    // Load prompts when tab is clicked
+    document.getElementById('prompts-tab').addEventListener('click', loadPrompts);
+    
+    async function loadPrompts() {
+        const container = document.getElementById('prompts-container');
+        const loading = document.getElementById('prompts-loading');
+        
+        try {
+            const response = await fetch('/admin/api/prompts');
+            const data = await response.json();
+            
+            if (data.success) {
+                currentPrompts = data.prompts;
+                defaultPrompts = data.defaults;
+                renderPrompts();
+                loading.style.display = 'none';
+                container.style.display = 'block';
+            } else {
+                loading.innerHTML = `<div class="alert alert-danger">${data.error || 'Failed to load prompts'}</div>`;
+            }
+        } catch (e) {
+            console.error('Failed to load prompts:', e);
+            loading.innerHTML = `<div class="alert alert-danger">Failed to load prompts</div>`;
+        }
+    }
+    
+    function renderPrompts() {
+        const container = document.getElementById('prompts-container');
+        
+        const promptTypes = Object.keys(currentPrompts);
+        
+        let html = '<div class="accordion" id="promptsAccordion">';
+        
+        promptTypes.forEach((key, index) => {
+            const prompt = currentPrompts[key];
+            const isFirst = index === 0;
+            
+            html += `
+                <div class="accordion-item">
+                    <h2 class="accordion-header">
+                        <button class="accordion-button ${isFirst ? '' : 'collapsed'}" type="button" data-bs-toggle="collapse" data-bs-target="#prompt-${key}">
+                            <strong>${prompt.name || key}</strong>
+                            <span class="badge ${prompt.requires_answer ? 'bg-warning text-dark' : 'bg-secondary'} ms-2">
+                                ${prompt.requires_answer ? 'Requires Answer' : 'No Answer Needed'}
+                            </span>
+                        </button>
+                    </h2>
+                    <div id="prompt-${key}" class="accordion-collapse collapse ${isFirst ? 'show' : ''}" data-bs-parent="#promptsAccordion">
+                        <div class="accordion-body">
+                            <p class="text-muted small mb-3">${prompt.description || ''}</p>
+                            
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">
+                                    <i class="bi bi-gear me-1"></i>System Prompt
+                                    <small class="text-muted fw-normal">(Instructions for the AI)</small>
+                                </label>
+                                <textarea class="form-control font-monospace" rows="10" 
+                                          id="system-${key}" style="font-size: 0.85rem;">${escapeHtml(prompt.system_prompt || '')}</textarea>
+                            </div>
+                            
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">
+                                    <i class="bi bi-chat-left-text me-1"></i>User Prompt
+                                    <small class="text-muted fw-normal">(The actual request sent to AI)</small>
+                                </label>
+                                <textarea class="form-control font-monospace" rows="6" 
+                                          id="user-${key}" style="font-size: 0.85rem;">${escapeHtml(prompt.user_prompt || '')}</textarea>
+                            </div>
+                            
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="requires-${key}" 
+                                           ${prompt.requires_answer ? 'checked' : ''}>
+                                    <label class="form-check-label" for="requires-${key}">
+                                        Requires student answer
+                                    </label>
+                                </div>
+                                <button class="btn btn-outline-secondary btn-sm" onclick="resetSinglePrompt('${key}')">
+                                    <i class="bi bi-arrow-counterclockwise me-1"></i>Reset This Prompt
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+        
+        html += '</div>';
+        container.innerHTML = html;
+    }
+    
+    function resetSinglePrompt(key) {
+        if (!confirm(`Reset "${currentPrompts[key].name}" to default? Your changes will be lost.`)) {
+            return;
+        }
+        
+        const defaultPrompt = defaultPrompts[key];
+        if (defaultPrompt) {
+            document.getElementById(`system-${key}`).value = defaultPrompt.system_prompt;
+            document.getElementById(`user-${key}`).value = defaultPrompt.user_prompt;
+            document.getElementById(`requires-${key}`).checked = defaultPrompt.requires_answer;
+        }
+    }
+    
+    document.getElementById('reset-prompts-btn').addEventListener('click', async () => {
+        if (!confirm('Reset ALL prompts to defaults? All your customizations will be lost.')) {
+            return;
+        }
+        
+        try {
+            const response = await fetch('/admin/api/prompts/reset', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+            const data = await response.json();
+            
+            if (data.success) {
+                showResult('prompts-result', 'Prompts reset to defaults', 'success');
+                loadPrompts();
+            } else {
+                showResult('prompts-result', data.error || 'Failed to reset prompts', 'danger');
+            }
+        } catch (e) {
+            showResult('prompts-result', 'Failed to reset prompts', 'danger');
+        }
+    });
+    
+    document.getElementById('save-prompts-btn').addEventListener('click', async () => {
+        const promptsToSave = {};
+        
+        Object.keys(currentPrompts).forEach(key => {
+            promptsToSave[key] = {
+                name: currentPrompts[key].name,
+                description: currentPrompts[key].description,
+                system_prompt: document.getElementById(`system-${key}`).value,
+                user_prompt: document.getElementById(`user-${key}`).value,
+                requires_answer: document.getElementById(`requires-${key}`).checked
+            };
+        });
+        
+        try {
+            const response = await fetch('/admin/api/prompts', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ prompts: promptsToSave })
+            });
+            const data = await response.json();
+            
+            if (data.success) {
+                showResult('prompts-result', 'Prompts saved successfully!', 'success');
+                // Update current prompts
+                Object.keys(promptsToSave).forEach(key => {
+                    currentPrompts[key] = { ...currentPrompts[key], ...promptsToSave[key] };
+                });
+            } else {
+                showResult('prompts-result', data.error || 'Failed to save prompts', 'danger');
+            }
+        } catch (e) {
+            showResult('prompts-result', 'Failed to save prompts', 'danger');
+        }
+    });
 </script>
 {% endblock %}

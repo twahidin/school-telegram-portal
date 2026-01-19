@@ -526,6 +526,48 @@ def get_ai_feedback(assignment_id):
         logger.error(f"Error getting AI feedback: {e}")
         return jsonify({'error': 'Failed to get feedback'}), 500
 
+@app.route('/api/student/question-help', methods=['POST'])
+@login_required
+@limiter.limit("20 per hour")
+def get_question_help_api():
+    """Get AI help for a specific question"""
+    from utils.ai_marking import get_question_help
+    
+    try:
+        data = request.get_json()
+        assignment_id = data.get('assignment_id')
+        question_text = data.get('question', '').strip()
+        answer_text = data.get('answer', '').strip()
+        help_type = data.get('help_type', 'stuck')
+        
+        if not question_text:
+            return jsonify({'error': 'Please provide the question text'}), 400
+        
+        assignment = Assignment.find_one({'assignment_id': assignment_id})
+        if not assignment:
+            return jsonify({'error': 'Assignment not found'}), 404
+        
+        teacher = Teacher.find_one({'teacher_id': assignment['teacher_id']})
+        
+        # Get AI help (pass db instance for custom prompts)
+        help_response = get_question_help(
+            question=question_text,
+            student_answer=answer_text,
+            help_type=help_type,
+            assignment=assignment,
+            teacher=teacher,
+            db_instance=db
+        )
+        
+        return jsonify({
+            'success': True,
+            'help': help_response
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting question help: {e}")
+        return jsonify({'error': 'Failed to get help. Please try again.'}), 500
+
 @app.route('/assignments/<assignment_id>/submit', methods=['POST'])
 @login_required
 @limiter.limit("10 per hour")
@@ -2600,6 +2642,67 @@ def delete_class():
         
     except Exception as e:
         logger.error(f"Error deleting class: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/admin/api/prompts')
+@admin_required
+def get_prompts():
+    """Get all AI help prompts"""
+    from utils.ai_marking import get_ai_prompts, get_default_prompts
+    
+    try:
+        prompts = get_ai_prompts(db)
+        defaults = get_default_prompts()
+        
+        return jsonify({
+            'success': True,
+            'prompts': prompts,
+            'defaults': defaults
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting prompts: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/admin/api/prompts', methods=['POST'])
+@admin_required
+def update_prompts():
+    """Update AI help prompts"""
+    from utils.ai_marking import save_ai_prompts
+    
+    try:
+        data = request.get_json()
+        prompts = data.get('prompts', {})
+        
+        if not prompts:
+            return jsonify({'error': 'No prompts provided'}), 400
+        
+        success = save_ai_prompts(db, prompts)
+        
+        if success:
+            return jsonify({'success': True, 'message': 'Prompts updated successfully'})
+        else:
+            return jsonify({'error': 'Failed to save prompts'}), 500
+        
+    except Exception as e:
+        logger.error(f"Error updating prompts: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/admin/api/prompts/reset', methods=['POST'])
+@admin_required
+def reset_prompts():
+    """Reset prompts to defaults"""
+    try:
+        # Delete custom prompts from database
+        db.db.ai_prompts.delete_one({'_id': 'help_prompts'})
+        
+        return jsonify({'success': True, 'message': 'Prompts reset to defaults'})
+        
+    except Exception as e:
+        logger.error(f"Error resetting prompts: {e}")
         return jsonify({'error': str(e)}), 500
 
 

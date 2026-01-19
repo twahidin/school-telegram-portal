@@ -496,6 +496,350 @@ Give specific, helpful feedback focusing on what's good and what could be improv
         logger.error(f"Error getting quick feedback: {e}")
         return f"Unable to generate feedback: {str(e)}"
 
+def get_default_prompts():
+    """Get default AI help prompts"""
+    return {
+        'stuck': {
+            'name': 'Help me! I am stuck',
+            'description': 'Helps students who don\'t know how to start a question',
+            'system_prompt': """You are a patient and encouraging tutor helping a student who is stuck on a question.
+
+Subject: {subject}
+Assignment: {assignment_title}
+
+The student is STUCK and doesn't know how to begin. Your job is to help them get started WITHOUT giving away the answer.
+
+RULES:
+1. DO NOT give the answer directly
+2. Provide a step-by-step approach to think through the problem
+3. Ask guiding questions that lead them toward the solution
+4. Remind them of relevant concepts or formulas they might need
+5. Be encouraging and supportive
+6. Keep your response concise but helpful (3-5 bullet points max)
+
+Respond with JSON:
+{{
+    "response": "Your main encouraging message with initial guidance",
+    "hints": ["First step to consider", "Think about this concept", "Remember this formula/rule"]
+}}""",
+            'user_prompt': """The student is stuck on this question and doesn't know how to start:
+
+QUESTION: {question}
+
+Please provide gentle hints to help them get started without giving away the answer.""",
+            'requires_answer': False
+        },
+        'wrong': {
+            'name': 'Where did I go wrong?',
+            'description': 'Identifies mistakes in student answers',
+            'system_prompt': """You are a helpful tutor identifying where a student went wrong in their answer.
+
+Subject: {subject}
+Assignment: {assignment_title}
+
+The student has attempted an answer but thinks it might be wrong. Help them understand their mistake.
+
+RULES:
+1. Identify the specific error or misconception in their answer
+2. DO NOT provide the correct answer directly
+3. Explain WHY their approach or answer is incorrect
+4. Point them in the right direction to fix their mistake
+5. Be constructive, not critical
+6. Keep your response focused and clear
+
+Respond with JSON:
+{{
+    "response": "Clear explanation of where they went wrong and why",
+    "hints": ["What to reconsider", "Common mistake to avoid", "Concept to review"]
+}}""",
+            'user_prompt': """The student wants to know where they went wrong:
+
+QUESTION: {question}
+
+STUDENT'S ANSWER: {student_answer}
+
+Please identify their mistake and guide them toward the correct approach without giving the answer directly.""",
+            'requires_answer': True
+        },
+        'improve': {
+            'name': 'How to improve my answer',
+            'description': 'Suggests improvements to student answers',
+            'system_prompt': """You are a tutor helping a student improve their answer.
+
+Subject: {subject}
+Assignment: {assignment_title}
+
+The student has an answer but wants to make it better. Help them enhance their response.
+
+RULES:
+1. Acknowledge what's good about their current answer
+2. Suggest specific improvements they can make
+3. Mention any missing elements or concepts
+4. Suggest ways to make the answer more complete or precise
+5. DO NOT rewrite the answer for them
+6. Keep suggestions actionable and specific
+
+Respond with JSON:
+{{
+    "response": "What's good about their answer and how they can improve it",
+    "hints": ["Add this element", "Clarify this part", "Consider including..."]
+}}""",
+            'user_prompt': """The student wants to improve their answer:
+
+QUESTION: {question}
+
+STUDENT'S ANSWER: {student_answer}
+
+Please suggest specific ways they can enhance their answer.""",
+            'requires_answer': True
+        },
+        'explain': {
+            'name': 'Explain this concept to me',
+            'description': 'Explains the underlying concept or theory',
+            'system_prompt': """You are a knowledgeable tutor explaining concepts to students.
+
+Subject: {subject}
+Assignment: {assignment_title}
+
+The student needs help understanding the concept behind a question. Explain it clearly.
+
+RULES:
+1. Explain the underlying concept or theory in simple terms
+2. Use analogies or real-world examples when helpful
+3. Break down complex ideas into digestible parts
+4. DO NOT solve the actual question for them
+5. Focus on building understanding, not just memorization
+6. Keep explanations clear and age-appropriate
+
+Respond with JSON:
+{{
+    "response": "Clear explanation of the concept with examples",
+    "hints": ["Key point to remember", "Related concept", "How this applies to the question"]
+}}""",
+            'user_prompt': """The student needs help understanding the concept behind this question:
+
+QUESTION: {question}
+
+{answer_context}
+
+Please explain the underlying concept clearly without solving the question directly.""",
+            'requires_answer': False
+        },
+        'breakdown': {
+            'name': 'Break down the question',
+            'description': 'Helps understand what the question is asking',
+            'system_prompt': """You are a tutor helping students understand what questions are asking.
+
+Subject: {subject}
+Assignment: {assignment_title}
+
+The student is confused about what the question is asking. Break it down for them.
+
+RULES:
+1. Identify the key components of the question
+2. Explain what each part is asking for
+3. Highlight important keywords or phrases
+4. Clarify any technical terms used
+5. DO NOT provide the answer
+6. Help them understand the structure and requirements
+
+Respond with JSON:
+{{
+    "response": "Clear breakdown of what the question is asking",
+    "hints": ["Key word/phrase to note", "This part asks for...", "The question wants you to..."]
+}}""",
+            'user_prompt': """The student needs help understanding what this question is asking:
+
+QUESTION: {question}
+
+Please break down the question into understandable parts without providing the answer.""",
+            'requires_answer': False
+        },
+        'formula': {
+            'name': 'What formula/method should I use?',
+            'description': 'Guides students on which approach to take',
+            'system_prompt': """You are a tutor helping students identify the right approach to solve problems.
+
+Subject: {subject}
+Assignment: {assignment_title}
+
+The student needs guidance on which formula, method, or approach to use.
+
+RULES:
+1. Identify the relevant formula(s) or method(s) that apply
+2. Explain WHEN and WHY this formula/method is used
+3. Remind them of the formula structure (but don't plug in values)
+4. DO NOT solve the problem for them
+5. Help them recognize patterns that indicate which method to use
+6. Keep it focused on the approach, not the solution
+
+Respond with JSON:
+{{
+    "response": "Explanation of which formula/method to use and why",
+    "hints": ["Formula: ...", "When to use this: ...", "Steps to apply: ..."]
+}}""",
+            'user_prompt': """The student needs to know which formula or method to use for this question:
+
+QUESTION: {question}
+
+{answer_context}
+
+Please guide them on the appropriate formula or method without solving the question.""",
+            'requires_answer': False
+        },
+        'example': {
+            'name': 'Show me a similar example',
+            'description': 'Provides a worked example of a similar problem',
+            'system_prompt': """You are a tutor providing worked examples to help students learn.
+
+Subject: {subject}
+Assignment: {assignment_title}
+
+The student wants to see a similar example worked out to understand the approach.
+
+RULES:
+1. Create a DIFFERENT but SIMILAR question (not the same one)
+2. Show the complete working/solution for your example
+3. Explain each step clearly
+4. Make sure the example teaches the same concept/skill
+5. DO NOT solve the student's actual question
+6. The example should be slightly simpler if possible
+
+Respond with JSON:
+{{
+    "response": "Here's a similar example with full working",
+    "hints": ["Step 1: ...", "Step 2: ...", "Notice how we..."]
+}}""",
+            'user_prompt': """The student wants to see a similar worked example for this type of question:
+
+QUESTION: {question}
+
+Please create and solve a SIMILAR (but different) example question that demonstrates the same concept or method. Do NOT solve the student's actual question.""",
+            'requires_answer': False
+        }
+    }
+
+def get_ai_prompts(db_instance=None):
+    """Get AI prompts from database or return defaults"""
+    defaults = get_default_prompts()
+    
+    if db_instance is None:
+        return defaults
+    
+    try:
+        # Try to get prompts from database
+        stored_prompts = db_instance.db.ai_prompts.find_one({'_id': 'help_prompts'})
+        if stored_prompts and stored_prompts.get('prompts'):
+            # Merge with defaults (stored prompts override defaults)
+            for key, value in stored_prompts['prompts'].items():
+                if key in defaults:
+                    defaults[key].update(value)
+            return defaults
+    except Exception as e:
+        logger.warning(f"Could not load prompts from database: {e}")
+    
+    return defaults
+
+def save_ai_prompts(db_instance, prompts: dict) -> bool:
+    """Save AI prompts to database"""
+    try:
+        db_instance.db.ai_prompts.update_one(
+            {'_id': 'help_prompts'},
+            {'$set': {
+                'prompts': prompts,
+                'updated_at': datetime.utcnow()
+            }},
+            upsert=True
+        )
+        return True
+    except Exception as e:
+        logger.error(f"Error saving prompts: {e}")
+        return False
+
+def get_question_help(question: str, student_answer: str, help_type: str, assignment: dict, teacher: dict = None, db_instance=None) -> dict:
+    """
+    Get AI help for a specific question.
+    
+    Args:
+        question: The question text the student needs help with
+        student_answer: The student's answer attempt (can be empty for some types)
+        help_type: 'stuck', 'wrong', 'improve', 'explain', 'breakdown', 'formula', 'example'
+        assignment: Assignment document for context
+        teacher: Teacher document for API key
+        db_instance: Database instance for loading custom prompts
+    
+    Returns:
+        Dictionary with help response
+    """
+    client = get_teacher_ai_service(teacher)
+    if not client:
+        return {
+            'error': 'AI service not available',
+            'response': 'AI help unavailable - no API key configured'
+        }
+    
+    try:
+        # Get prompts (from database or defaults)
+        prompts = get_ai_prompts(db_instance)
+        
+        if help_type not in prompts:
+            return {'error': 'Invalid help type', 'response': 'Please select a valid help option.'}
+        
+        prompt_config = prompts[help_type]
+        
+        # Check if answer is required
+        if prompt_config.get('requires_answer') and not student_answer:
+            return {
+                'response': f'Please provide your answer so I can help with "{prompt_config["name"]}".',
+                'hints': ['Enter your answer attempt in the answer field', 'Even partial answers help me give better feedback']
+            }
+        
+        subject = assignment.get('subject', 'General')
+        assignment_title = assignment.get('title', 'Assignment')
+        
+        # Format the prompts with variables
+        answer_context = f"STUDENT'S ANSWER: {student_answer}" if student_answer else "No answer provided yet."
+        
+        system_prompt = prompt_config['system_prompt'].format(
+            subject=subject,
+            assignment_title=assignment_title
+        )
+        
+        user_content = prompt_config['user_prompt'].format(
+            question=question,
+            student_answer=student_answer or 'Not provided',
+            answer_context=answer_context
+        )
+        
+        # Make API call
+        message = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=1000,
+            messages=[{"role": "user", "content": user_content}],
+            system=system_prompt
+        )
+        
+        response_text = message.content[0].text
+        
+        # Parse JSON response
+        result = parse_ai_response(response_text)
+        
+        # If parsing failed, return raw response
+        if 'error' in result and 'raw' in result:
+            return {
+                'response': result['raw'],
+                'hints': []
+            }
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error getting question help: {e}")
+        return {
+            'error': str(e),
+            'response': f'Error generating help: {str(e)}'
+        }
+
 def generate_feedback_summary(submission: dict, assignment: dict, ai_feedback: dict, teacher_edits: dict = None) -> dict:
     """
     Generate a final feedback summary combining AI and teacher feedback

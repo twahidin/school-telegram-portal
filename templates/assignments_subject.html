@@ -60,24 +60,10 @@
     <div class="assignments-list">
         {% for assignment in assignments %}
         <div class="assignment-card">
-            <div class="assignment-status">
-                {% if assignment.submission %}
-                    {% if assignment.submission.status == 'approved' %}
-                    <span class="badge bg-success"><i class="bi bi-check-circle me-1"></i>Completed</span>
-                    {% elif assignment.submission.status in ['submitted', 'ai_reviewed'] %}
-                    <span class="badge bg-warning"><i class="bi bi-hourglass me-1"></i>Pending Review</span>
-                    {% else %}
-                    <span class="badge bg-info"><i class="bi bi-pencil me-1"></i>Draft</span>
-                    {% endif %}
-                {% else %}
-                <span class="badge bg-secondary"><i class="bi bi-circle me-1"></i>Not Started</span>
-                {% endif %}
-            </div>
-            
             <div class="assignment-info">
                 <h4>{{ assignment.title }}</h4>
                 <div class="assignment-meta">
-                    <span><i class="bi bi-question-circle me-1"></i>{{ assignment.questions|length }} questions</span>
+                    <span><i class="bi bi-question-circle me-1"></i>{{ assignment.questions|length if assignment.questions else 0 }} questions</span>
                     <span><i class="bi bi-star me-1"></i>{{ assignment.total_marks }} marks</span>
                     {% if assignment.due_date %}
                     <span><i class="bi bi-calendar me-1"></i>Due: {{ assignment.due_date }}</span>
@@ -89,19 +75,9 @@
             </div>
             
             <div class="assignment-actions">
-                {% if assignment.submission and assignment.submission.status == 'approved' %}
-                <a href="{{ url_for('view_submission', submission_id=assignment.submission.submission_id) }}" class="btn btn-outline-success">
-                    <i class="bi bi-eye me-1"></i>View Feedback
+                <a href="{{ url_for('view_assignment', assignment_id=assignment.assignment_id) }}" class="btn btn-success">
+                    <i class="bi bi-pencil-square me-1"></i>Feedback and Submission
                 </a>
-                {% elif assignment.submission and assignment.submission.status in ['submitted', 'ai_reviewed'] %}
-                <a href="{{ url_for('view_submission', submission_id=assignment.submission.submission_id) }}" class="btn btn-outline-warning">
-                    <i class="bi bi-eye me-1"></i>View Submission
-                </a>
-                {% else %}
-                <a href="{{ url_for('view_assignment', assignment_id=assignment.assignment_id) }}" class="btn btn-primary">
-                    <i class="bi bi-pencil-square me-1"></i>{% if assignment.submission %}Continue{% else %}Start{% endif %}
-                </a>
-                {% endif %}
             </div>
         </div>
         {% endfor %}

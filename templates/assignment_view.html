@@ -96,6 +96,69 @@
                     {% endif %}
                 </div>
             </div>
+            
+            <!-- Ask for Help Section -->
+            <div class="card mt-4">
+                <div class="card-header bg-warning text-dark">
+                    <h5 class="mb-0"><i class="bi bi-question-circle me-2"></i>Need Help with a Question?</h5>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted small mb-3">Get AI assistance for one question at a time. Enter the question and optionally your answer attempt.</p>
+                    
+                    <div class="mb-3">
+                        <label for="help-question" class="form-label fw-semibold">
+                            <i class="bi bi-chat-left-text me-1"></i>Question
+                        </label>
+                        <textarea class="form-control" id="help-question" rows="3" 
+                                  placeholder="Type or paste the question you need help with..."></textarea>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="help-answer" class="form-label fw-semibold">
+                            <i class="bi bi-pencil me-1"></i>Your Answer (optional)
+                        </label>
+                        <textarea class="form-control" id="help-answer" rows="3" 
+                                  placeholder="Enter your answer attempt if you have one..."></textarea>
+                    </div>
+                    
+                    <div class="d-grid gap-2">
+                        <button type="button" class="btn btn-outline-danger help-btn" onclick="askForHelp('stuck')">
+                            <i class="bi bi-emoji-frown me-2"></i>Help me! I am stuck
+                        </button>
+                        <button type="button" class="btn btn-outline-warning help-btn" onclick="askForHelp('wrong')">
+                            <i class="bi bi-x-circle me-2"></i>Where did I go wrong with my answer?
+                        </button>
+                        <button type="button" class="btn btn-outline-success help-btn" onclick="askForHelp('improve')">
+                            <i class="bi bi-arrow-up-circle me-2"></i>How to improve my answer
+                        </button>
+                        <button type="button" class="btn btn-outline-info help-btn" onclick="askForHelp('explain')">
+                            <i class="bi bi-lightbulb me-2"></i>Explain this concept to me
+                        </button>
+                        <button type="button" class="btn btn-outline-primary help-btn" onclick="askForHelp('breakdown')">
+                            <i class="bi bi-list-ol me-2"></i>Break down the question
+                        </button>
+                        <button type="button" class="btn btn-outline-secondary help-btn" onclick="askForHelp('formula')">
+                            <i class="bi bi-calculator me-2"></i>What formula/method should I use?
+                        </button>
+                        <button type="button" class="btn btn-outline-dark help-btn" onclick="askForHelp('example')">
+                            <i class="bi bi-journal-code me-2"></i>Show me a similar example
+                        </button>
+                    </div>
+                    
+                    <!-- Help Result -->
+                    <div id="help-result" class="mt-3" style="display: none;">
+                        <div class="card border-warning">
+                            <div class="card-header bg-light py-2">
+                                <span class="small fw-bold"><i class="bi bi-robot me-1"></i>AI Help</span>
+                                <button type="button" class="btn-close btn-close-sm float-end" onclick="closeHelp()"></button>
+                            </div>
+                            <div class="card-body" id="help-content">
+                                <!-- Help response will be inserted here -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
         
         <!-- Right: Upload & Feedback Section -->
@@ -445,6 +508,39 @@
     font-size: 0.6rem;
     padding: 0.3rem;
 }
+
+/* Help section styles */
+.help-btn {
+    text-align: left;
+    padding: 12px 15px;
+}
+
+.help-btn i {
+    font-size: 1.1rem;
+}
+
+#help-content {
+    max-height: 350px;
+    overflow-y: auto;
+    font-size: 0.9rem;
+}
+
+.help-response .help-text {
+    line-height: 1.7;
+    white-space: pre-wrap;
+}
+
+.help-response h6 {
+    margin-bottom: 0.75rem;
+}
+
+.help-response ul {
+    margin-bottom: 0;
+}
+
+.help-response ul li {
+    margin-bottom: 0.5rem;
+}
 </style>
 {% endblock %}
 
@@ -777,6 +873,135 @@
     
     function closeFeedback() {
         document.getElementById('ai-feedback-result').style.display = 'none';
+    }
+    
+    // === HELP SECTION FUNCTIONS ===
+    async function askForHelp(helpType) {
+        const question = document.getElementById('help-question').value.trim();
+        const answer = document.getElementById('help-answer').value.trim();
+        
+        if (!question) {
+            alert('Please enter the question you need help with.');
+            return;
+        }
+        
+        // For 'wrong' and 'improve' types, answer is recommended but not required for 'stuck'
+        if ((helpType === 'wrong' || helpType === 'improve') && !answer) {
+            if (!confirm('You haven\'t entered an answer. The AI feedback will be more helpful if you provide your answer attempt. Continue anyway?')) {
+                return;
+            }
+        }
+        
+        const helpResult = document.getElementById('help-result');
+        const helpContent = document.getElementById('help-content');
+        
+        // Show loading state
+        helpContent.innerHTML = `
+            <div class="text-center py-4">
+                <div class="spinner-border text-warning mb-2" role="status"></div>
+                <p class="mb-0 text-muted">AI is thinking...</p>
+            </div>
+        `;
+        helpResult.style.display = 'block';
+        
+        // Disable buttons while loading
+        document.querySelectorAll('.help-btn').forEach(btn => btn.disabled = true);
+        
+        try {
+            const response = await fetch('/api/student/question-help', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    assignment_id: '{{ assignment.assignment_id }}',
+                    question: question,
+                    answer: answer,
+                    help_type: helpType
+                })
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                helpContent.innerHTML = formatHelpResponse(result.help, helpType);
+            } else {
+                helpContent.innerHTML = `
+                    <div class="alert alert-danger mb-0">
+                        <i class="bi bi-exclamation-circle me-1"></i>
+                        ${result.error || 'Failed to get help. Please try again.'}
+                    </div>
+                `;
+            }
+        } catch (error) {
+            helpContent.innerHTML = `
+                <div class="alert alert-danger mb-0">
+                    <i class="bi bi-exclamation-circle me-1"></i>
+                    Error connecting to server. Please try again.
+                </div>
+            `;
+            console.error(error);
+        }
+        
+        // Re-enable buttons
+        document.querySelectorAll('.help-btn').forEach(btn => btn.disabled = false);
+    }
+    
+    function formatHelpResponse(help, helpType) {
+        let icon, title, colorClass;
+        
+        if (helpType === 'stuck') {
+            icon = 'bi-lightbulb';
+            title = 'Getting Started';
+            colorClass = 'text-danger';
+        } else if (helpType === 'wrong') {
+            icon = 'bi-search';
+            title = 'What Went Wrong';
+            colorClass = 'text-warning';
+        } else if (helpType === 'improve') {
+            icon = 'bi-graph-up-arrow';
+            title = 'How to Improve';
+            colorClass = 'text-success';
+        } else if (helpType === 'explain') {
+            icon = 'bi-lightbulb-fill';
+            title = 'Concept Explanation';
+            colorClass = 'text-info';
+        } else if (helpType === 'breakdown') {
+            icon = 'bi-list-ol';
+            title = 'Question Breakdown';
+            colorClass = 'text-primary';
+        } else if (helpType === 'formula') {
+            icon = 'bi-calculator';
+            title = 'Formula/Method Guide';
+            colorClass = 'text-secondary';
+        } else if (helpType === 'example') {
+            icon = 'bi-journal-code';
+            title = 'Similar Example';
+            colorClass = 'text-dark';
+        } else {
+            icon = 'bi-chat-dots';
+            title = 'AI Help';
+            colorClass = 'text-primary';
+        }
+        
+        return `
+            <div class="help-response">
+                <h6 class="${colorClass}"><i class="${icon} me-1"></i>${title}</h6>
+                <div class="help-text">${help.response || help.feedback || 'No response available.'}</div>
+                ${help.hints ? `
+                    <div class="mt-3">
+                        <h6 class="text-muted small"><i class="bi bi-bookmark me-1"></i>Tips:</h6>
+                        <ul class="mb-0 small">
+                            ${help.hints.map(h => `<li>${h}</li>`).join('')}
+                        </ul>
+                    </div>
+                ` : ''}
+            </div>
+        `;
+    }
+    
+    function closeHelp() {
+        document.getElementById('help-result').style.display = 'none';
     }
     
     // === FORM SUBMISSION ===
