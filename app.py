@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify, session, redirect, url_for, send_file
+from flask import Flask, render_template, request, jsonify, session, redirect, url_for, send_file, Response
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from functools import wraps
@@ -940,25 +940,35 @@ def view_student_submission_file(submission_id, file_index):
 def download_student_assignment_file(assignment_id, file_type):
     """Download assignment file (question paper) for student"""
     from gridfs import GridFS
+    from bson import ObjectId
     
     assignment = Assignment.find_one({'assignment_id': assignment_id})
     if not assignment:
+        logger.error(f"Assignment not found: {assignment_id}")
         return 'Assignment not found', 404
     
     # Verify student has access (teacher is assigned to student)
     student = Student.find_one({'student_id': session['student_id']})
     if assignment['teacher_id'] not in student.get('teachers', []):
+        logger.error(f"Unauthorized access attempt by {session['student_id']} to {assignment_id}")
         return 'Unauthorized', 403
     
     file_id_field = f"{file_type}_id"
     file_name_field = f"{file_type}_name"
     
-    if file_id_field not in assignment:
+    if file_id_field not in assignment or not assignment[file_id_field]:
+        logger.error(f"File ID field '{file_id_field}' not found in assignment {assignment_id}. Fields: {list(assignment.keys())}")
         return 'File not found', 404
     
     fs = GridFS(db.db)
     try:
-        file_data = fs.get(assignment[file_id_field])
+        file_id = assignment[file_id_field]
+        # Ensure file_id is ObjectId
+        if isinstance(file_id, str):
+            file_id = ObjectId(file_id)
+        
+        logger.info(f"Attempting to get file {file_id} from GridFS")
+        file_data = fs.get(file_id)
         return Response(
             file_data.read(),
             mimetype='application/pdf',
@@ -967,7 +977,7 @@ def download_student_assignment_file(assignment_id, file_type):
             }
         )
     except Exception as e:
-        logger.error(f"Error downloading file: {e}")
+        logger.error(f"Error downloading file {assignment.get(file_id_field)}: {e}")
         return 'File not found', 404
 
 @app.route('/student/feedback/<submission_id>/pdf')
@@ -1502,8 +1512,6 @@ def edit_assignment(assignment_id):
 def download_assignment_file(assignment_id, file_type):
     """Download assignment PDF file"""
     from gridfs import GridFS
-    from flask import Response
-    
     assignment = Assignment.find_one({
         'assignment_id': assignment_id,
         'teacher_id': session['teacher_id']
