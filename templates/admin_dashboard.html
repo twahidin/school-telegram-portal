@@ -108,6 +108,9 @@
                         <div class="card-header d-flex justify-content-between align-items-center">
                             <h5 class="mb-0"><i class="bi bi-people me-2"></i>Manage Students</h5>
                             <div class="btn-group btn-group-sm">
+                                <button class="btn btn-outline-warning" id="reset-selected-passwords" disabled data-bs-toggle="modal" data-bs-target="#mass-reset-modal">
+                                    <i class="bi bi-key me-1"></i>Reset Passwords
+                                </button>
                                 <button class="btn btn-outline-danger" id="delete-selected-students" disabled>
                                     <i class="bi bi-trash me-1"></i>Delete Selected
                                 </button>
@@ -576,6 +579,36 @@
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
                 <button type="button" class="btn btn-primary" id="save-teacher-btn">
                     <i class="bi bi-save me-1"></i>Save Changes
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Mass Reset Password Modal -->
+<div class="modal fade" id="mass-reset-modal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header bg-warning text-dark">
+                <h5 class="modal-title"><i class="bi bi-key me-2"></i>Reset Student Passwords</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p id="reset-count-text" class="text-muted">0 students selected</p>
+                <div class="mb-3">
+                    <label class="form-label">New Password</label>
+                    <input type="text" class="form-control" id="mass-reset-password" placeholder="Leave blank for 'student123'">
+                    <small class="text-muted">Default: student123</small>
+                </div>
+                <div class="alert alert-warning">
+                    <i class="bi bi-exclamation-triangle me-1"></i>
+                    This will reset passwords for all selected students.
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-warning" id="confirm-mass-reset">
+                    <i class="bi bi-key me-1"></i>Reset Passwords
                 </button>
             </div>
         </div>
@@ -1135,6 +1168,10 @@
     function updateSelectionUI() {
         const selectedStudents = document.querySelectorAll('.student-checkbox:checked').length;
         document.getElementById('delete-selected-students').disabled = selectedStudents === 0;
+        document.getElementById('reset-selected-passwords').disabled = selectedStudents === 0;
+        
+        // Update mass reset modal count
+        document.getElementById('reset-count-text').textContent = `${selectedStudents} student(s) selected`;
         
         // Show/hide assign class section
         const assignSection = document.getElementById('assign-class-section');
@@ -1213,6 +1250,38 @@
         document.getElementById('delete-message').textContent = `Delete ALL students in class "${classId}"?`;
         deleteAction = { type: 'students-class', class: classId };
         deleteModal.show();
+    });
+
+    // Mass reset student passwords
+    document.getElementById('confirm-mass-reset').addEventListener('click', async () => {
+        const selected = [...document.querySelectorAll('.student-checkbox:checked')].map(cb => cb.value);
+        if (selected.length === 0) return;
+        
+        const customPassword = document.getElementById('mass-reset-password').value.trim();
+        
+        try {
+            const response = await fetch('/admin/mass_reset_student_passwords', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    student_ids: selected,
+                    password: customPassword
+                })
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                bootstrap.Modal.getInstance(document.getElementById('mass-reset-modal')).hide();
+                alert(`Successfully reset ${data.count} password(s) to: ${data.password}`);
+                document.getElementById('mass-reset-password').value = '';
+            } else {
+                alert(data.error || 'Failed to reset passwords');
+            }
+        } catch (e) {
+            console.error('Mass reset failed:', e);
+            alert('Failed to reset passwords');
+        }
     });
 
     // ================== TEACHER MANAGEMENT ==================

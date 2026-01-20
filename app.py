@@ -2593,6 +2593,127 @@ def reset_student_password():
         logger.error(f"Error resetting password: {e}")
         return jsonify({'error': str(e)}), 500
 
+@app.route('/admin/mass_reset_student_passwords', methods=['POST'])
+@admin_required
+def mass_reset_student_passwords():
+    """Mass reset passwords for multiple students"""
+    try:
+        data = request.get_json()
+        student_ids = data.get('student_ids', [])
+        custom_password = data.get('password', '').strip()
+        
+        if not student_ids:
+            return jsonify({'error': 'No students selected'}), 400
+        
+        # Default password if not specified
+        default_password = custom_password if custom_password else 'student123'
+        hashed = hash_password(default_password)
+        
+        # Update all selected students
+        result = db.db.students.update_many(
+            {'student_id': {'$in': student_ids}},
+            {'$set': {'password_hash': hashed, 'updated_at': datetime.utcnow()}}
+        )
+        
+        return jsonify({
+            'success': True,
+            'count': result.modified_count,
+            'password': default_password,
+            'message': f'Reset {result.modified_count} student password(s) to: {default_password}'
+        })
+        
+    except Exception as e:
+        logger.error(f"Error mass resetting passwords: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/teacher/reset_student_passwords', methods=['POST'])
+@teacher_required
+def teacher_reset_student_passwords():
+    """Teacher resets passwords for their students"""
+    try:
+        data = request.get_json()
+        student_ids = data.get('student_ids', [])
+        custom_password = data.get('password', '').strip()
+        
+        if not student_ids:
+            return jsonify({'error': 'No students selected'}), 400
+        
+        # Verify teacher has access to these students
+        teacher = Teacher.find_one({'teacher_id': session['teacher_id']})
+        teacher_classes = teacher.get('classes', [])
+        
+        # Get students that belong to teacher's classes
+        valid_students = list(Student.find({
+            'student_id': {'$in': student_ids},
+            '$or': [
+                {'class': {'$in': teacher_classes}},
+                {'classes': {'$in': teacher_classes}},
+                {'teachers': session['teacher_id']}
+            ]
+        }))
+        
+        valid_ids = [s['student_id'] for s in valid_students]
+        
+        if not valid_ids:
+            return jsonify({'error': 'No valid students found'}), 400
+        
+        # Default password if not specified
+        default_password = custom_password if custom_password else 'student123'
+        hashed = hash_password(default_password)
+        
+        # Update valid students
+        result = db.db.students.update_many(
+            {'student_id': {'$in': valid_ids}},
+            {'$set': {'password_hash': hashed, 'updated_at': datetime.utcnow()}}
+        )
+        
+        return jsonify({
+            'success': True,
+            'count': result.modified_count,
+            'password': default_password,
+            'message': f'Reset {result.modified_count} student password(s) to: {default_password}'
+        })
+        
+    except Exception as e:
+        logger.error(f"Error resetting student passwords: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/student/change_password', methods=['POST'])
+@login_required
+def student_change_password():
+    """Student changes their own password"""
+    try:
+        data = request.get_json()
+        current_password = data.get('current_password')
+        new_password = data.get('new_password')
+        
+        if not current_password or not new_password:
+            return jsonify({'error': 'Current and new passwords required'}), 400
+        
+        if len(new_password) < 4:
+            return jsonify({'error': 'New password must be at least 4 characters'}), 400
+        
+        student = Student.find_one({'student_id': session['student_id']})
+        if not student:
+            return jsonify({'error': 'Student not found'}), 404
+        
+        # Verify current password
+        if not verify_password(current_password, student.get('password_hash', '')):
+            return jsonify({'error': 'Current password is incorrect'}), 400
+        
+        # Update password
+        hashed = hash_password(new_password)
+        Student.update_one(
+            {'student_id': session['student_id']},
+            {'$set': {'password_hash': hashed, 'updated_at': datetime.utcnow()}}
+        )
+        
+        return jsonify({'success': True, 'message': 'Password changed successfully'})
+        
+    except Exception as e:
+        logger.error(f"Error changing student password: {e}")
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/admin/reset_teacher_password', methods=['POST'])
 @admin_required
 def reset_teacher_password():
