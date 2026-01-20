@@ -93,6 +93,42 @@
                     </div>
                 </div>
                 
+                <!-- AI Configuration -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-robot me-2"></i>AI Marking Configuration</h5>
+                    </div>
+                    <div class="card-body">
+                        <p class="text-muted small mb-3">Configure which AI model to use for reviewing and grading this assignment, and provide additional instructions for feedback and grading.</p>
+                        
+                        <div class="mb-3">
+                            <label for="ai_model" class="form-label">AI Model for This Assignment *</label>
+                            {% set current_model = assignment.get('ai_model', teacher.get('default_ai_model', 'anthropic')) %}
+                            <select class="form-select" id="ai_model" name="ai_model" required>
+                                <option value="anthropic" {% if current_model == 'anthropic' %}selected{% endif %}>Anthropic (Claude)</option>
+                                <option value="openai" {% if current_model == 'openai' %}selected{% endif %}>OpenAI (GPT)</option>
+                                <option value="deepseek" {% if current_model == 'deepseek' %}selected{% endif %}>DeepSeek</option>
+                                <option value="google" {% if current_model == 'google' %}selected{% endif %}>Google Gemini</option>
+                            </select>
+                            <small class="text-muted">Your default model: <strong>{{ teacher.get('default_ai_model', 'anthropic')|title }}</strong></small>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="feedback_instructions" class="form-label">Additional Instructions for Feedback (optional)</label>
+                            <textarea class="form-control" id="feedback_instructions" name="feedback_instructions" rows="3"
+                                      placeholder="e.g., Focus on explaining common mistakes, provide step-by-step guidance, emphasize conceptual understanding...">{{ assignment.get('feedback_instructions', '') }}</textarea>
+                            <small class="text-muted">These instructions will guide the AI when providing feedback to students.</small>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="grading_instructions" class="form-label">Additional Instructions for Grading (optional)</label>
+                            <textarea class="form-control" id="grading_instructions" name="grading_instructions" rows="3"
+                                      placeholder="e.g., Be strict with calculation errors, award partial credit for showing work, deduct points for missing units...">{{ assignment.get('grading_instructions', '') }}</textarea>
+                            <small class="text-muted">These instructions will guide the AI when grading student submissions.</small>
+                        </div>
+                    </div>
+                </div>
+                
                 <!-- PDF Documents -->
                 <div class="card mb-4">
                     <div class="card-header">

@@ -199,22 +199,80 @@
                 <!-- AI Marking -->
                 <div class="card mb-4">
                     <div class="card-header">
-                        <h5 class="mb-0"><i class="bi bi-robot me-2"></i>AI Marking (Anthropic)</h5>
+                        <h5 class="mb-0"><i class="bi bi-robot me-2"></i>AI Marking Configuration</h5>
                     </div>
                     <div class="card-body">
-                        <p class="text-muted">
-                            Configure your own Anthropic API key for AI-powered assignment feedback.
-                            If not set, the system will use the default API key (if available).
+                        <p class="text-muted mb-4">
+                            Configure API keys for different LLM providers. You can set a default model that will be used for all assignments, or choose a specific model for each assignment.
                         </p>
                         
-                        <div class="mb-3">
-                            <label class="form-label">Anthropic API Key</label>
+                        <!-- Default Model Selection -->
+                        <div class="mb-4">
+                            <label class="form-label fw-bold">Default AI Model *</label>
+                            <select class="form-select" name="default_ai_model" required>
+                                <option value="anthropic" {% if teacher.get('default_ai_model', 'anthropic') == 'anthropic' %}selected{% endif %}>Anthropic (Claude)</option>
+                                <option value="openai" {% if teacher.get('default_ai_model') == 'openai' %}selected{% endif %}>OpenAI (GPT)</option>
+                                <option value="deepseek" {% if teacher.get('default_ai_model') == 'deepseek' %}selected{% endif %}>DeepSeek</option>
+                                <option value="google" {% if teacher.get('default_ai_model') == 'google' %}selected{% endif %}>Google Gemini</option>
+                            </select>
+                            <small class="text-muted">This will be the default model used for assignments. You can override it when creating each assignment.</small>
+                        </div>
+                        
+                        <hr class="my-4">
+                        
+                        <!-- Anthropic API Key -->
+                        <div class="mb-4">
+                            <label class="form-label">
+                                <i class="bi bi-robot me-1"></i>Anthropic API Key
+                            </label>
                             <input type="password" class="form-control" name="anthropic_api_key" 
                                    placeholder="sk-ant-api...">
                             {% if teacher.anthropic_api_key %}
-                            <small class="text-success"><i class="bi bi-check-circle me-1"></i>API key configured</small>
+                            <small class="text-success d-block mt-1"><i class="bi bi-check-circle me-1"></i>API key configured</small>
                             {% else %}
-                            <small class="text-muted">Leave blank to use system default</small>
+                            <small class="text-muted d-block mt-1">Leave blank to use system default (if available)</small>
+                            {% endif %}
+                        </div>
+                        
+                        <!-- OpenAI API Key -->
+                        <div class="mb-4">
+                            <label class="form-label">
+                                <i class="bi bi-lightning-charge me-1"></i>OpenAI API Key
+                            </label>
+                            <input type="password" class="form-control" name="openai_api_key" 
+                                   placeholder="sk-...">
+                            {% if teacher.openai_api_key %}
+                            <small class="text-success d-block mt-1"><i class="bi bi-check-circle me-1"></i>API key configured</small>
+                            {% else %}
+                            <small class="text-muted d-block mt-1">Leave blank to use system default (if available)</small>
+                            {% endif %}
+                        </div>
+                        
+                        <!-- DeepSeek API Key -->
+                        <div class="mb-4">
+                            <label class="form-label">
+                                <i class="bi bi-search me-1"></i>DeepSeek API Key
+                            </label>
+                            <input type="password" class="form-control" name="deepseek_api_key" 
+                                   placeholder="sk-...">
+                            {% if teacher.deepseek_api_key %}
+                            <small class="text-success d-block mt-1"><i class="bi bi-check-circle me-1"></i>API key configured</small>
+                            {% else %}
+                            <small class="text-muted d-block mt-1">Leave blank to use system default (if available)</small>
+                            {% endif %}
+                        </div>
+                        
+                        <!-- Google Gemini API Key -->
+                        <div class="mb-4">
+                            <label class="form-label">
+                                <i class="bi bi-google me-1"></i>Google Gemini API Key
+                            </label>
+                            <input type="password" class="form-control" name="google_api_key" 
+                                   placeholder="AIza...">
+                            {% if teacher.google_api_key %}
+                            <small class="text-success d-block mt-1"><i class="bi bi-check-circle me-1"></i>API key configured</small>
+                            {% else %}
+                            <small class="text-muted d-block mt-1">Leave blank to use system default (if available)</small>
                             {% endif %}
                         </div>
                     </div>
@@ -439,7 +497,7 @@
                     
                     <h6>AI Marking</h6>
                     <p class="small text-muted">
-                        AI-powered feedback helps students understand their mistakes. You can use your own Anthropic API key for unlimited usage.
+                        Configure API keys for multiple LLM providers (Anthropic, OpenAI, DeepSeek, Google Gemini). Set a default model that will be used for all assignments, or choose a specific model when creating each assignment. You can also provide additional instructions for feedback and grading per assignment.
                     </p>
                     
                     <h6>Google Drive</h6>

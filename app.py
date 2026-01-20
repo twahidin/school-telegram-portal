@@ -1435,6 +1435,11 @@ def create_assignment():
                 except Exception as drive_error:
                     logger.warning(f"Google Drive upload failed (continuing anyway): {drive_error}")
             
+            # Get teacher's default AI model if not specified
+            teacher = Teacher.find_one({'teacher_id': session['teacher_id']})
+            default_model = teacher.get('default_ai_model', 'anthropic') if teacher else 'anthropic'
+            ai_model = data.get('ai_model', default_model)
+            
             # Build assignment document
             assignment_doc = {
                 'assignment_id': assignment_id,
@@ -1449,6 +1454,9 @@ def create_assignment():
                 'answer_key_name': answer_key.filename,
                 'due_date': data.get('due_date') or None,
                 'status': 'published' if data.get('publish') else 'draft',
+                'ai_model': ai_model,
+                'feedback_instructions': data.get('feedback_instructions', ''),
+                'grading_instructions': data.get('grading_instructions', ''),
                 'created_at': datetime.utcnow(),
                 'updated_at': datetime.utcnow()
             }
@@ -1488,6 +1496,10 @@ def edit_assignment(assignment_id):
         try:
             data = request.form
             
+            # Get teacher's default AI model if not specified
+            default_model = teacher.get('default_ai_model', 'anthropic') if teacher else 'anthropic'
+            ai_model = data.get('ai_model', default_model)
+            
             update_data = {
                 'title': data.get('title', assignment['title']),
                 'subject': data.get('subject', assignment['subject']),
@@ -1495,6 +1507,9 @@ def edit_assignment(assignment_id):
                 'total_marks': int(data.get('total_marks', assignment.get('total_marks', 100))),
                 'due_date': data.get('due_date') or None,
                 'status': 'published' if data.get('publish') else 'draft',
+                'ai_model': ai_model,
+                'feedback_instructions': data.get('feedback_instructions', ''),
+                'grading_instructions': data.get('grading_instructions', ''),
                 'updated_at': datetime.utcnow()
             }
             
@@ -1942,11 +1957,30 @@ def teacher_settings():
             if data.get('name') and data['name'].strip():
                 update_data['name'] = data['name'].strip()
             
-            # Update Anthropic API key
+            # Update AI API keys
             if data.get('anthropic_api_key'):
                 encrypted = encrypt_api_key(data['anthropic_api_key'])
                 if encrypted:
                     update_data['anthropic_api_key'] = encrypted
+            
+            if data.get('openai_api_key'):
+                encrypted = encrypt_api_key(data['openai_api_key'])
+                if encrypted:
+                    update_data['openai_api_key'] = encrypted
+            
+            if data.get('deepseek_api_key'):
+                encrypted = encrypt_api_key(data['deepseek_api_key'])
+                if encrypted:
+                    update_data['deepseek_api_key'] = encrypted
+            
+            if data.get('google_api_key'):
+                encrypted = encrypt_api_key(data['google_api_key'])
+                if encrypted:
+                    update_data['google_api_key'] = encrypted
+            
+            # Update default AI model
+            if data.get('default_ai_model'):
+                update_data['default_ai_model'] = data['default_ai_model']
             
             # Update Google Drive folder
             if data.get('google_drive_folder_id'):
