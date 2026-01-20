@@ -328,11 +328,21 @@
                     
                     <!-- My Students List -->
                     <hr class="my-4">
-                    <h6><i class="bi bi-people me-2"></i>My Students</h6>
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <h6 class="mb-0"><i class="bi bi-people me-2"></i>My Students</h6>
+                        <div class="btn-group btn-group-sm">
+                            <button class="btn btn-outline-warning" id="reset-selected-passwords" disabled data-bs-toggle="modal" data-bs-target="#mass-reset-modal">
+                                <i class="bi bi-key me-1"></i>Reset Passwords
+                            </button>
+                        </div>
+                    </div>
                     <div class="table-responsive" style="max-height: 300px;">
                         <table class="table table-sm table-hover">
                             <thead class="sticky-top bg-white">
                                 <tr>
+                                    <th style="width: 30px;">
+                                        <input type="checkbox" class="form-check-input" id="select-all-students">
+                                    </th>
                                     <th>ID</th>
                                     <th>Name</th>
                                     <th>Classes</th>
@@ -342,6 +352,9 @@
                             <tbody id="my-students-tbody">
                                 {% for s in my_students %}
                                 <tr>
+                                    <td>
+                                        <input type="checkbox" class="form-check-input student-checkbox" value="{{ s.student_id }}">
+                                    </td>
                                     <td><code>{{ s.student_id }}</code></td>
                                     <td>{{ s.name }}</td>
                                     <td>
@@ -354,6 +367,10 @@
                                         {% endif %}
                                     </td>
                                     <td>
+                                        <button class="btn btn-outline-warning btn-sm reset-single-pwd-btn me-1" 
+                                                data-student-id="{{ s.student_id }}" data-student-name="{{ s.name }}" title="Reset Password">
+                                            <i class="bi bi-key"></i>
+                                        </button>
                                         <button class="btn btn-outline-danger btn-sm remove-student-btn" 
                                                 data-student-id="{{ s.student_id }}" title="Remove from my students">
                                             <i class="bi bi-x-lg"></i>
@@ -361,7 +378,7 @@
                                     </td>
                                 </tr>
                                 {% else %}
-                                <tr><td colspan="4" class="text-center text-muted">No students assigned to you yet</td></tr>
+                                <tr><td colspan="5" class="text-center text-muted">No students assigned to you yet</td></tr>
                                 {% endfor %}
                             </tbody>
                         </table>
@@ -391,6 +408,54 @@
                         Automatically archive student submissions as PDFs in your Drive for record keeping.
                     </p>
                 </div>
+            </div>
+        </div>
+    </div>
+</div>
+<!-- Mass Reset Password Modal -->
+<div class="modal fade" id="mass-reset-modal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header bg-warning text-dark">
+                <h5 class="modal-title"><i class="bi bi-key me-2"></i>Reset Student Passwords</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p id="reset-count-text" class="text-muted">0 students selected</p>
+                <div class="mb-3">
+                    <label class="form-label">New Password</label>
+                    <input type="text" class="form-control" id="mass-reset-password" placeholder="Leave blank for 'student123'">
+                    <small class="text-muted">Default: student123</small>
+                </div>
+                <div class="alert alert-warning">
+                    <i class="bi bi-exclamation-triangle me-1"></i>
+                    This will reset passwords for all selected students.
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-warning" id="confirm-mass-reset">
+                    <i class="bi bi-key me-1"></i>Reset Passwords
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Single Reset Password Modal -->
+<div class="modal fade" id="single-reset-modal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header bg-warning text-dark">
+                <h5 class="modal-title"><i class="bi bi-key me-2"></i>Reset Password</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="single-reset-body">
+                <!-- Content will be set dynamically -->
+            </div>
+            <div class="modal-footer" id="single-reset-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-warning" id="confirm-single-reset">Reset Password</button>
             </div>
         </div>
     </div>
@@ -608,5 +673,143 @@
             }
         });
     });
+    
+    // ================== PASSWORD RESET FEATURES ==================
+    
+    // Select all students checkbox
+    const selectAllCheckbox = document.getElementById('select-all-students');
+    if (selectAllCheckbox) {
+        selectAllCheckbox.addEventListener('change', () => {
+            document.querySelectorAll('.student-checkbox').forEach(cb => {
+                cb.checked = selectAllCheckbox.checked;
+            });
+            updateSelectionUI();
+        });
+    }
+    
+    // Individual student checkboxes
+    document.querySelectorAll('.student-checkbox').forEach(cb => {
+        cb.addEventListener('change', updateSelectionUI);
+    });
+    
+    function updateSelectionUI() {
+        const selectedCount = document.querySelectorAll('.student-checkbox:checked').length;
+        const resetBtn = document.getElementById('reset-selected-passwords');
+        if (resetBtn) {
+            resetBtn.disabled = selectedCount === 0;
+        }
+        
+        const countText = document.getElementById('reset-count-text');
+        if (countText) {
+            countText.textContent = `${selectedCount} student(s) selected`;
+        }
+    }
+    
+    // Mass reset passwords
+    const confirmMassResetBtn = document.getElementById('confirm-mass-reset');
+    if (confirmMassResetBtn) {
+        confirmMassResetBtn.addEventListener('click', async () => {
+            const selected = [...document.querySelectorAll('.student-checkbox:checked')].map(cb => cb.value);
+            if (selected.length === 0) return;
+            
+            const customPassword = document.getElementById('mass-reset-password').value.trim();
+            
+            try {
+                const response = await fetch('/teacher/reset_student_passwords', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        student_ids: selected,
+                        password: customPassword
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    bootstrap.Modal.getInstance(document.getElementById('mass-reset-modal')).hide();
+                    alert(`Successfully reset ${data.count} password(s) to: ${data.password}`);
+                    document.getElementById('mass-reset-password').value = '';
+                    // Uncheck all checkboxes
+                    document.querySelectorAll('.student-checkbox').forEach(cb => cb.checked = false);
+                    if (selectAllCheckbox) selectAllCheckbox.checked = false;
+                    updateSelectionUI();
+                } else {
+                    alert(data.error || 'Failed to reset passwords');
+                }
+            } catch (e) {
+                console.error('Mass reset failed:', e);
+                alert('Failed to reset passwords');
+            }
+        });
+    }
+    
+    // Single reset password
+    const singleResetModal = document.getElementById('single-reset-modal') ? new bootstrap.Modal(document.getElementById('single-reset-modal')) : null;
+    let singleResetStudentId = null;
+    
+    document.querySelectorAll('.reset-single-pwd-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            singleResetStudentId = btn.dataset.studentId;
+            const studentName = btn.dataset.studentName;
+            
+            document.getElementById('single-reset-body').innerHTML = `
+                <p>Reset password for student:</p>
+                <p><strong>${studentName}</strong> (<code>${singleResetStudentId}</code>)</p>
+                <div class="mb-3">
+                    <label class="form-label">New Password</label>
+                    <input type="text" class="form-control" id="single-reset-password" placeholder="Leave blank for 'student123'">
+                    <small class="text-muted">Default: student123</small>
+                </div>
+            `;
+            
+            if (singleResetModal) singleResetModal.show();
+        });
+    });
+    
+    const confirmSingleResetBtn = document.getElementById('confirm-single-reset');
+    if (confirmSingleResetBtn) {
+        confirmSingleResetBtn.addEventListener('click', async () => {
+            if (!singleResetStudentId) return;
+            
+            const passwordInput = document.getElementById('single-reset-password');
+            const customPassword = passwordInput ? passwordInput.value.trim() : '';
+            
+            try {
+                const response = await fetch('/teacher/reset_student_passwords', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        student_ids: [singleResetStudentId],
+                        password: customPassword
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    document.getElementById('single-reset-body').innerHTML = `
+                        <div class="text-center">
+                            <i class="bi bi-check-circle-fill text-success" style="font-size: 3rem;"></i>
+                            <h5 class="mt-3">Password Reset Successful!</h5>
+                            <p>New password for <strong>${singleResetStudentId}</strong>:</p>
+                            <div class="alert alert-warning">
+                                <code style="font-size: 1.2rem;">${data.password}</code>
+                            </div>
+                            <small class="text-muted">Please share this password with the student securely.</small>
+                        </div>
+                    `;
+                    document.getElementById('single-reset-footer').innerHTML = `
+                        <button type="button" class="btn btn-primary" data-bs-dismiss="modal">Done</button>
+                    `;
+                } else {
+                    alert(data.error || 'Password reset failed');
+                }
+            } catch (e) {
+                console.error('Single reset failed:', e);
+                alert('Failed to reset password');
+            }
+        });
+    }
 </script>
 {% endblock %}
