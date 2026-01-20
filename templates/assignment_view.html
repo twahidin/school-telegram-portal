@@ -279,9 +279,17 @@
                     <!-- AI Feedback Result -->
                     <div id="ai-feedback-result" class="mt-3" style="display: none;">
                         <div class="card border-info">
-                            <div class="card-header bg-light py-2">
+                            <div class="card-header bg-light py-2 d-flex justify-content-between align-items-center">
                                 <span class="small fw-bold"><i class="bi bi-robot me-1"></i>AI Feedback</span>
-                                <button type="button" class="btn-close btn-close-sm float-end" onclick="closeFeedback()"></button>
+                                <div>
+                                    <button type="button" class="btn btn-sm btn-outline-primary me-1" onclick="openFeedbackModal()" title="View Full Details">
+                                        <i class="bi bi-arrows-fullscreen"></i>
+                                    </button>
+                                    <button type="button" class="btn btn-sm btn-outline-success me-1" onclick="downloadFeedbackPDF()" title="Download PDF">
+                                        <i class="bi bi-download"></i>
+                                    </button>
+                                    <button type="button" class="btn-close btn-close-sm" onclick="closeFeedback()"></button>
+                                </div>
                             </div>
                             <div class="card-body" id="ai-feedback-content">
                                 <!-- Feedback will be inserted here -->
@@ -541,8 +549,53 @@
 .help-response ul li {
     margin-bottom: 0.5rem;
 }
+
+/* Feedback table styles */
+.feedback-table {
+    font-size: 0.875rem;
+}
+.feedback-table th {
+    background-color: #f8f9fa;
+    font-weight: 600;
+}
+.feedback-table .status-icon {
+    font-size: 1.2rem;
+}
+.feedback-table .btn-view-detail {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.75rem;
+}
+.question-detail-content {
+    background: #f8f9fa;
+    border-radius: 8px;
+    padding: 1rem;
+    margin-top: 0.5rem;
+}
 </style>
 {% endblock %}
+
+<!-- Feedback Detail Modal -->
+<div class="modal fade" id="feedbackModal" tabindex="-1" aria-labelledby="feedbackModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header bg-info text-white">
+                <h5 class="modal-title" id="feedbackModalLabel">
+                    <i class="bi bi-robot me-2"></i>AI Feedback Details
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body" id="feedbackModalBody">
+                <!-- Will be populated by JavaScript -->
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-success" onclick="downloadFeedbackPDF()">
+                    <i class="bi bi-download me-1"></i>Download PDF
+                </button>
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
 
 {% block scripts %}
 <script>
@@ -798,6 +851,10 @@
             const result = await response.json();
             
             if (result.success) {
+                // Store feedback data globally for modal/download
+                currentFeedbackData = result.feedback;
+                currentFeedbackType = feedbackType;
+                
                 feedbackContent.innerHTML = formatFeedback(result.feedback, feedbackType);
             } else {
                 feedbackContent.innerHTML = `
@@ -835,22 +892,49 @@
             </div>`;
             if (feedback.areas_to_improve && feedback.areas_to_improve.length > 0) {
                 html += `<div class="feedback-section">
-                    <h6 class="text-warning"><i class="bi bi-arrow-up-circle me-1"></i>Areas to Improve</h6>
-                    <ul class="mb-0 ps-3">`;
-                feedback.areas_to_improve.forEach(area => {
-                    html += `<li>${area}</li>`;
+                    <h6 class="text-warning"><i class="bi bi-arrow-up-circle me-1"></i>Areas to Improve (${feedback.areas_to_improve.length})</h6>
+                    <div class="table-responsive">
+                        <table class="table table-sm table-bordered feedback-table mb-2">
+                            <thead>
+                                <tr>
+                                    <th style="width: 40px;">#</th>
+                                    <th>What to Improve</th>
+                                </tr>
+                            </thead>
+                            <tbody>`;
+                feedback.areas_to_improve.forEach((area, idx) => {
+                    html += `<tr>
+                        <td class="text-center"><strong>${idx + 1}</strong></td>
+                        <td>${area}</td>
+                    </tr>`;
                 });
-                html += `</ul></div>`;
+                html += `</tbody>
+                        </table>
+                    </div>
+                </div>`;
             }
         } else if (feedbackType === 'hints') {
             html += `<div class="feedback-section">
                 <h6 class="text-success"><i class="bi bi-lightbulb me-1"></i>Starting Hints</h6>`;
             if (feedback.hints && feedback.hints.length > 0) {
-                html += `<ul class="mb-0 ps-3">`;
-                feedback.hints.forEach(hint => {
-                    html += `<li class="mb-2">${hint}</li>`;
+                html += `<div class="table-responsive">
+                    <table class="table table-sm table-bordered feedback-table mb-2">
+                        <thead>
+                            <tr>
+                                <th style="width: 40px;"><i class="bi bi-lightbulb"></i></th>
+                                <th>Hint</th>
+                            </tr>
+                        </thead>
+                        <tbody>`;
+                feedback.hints.forEach((hint, idx) => {
+                    html += `<tr>
+                        <td class="text-center text-warning"><i class="bi bi-lightbulb-fill"></i></td>
+                        <td>${hint}</td>
+                    </tr>`;
                 });
-                html += `</ul>`;
+                html += `</tbody>
+                    </table>
+                </div>`;
             } else {
                 html += `<p class="mb-0">${feedback.feedback || 'No hints available for completed questions.'}</p>`;
             }
@@ -868,11 +952,276 @@
             }
         }
         
+        // Add action buttons at the bottom
+        html += `
+            <div class="mt-3 pt-2 border-top d-flex gap-2">
+                <button type="button" class="btn btn-sm btn-outline-primary" onclick="openFeedbackModal()">
+                    <i class="bi bi-arrows-fullscreen me-1"></i>View Full Details
+                </button>
+                <button type="button" class="btn btn-sm btn-outline-success" onclick="downloadFeedbackPDF()">
+                    <i class="bi bi-file-pdf me-1"></i>Download PDF
+                </button>
+            </div>
+        `;
+        
         return html || `<p class="mb-0">${feedback.feedback || feedback.overall || 'Feedback not available.'}</p>`;
     }
     
     function closeFeedback() {
         document.getElementById('ai-feedback-result').style.display = 'none';
+    }
+    
+    // Store current feedback data globally for modal/download
+    let currentFeedbackData = null;
+    let currentFeedbackType = null;
+    
+    function openFeedbackModal() {
+        if (!currentFeedbackData) {
+            alert('No feedback data available.');
+            return;
+        }
+        
+        const modalBody = document.getElementById('feedbackModalBody');
+        modalBody.innerHTML = formatFeedbackForModal(currentFeedbackData, currentFeedbackType);
+        
+        const modal = new bootstrap.Modal(document.getElementById('feedbackModal'));
+        modal.show();
+    }
+    
+    function formatFeedbackForModal(feedback, feedbackType) {
+        let html = '';
+        
+        // Assignment info header
+        html += `
+            <div class="alert alert-light mb-4">
+                <div class="row">
+                    <div class="col-md-6">
+                        <strong><i class="bi bi-file-text me-1"></i>Assignment:</strong> {{ assignment.title }}
+                    </div>
+                    <div class="col-md-3">
+                        <strong><i class="bi bi-book me-1"></i>Subject:</strong> {{ assignment.subject }}
+                    </div>
+                    <div class="col-md-3">
+                        <strong><i class="bi bi-star me-1"></i>Total Marks:</strong> {{ assignment.total_marks }}
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        // Warning if present
+        if (feedback.warning) {
+            html += `<div class="alert alert-warning"><i class="bi bi-exclamation-triangle me-1"></i>${feedback.warning}</div>`;
+        }
+        
+        // Overall feedback
+        if (feedback.overall || feedback.feedback) {
+            html += `
+                <div class="card mb-4">
+                    <div class="card-header bg-primary text-white">
+                        <h6 class="mb-0"><i class="bi bi-clipboard-check me-1"></i>Overall Feedback</h6>
+                    </div>
+                    <div class="card-body">
+                        <p class="mb-0">${feedback.overall || feedback.feedback}</p>
+                    </div>
+                </div>
+            `;
+        }
+        
+        // Areas to improve table
+        if (feedback.areas_to_improve && feedback.areas_to_improve.length > 0) {
+            html += `
+                <div class="card mb-4">
+                    <div class="card-header bg-warning text-dark">
+                        <h6 class="mb-0"><i class="bi bi-arrow-up-circle me-1"></i>Areas to Improve</h6>
+                    </div>
+                    <div class="card-body p-0">
+                        <table class="table table-hover feedback-table mb-0">
+                            <thead>
+                                <tr>
+                                    <th style="width: 50px;">#</th>
+                                    <th>Area for Improvement</th>
+                                    <th style="width: 100px;">Priority</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+            `;
+            feedback.areas_to_improve.forEach((area, idx) => {
+                const priority = idx === 0 ? '<span class="badge bg-danger">High</span>' : 
+                                 idx === 1 ? '<span class="badge bg-warning text-dark">Medium</span>' : 
+                                 '<span class="badge bg-secondary">Normal</span>';
+                html += `
+                    <tr>
+                        <td><strong>${idx + 1}</strong></td>
+                        <td>${area}</td>
+                        <td>${priority}</td>
+                    </tr>
+                `;
+            });
+            html += `
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+        }
+        
+        // Hints section
+        if (feedback.hints && feedback.hints.length > 0) {
+            html += `
+                <div class="card mb-4">
+                    <div class="card-header bg-success text-white">
+                        <h6 class="mb-0"><i class="bi bi-lightbulb me-1"></i>Helpful Hints</h6>
+                    </div>
+                    <div class="card-body p-0">
+                        <table class="table table-hover feedback-table mb-0">
+                            <thead>
+                                <tr>
+                                    <th style="width: 50px;">#</th>
+                                    <th>Hint</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+            `;
+            feedback.hints.forEach((hint, idx) => {
+                html += `
+                    <tr>
+                        <td><i class="bi bi-lightbulb text-warning"></i></td>
+                        <td>${hint}</td>
+                    </tr>
+                `;
+            });
+            html += `
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+        }
+        
+        // Questions status if available
+        if (feedback.questions_status) {
+            html += `
+                <div class="card mb-4">
+                    <div class="card-header bg-info text-white">
+                        <h6 class="mb-0"><i class="bi bi-list-check me-1"></i>Question Status</h6>
+                    </div>
+                    <div class="card-body">
+                        <div>${feedback.questions_status}</div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        // Check result if available
+        if (feedback.check_result) {
+            html += `
+                <div class="card mb-4">
+                    <div class="card-header bg-secondary text-white">
+                        <h6 class="mb-0"><i class="bi bi-check2-square me-1"></i>Answer Check Result</h6>
+                    </div>
+                    <div class="card-body">
+                        <p class="mb-0">${feedback.check_result}</p>
+                    </div>
+                </div>
+            `;
+        }
+        
+        return html || '<p class="text-muted">No detailed feedback available.</p>';
+    }
+    
+    function downloadFeedbackPDF() {
+        if (!currentFeedbackData) {
+            alert('No feedback data available to download.');
+            return;
+        }
+        
+        // Create a printable version
+        const printContent = `
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>AI Feedback - {{ assignment.title }}</title>
+                <style>
+                    body { font-family: Arial, sans-serif; padding: 20px; max-width: 800px; margin: 0 auto; }
+                    h1 { color: #333; border-bottom: 2px solid #17a2b8; padding-bottom: 10px; }
+                    h2 { color: #17a2b8; margin-top: 20px; }
+                    .info-box { background: #f8f9fa; padding: 15px; border-radius: 5px; margin-bottom: 20px; }
+                    .warning { background: #fff3cd; padding: 10px; border-radius: 5px; border-left: 4px solid #ffc107; margin-bottom: 15px; }
+                    table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+                    th, td { border: 1px solid #dee2e6; padding: 10px; text-align: left; }
+                    th { background: #e9ecef; }
+                    .priority-high { color: #dc3545; font-weight: bold; }
+                    .priority-medium { color: #ffc107; font-weight: bold; }
+                    .footer { margin-top: 30px; font-size: 0.85rem; color: #6c757d; border-top: 1px solid #dee2e6; padding-top: 15px; }
+                </style>
+            </head>
+            <body>
+                <h1>📝 AI Feedback Report</h1>
+                <div class="info-box">
+                    <strong>Assignment:</strong> {{ assignment.title }}<br>
+                    <strong>Subject:</strong> {{ assignment.subject }}<br>
+                    <strong>Total Marks:</strong> {{ assignment.total_marks }}<br>
+                    <strong>Date:</strong> ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}
+                </div>
+                
+                ${currentFeedbackData.warning ? `<div class="warning">⚠️ ${currentFeedbackData.warning}</div>` : ''}
+                
+                ${currentFeedbackData.overall || currentFeedbackData.feedback ? `
+                    <h2>📋 Overall Feedback</h2>
+                    <p>${currentFeedbackData.overall || currentFeedbackData.feedback}</p>
+                ` : ''}
+                
+                ${currentFeedbackData.areas_to_improve && currentFeedbackData.areas_to_improve.length > 0 ? `
+                    <h2>🎯 Areas to Improve</h2>
+                    <table>
+                        <thead>
+                            <tr><th>#</th><th>Area</th><th>Priority</th></tr>
+                        </thead>
+                        <tbody>
+                            ${currentFeedbackData.areas_to_improve.map((area, idx) => `
+                                <tr>
+                                    <td>${idx + 1}</td>
+                                    <td>${area}</td>
+                                    <td class="${idx === 0 ? 'priority-high' : idx === 1 ? 'priority-medium' : ''}">${idx === 0 ? 'High' : idx === 1 ? 'Medium' : 'Normal'}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                ` : ''}
+                
+                ${currentFeedbackData.hints && currentFeedbackData.hints.length > 0 ? `
+                    <h2>💡 Helpful Hints</h2>
+                    <table>
+                        <thead>
+                            <tr><th>#</th><th>Hint</th></tr>
+                        </thead>
+                        <tbody>
+                            ${currentFeedbackData.hints.map((hint, idx) => `
+                                <tr><td>${idx + 1}</td><td>${hint}</td></tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                ` : ''}
+                
+                ${currentFeedbackData.check_result ? `
+                    <h2>✅ Answer Check</h2>
+                    <p>${currentFeedbackData.check_result}</p>
+                ` : ''}
+                
+                <div class="footer">
+                    Generated by AI Teaching Assistant | ${new Date().toLocaleString()}
+                </div>
+            </body>
+            </html>
+        `;
+        
+        // Open print dialog
+        const printWindow = window.open('', '_blank');
+        printWindow.document.write(printContent);
+        printWindow.document.close();
+        printWindow.onload = function() {
+            printWindow.print();
+        };
     }
     
     // === HELP SECTION FUNCTIONS ===
