@@ -1734,11 +1734,12 @@ def send_feedback_to_student(submission_id):
         student = Student.find_one({'student_id': submission['student_id']})
         teacher = Teacher.find_one({'teacher_id': session['teacher_id']})
         
-        # Update status
+        # Update status and mark feedback as sent
         Submission.update_one(
             {'submission_id': submission_id},
             {'$set': {
                 'status': 'reviewed',
+                'feedback_sent': True,
                 'reviewed_at': datetime.utcnow()
             }}
         )

@@ -222,6 +222,41 @@
 #feedback-table td {
     vertical-align: top;
 }
+
+/* Fullscreen styles */
+#submission-body:fullscreen {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background: #1a1a1a !important;
+    padding: 20px;
+}
+
+#submission-body:fullscreen img {
+    max-height: 95vh !important;
+    max-width: 95vw !important;
+    object-fit: contain;
+    margin: auto;
+}
+
+#submission-body:fullscreen iframe {
+    width: 95vw !important;
+    height: 95vh !important;
+}
+
+/* Webkit browsers */
+#submission-body:-webkit-full-screen {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background: #1a1a1a !important;
+}
+
+#submission-body:-webkit-full-screen img {
+    max-height: 95vh !important;
+    max-width: 95vw !important;
+    object-fit: contain;
+}
 </style>
 {% endblock %}
 
@@ -287,29 +322,65 @@
         }
     }
     
-    // Fullscreen functionality
+    // Fullscreen functionality - uses browser fullscreen API for true fullscreen
     let isFullscreen = false;
     
     function toggleFullscreen() {
+        const submissionBody = document.getElementById('submission-body');
+        const fullscreenBtn = document.getElementById('fullscreen-btn');
+        
+        if (!document.fullscreenElement) {
+            // Enter true browser fullscreen
+            submissionBody.requestFullscreen().then(() => {
+                submissionBody.style.height = '100vh';
+                submissionBody.style.background = '#1a1a1a';
+                fullscreenBtn.innerHTML = '<i class="bi bi-fullscreen-exit"></i>';
+                isFullscreen = true;
+            }).catch(err => {
+                // Fallback to expanded view if fullscreen API fails
+                expandView();
+            });
+        } else {
+            // Exit fullscreen
+            document.exitFullscreen().then(() => {
+                restoreView();
+            });
+        }
+    }
+    
+    // Fallback expanded view
+    function expandView() {
         const submissionPanel = document.getElementById('submission-panel');
         const feedbackPanel = document.getElementById('feedback-panel');
         const fullscreenBtn = document.getElementById('fullscreen-btn');
         
-        if (isFullscreen) {
-            // Restore normal view
-            submissionPanel.className = 'col-lg-7';
-            feedbackPanel.style.display = '';
-            fullscreenBtn.innerHTML = '<i class="bi bi-arrows-fullscreen"></i>';
-            document.getElementById('submission-body').style.height = '80vh';
-        } else {
-            // Fullscreen submission
-            submissionPanel.className = 'col-12';
-            feedbackPanel.style.display = 'none';
-            fullscreenBtn.innerHTML = '<i class="bi bi-fullscreen-exit"></i>';
-            document.getElementById('submission-body').style.height = '85vh';
-        }
-        isFullscreen = !isFullscreen;
+        submissionPanel.className = 'col-12';
+        feedbackPanel.style.display = 'none';
+        document.getElementById('submission-body').style.height = '90vh';
+        fullscreenBtn.innerHTML = '<i class="bi bi-fullscreen-exit"></i>';
+        isFullscreen = true;
     }
+    
+    function restoreView() {
+        const submissionPanel = document.getElementById('submission-panel');
+        const feedbackPanel = document.getElementById('feedback-panel');
+        const fullscreenBtn = document.getElementById('fullscreen-btn');
+        const submissionBody = document.getElementById('submission-body');
+        
+        submissionPanel.className = 'col-lg-7';
+        feedbackPanel.style.display = '';
+        submissionBody.style.height = '80vh';
+        submissionBody.style.background = '#f0f0f0';
+        fullscreenBtn.innerHTML = '<i class="bi bi-arrows-fullscreen"></i>';
+        isFullscreen = false;
+    }
+    
+    // Handle ESC key exiting fullscreen
+    document.addEventListener('fullscreenchange', () => {
+        if (!document.fullscreenElement && isFullscreen) {
+            restoreView();
+        }
+    });
     
     // Calculate total marks
     document.querySelectorAll('.marks-input').forEach(input => {

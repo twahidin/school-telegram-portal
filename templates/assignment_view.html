@@ -208,24 +208,27 @@
                     <h5>Your work has been submitted!</h5>
                     <p class="text-muted">
                         Status: 
-                        {% if existing_submission.status == 'reviewed' %}
-                        <span class="badge bg-success">Reviewed</span>
-                        {% elif existing_submission.status == 'ai_reviewed' %}
-                        <span class="badge bg-info">AI Reviewed - Awaiting Teacher</span>
+                        {% if existing_submission.get('feedback_sent', False) %}
+                        <span class="badge bg-success">Feedback Available</span>
                         {% else %}
-                        <span class="badge bg-warning text-dark">Pending Review</span>
+                        <span class="badge bg-warning text-dark">Awaiting Teacher Review</span>
                         {% endif %}
                     </p>
                     
-                    {% if existing_submission.final_marks is not none %}
+                    {% if existing_submission.get('feedback_sent', False) and existing_submission.final_marks is not none %}
                     <div class="score-display mt-4">
                         <h2 class="text-success">{{ existing_submission.final_marks }} / {{ assignment.total_marks }}</h2>
                         <p class="text-muted">Your Score</p>
                     </div>
+                    {% elif not existing_submission.get('feedback_sent', False) %}
+                    <p class="text-muted small mt-3">
+                        <i class="bi bi-hourglass-split me-1"></i>
+                        Your teacher will review your work and send feedback.
+                    </p>
                     {% endif %}
                     
                     <a href="{{ url_for('view_submission', submission_id=existing_submission.submission_id) }}" class="btn btn-primary btn-lg mt-3">
-                        <i class="bi bi-eye me-1"></i>View Feedback
+                        <i class="bi bi-eye me-1"></i>{% if existing_submission.get('feedback_sent', False) %}View Feedback{% else %}View Submission{% endif %}
                     </a>
                 </div>
             </div>
