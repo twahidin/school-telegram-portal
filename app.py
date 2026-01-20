@@ -530,7 +530,7 @@ def get_ai_feedback(assignment_id):
 @login_required
 @limiter.limit("20 per hour")
 def get_question_help_api():
-    """Get AI help for a specific question"""
+    """Get AI help for a specific question (supports text and images)"""
     from utils.ai_marking import get_question_help
     
     try:
@@ -538,10 +538,13 @@ def get_question_help_api():
         assignment_id = data.get('assignment_id')
         question_text = data.get('question', '').strip()
         answer_text = data.get('answer', '').strip()
+        question_image = data.get('question_image')  # Base64 encoded image
+        answer_image = data.get('answer_image')  # Base64 encoded image
         help_type = data.get('help_type', 'stuck')
         
-        if not question_text:
-            return jsonify({'error': 'Please provide the question text'}), 400
+        # Check if at least question text or image is provided
+        if not question_text and not question_image:
+            return jsonify({'error': 'Please provide the question text or upload a photo'}), 400
         
         assignment = Assignment.find_one({'assignment_id': assignment_id})
         if not assignment:
@@ -556,7 +559,9 @@ def get_question_help_api():
             help_type=help_type,
             assignment=assignment,
             teacher=teacher,
-            db_instance=db
+            db_instance=db,
+            question_image=question_image,
+            answer_image=answer_image
         )
         
         return jsonify({

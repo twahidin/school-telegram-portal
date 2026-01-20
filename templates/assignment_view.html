@@ -103,22 +103,54 @@
                     <h5 class="mb-0"><i class="bi bi-question-circle me-2"></i>Need Help with a Question?</h5>
                 </div>
                 <div class="card-body">
-                    <p class="text-muted small mb-3">Get AI assistance for one question at a time. Enter the question and optionally your answer attempt.</p>
+                    <p class="text-muted small mb-3">Get AI assistance for one question at a time. Type or upload a photo of your question and answer.</p>
                     
+                    <!-- Question Input -->
                     <div class="mb-3">
-                        <label for="help-question" class="form-label fw-semibold">
+                        <label class="form-label fw-semibold">
                             <i class="bi bi-chat-left-text me-1"></i>Question
                         </label>
-                        <textarea class="form-control" id="help-question" rows="3" 
+                        <textarea class="form-control mb-2" id="help-question" rows="3" 
                                   placeholder="Type or paste the question you need help with..."></textarea>
+                        <div class="d-flex align-items-center gap-2">
+                            <label class="btn btn-sm btn-outline-secondary mb-0" for="question-image-input">
+                                <i class="bi bi-camera me-1"></i>Upload Photo
+                            </label>
+                            <input type="file" id="question-image-input" accept="image/*" class="d-none" onchange="previewImage('question')">
+                            <small class="text-muted">or upload a photo of the question</small>
+                        </div>
+                        <div id="question-image-preview" class="mt-2" style="display: none;">
+                            <div class="position-relative d-inline-block">
+                                <img id="question-preview-img" src="" alt="Question" class="img-thumbnail" style="max-height: 150px;">
+                                <button type="button" class="btn btn-sm btn-danger position-absolute top-0 end-0" onclick="removeImage('question')">
+                                    <i class="bi bi-x"></i>
+                                </button>
+                            </div>
+                        </div>
                     </div>
                     
+                    <!-- Answer Input -->
                     <div class="mb-3">
-                        <label for="help-answer" class="form-label fw-semibold">
+                        <label class="form-label fw-semibold">
                             <i class="bi bi-pencil me-1"></i>Your Answer (optional)
                         </label>
-                        <textarea class="form-control" id="help-answer" rows="3" 
+                        <textarea class="form-control mb-2" id="help-answer" rows="3" 
                                   placeholder="Enter your answer attempt if you have one..."></textarea>
+                        <div class="d-flex align-items-center gap-2">
+                            <label class="btn btn-sm btn-outline-secondary mb-0" for="answer-image-input">
+                                <i class="bi bi-camera me-1"></i>Upload Photo
+                            </label>
+                            <input type="file" id="answer-image-input" accept="image/*" class="d-none" onchange="previewImage('answer')">
+                            <small class="text-muted">or upload a photo of your answer</small>
+                        </div>
+                        <div id="answer-image-preview" class="mt-2" style="display: none;">
+                            <div class="position-relative d-inline-block">
+                                <img id="answer-preview-img" src="" alt="Answer" class="img-thumbnail" style="max-height: 150px;">
+                                <button type="button" class="btn btn-sm btn-danger position-absolute top-0 end-0" onclick="removeImage('answer')">
+                                    <i class="bi bi-x"></i>
+                                </button>
+                            </div>
+                        </div>
                     </div>
                     
                     <div class="d-grid gap-2">
@@ -1225,18 +1257,61 @@
     }
     
     // === HELP SECTION FUNCTIONS ===
+    // Image handling functions
+    let questionImageData = null;
+    let answerImageData = null;
+    
+    function previewImage(type) {
+        const input = document.getElementById(`${type}-image-input`);
+        const preview = document.getElementById(`${type}-image-preview`);
+        const img = document.getElementById(`${type}-preview-img`);
+        
+        if (input.files && input.files[0]) {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                img.src = e.target.result;
+                preview.style.display = 'block';
+                
+                if (type === 'question') {
+                    questionImageData = e.target.result;
+                } else {
+                    answerImageData = e.target.result;
+                }
+            };
+            reader.readAsDataURL(input.files[0]);
+        }
+    }
+    
+    function removeImage(type) {
+        const input = document.getElementById(`${type}-image-input`);
+        const preview = document.getElementById(`${type}-image-preview`);
+        
+        input.value = '';
+        preview.style.display = 'none';
+        
+        if (type === 'question') {
+            questionImageData = null;
+        } else {
+            answerImageData = null;
+        }
+    }
+    
     async function askForHelp(helpType) {
         const question = document.getElementById('help-question').value.trim();
         const answer = document.getElementById('help-answer').value.trim();
         
-        if (!question) {
-            alert('Please enter the question you need help with.');
+        // Check if either text or image is provided for question
+        const hasQuestionContent = question || questionImageData;
+        
+        if (!hasQuestionContent) {
+            alert('Please enter the question text or upload a photo of the question.');
             return;
         }
         
-        // For 'wrong' and 'improve' types, answer is recommended but not required for 'stuck'
-        if ((helpType === 'wrong' || helpType === 'improve') && !answer) {
-            if (!confirm('You haven\'t entered an answer. The AI feedback will be more helpful if you provide your answer attempt. Continue anyway?')) {
+        // For 'wrong' and 'improve' types, answer is recommended
+        const hasAnswerContent = answer || answerImageData;
+        if ((helpType === 'wrong' || helpType === 'improve') && !hasAnswerContent) {
+            if (!confirm('You haven\'t provided an answer. The AI feedback will be more helpful if you provide your answer attempt. Continue anyway?')) {
                 return;
             }
         }
@@ -1248,7 +1323,7 @@
         helpContent.innerHTML = `
             <div class="text-center py-4">
                 <div class="spinner-border text-warning mb-2" role="status"></div>
-                <p class="mb-0 text-muted">AI is thinking...</p>
+                <p class="mb-0 text-muted">AI is analyzing${questionImageData || answerImageData ? ' your images' : ''}...</p>
             </div>
         `;
         helpResult.style.display = 'block';
@@ -1266,6 +1341,8 @@
                     assignment_id: '{{ assignment.assignment_id }}',
                     question: question,
                     answer: answer,
+                    question_image: questionImageData,
+                    answer_image: answerImageData,
                     help_type: helpType
                 })
             });

@@ -756,7 +756,7 @@ def save_ai_prompts(db_instance, prompts: dict) -> bool:
         logger.error(f"Error saving prompts: {e}")
         return False
 
-def get_question_help(question: str, student_answer: str, help_type: str, assignment: dict, teacher: dict = None, db_instance=None) -> dict:
+def get_question_help(question: str, student_answer: str, help_type: str, assignment: dict, teacher: dict = None, db_instance=None, question_image: str = None, answer_image: str = None) -> dict:
     """
     Get AI help for a specific question.
     
@@ -767,6 +767,8 @@ def get_question_help(question: str, student_answer: str, help_type: str, assign
         assignment: Assignment document for context
         teacher: Teacher document for API key
         db_instance: Database instance for loading custom prompts
+        question_image: Base64 encoded image of the question (optional)
+        answer_image: Base64 encoded image of the student's answer (optional)
     
     Returns:
         Dictionary with help response
@@ -787,35 +789,92 @@ def get_question_help(question: str, student_answer: str, help_type: str, assign
         
         prompt_config = prompts[help_type]
         
-        # Check if answer is required
-        if prompt_config.get('requires_answer') and not student_answer:
+        # Check if answer is required (consider both text and image)
+        has_answer = student_answer or answer_image
+        if prompt_config.get('requires_answer') and not has_answer:
             return {
                 'response': f'Please provide your answer so I can help with "{prompt_config["name"]}".',
-                'hints': ['Enter your answer attempt in the answer field', 'Even partial answers help me give better feedback']
+                'hints': ['Enter your answer attempt in the answer field or upload a photo', 'Even partial answers help me give better feedback']
             }
         
         subject = assignment.get('subject', 'General')
         assignment_title = assignment.get('title', 'Assignment')
         
         # Format the prompts with variables
-        answer_context = f"STUDENT'S ANSWER: {student_answer}" if student_answer else "No answer provided yet."
+        answer_context = f"STUDENT'S ANSWER: {student_answer}" if student_answer else "No text answer provided."
+        if answer_image:
+            answer_context += " (Student also provided an image of their answer - see attached)"
         
         system_prompt = prompt_config['system_prompt'].format(
             subject=subject,
             assignment_title=assignment_title
         )
         
-        user_content = prompt_config['user_prompt'].format(
-            question=question,
-            student_answer=student_answer or 'Not provided',
+        user_text = prompt_config['user_prompt'].format(
+            question=question if question else "(See question image attached)",
+            student_answer=student_answer or 'Not provided in text',
             answer_context=answer_context
         )
         
-        # Make API call
+        # Build message content with images if provided
+        content_parts = []
+        
+        # Add question image if provided
+        if question_image:
+            # Extract base64 data from data URL
+            if ',' in question_image:
+                image_data = question_image.split(',')[1]
+                media_type = question_image.split(';')[0].split(':')[1] if ':' in question_image else 'image/jpeg'
+            else:
+                image_data = question_image
+                media_type = 'image/jpeg'
+            
+            content_parts.append({
+                "type": "text",
+                "text": "QUESTION IMAGE:"
+            })
+            content_parts.append({
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": media_type,
+                    "data": image_data
+                }
+            })
+        
+        # Add answer image if provided
+        if answer_image:
+            if ',' in answer_image:
+                image_data = answer_image.split(',')[1]
+                media_type = answer_image.split(';')[0].split(':')[1] if ':' in answer_image else 'image/jpeg'
+            else:
+                image_data = answer_image
+                media_type = 'image/jpeg'
+            
+            content_parts.append({
+                "type": "text",
+                "text": "STUDENT'S ANSWER IMAGE:"
+            })
+            content_parts.append({
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": media_type,
+                    "data": image_data
+                }
+            })
+        
+        # Add the main text prompt
+        content_parts.append({
+            "type": "text",
+            "text": user_text
+        })
+        
+        # Make API call with vision support
         message = client.messages.create(
             model="claude-sonnet-4-20250514",
             max_tokens=1000,
-            messages=[{"role": "user", "content": user_content}],
+            messages=[{"role": "user", "content": content_parts}],
             system=system_prompt
         )
         
