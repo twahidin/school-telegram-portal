@@ -74,14 +74,14 @@
                         </div>
                     </div>
                 </div>
-                <div class="card-body p-0" style="height: 80vh; overflow: auto; background: #f0f0f0;" id="submission-body">
-                    <div id="submission-viewer" style="display: flex; justify-content: center; align-items: flex-start; min-height: 100%;">
+                <div class="card-body p-0" style="height: calc(100vh - 180px); overflow: auto; background: #f0f0f0;" id="submission-body">
+                    <div id="submission-viewer" style="display: flex; justify-content: center; align-items: flex-start; padding: 10px;">
                         {% if submission.file_type == 'pdf' %}
                         <iframe id="pdf-viewer" src="{{ url_for('view_submission_file', submission_id=submission.submission_id, file_index=0) }}" 
-                                style="width: 100%; height: 100%; border: none;"></iframe>
+                                style="width: 100%; height: calc(100vh - 200px); border: none;"></iframe>
                         {% else %}
                         <img id="page-image" src="{{ url_for('view_submission_file', submission_id=submission.submission_id, file_index=0) }}" 
-                             style="max-width: 100%; height: auto; transform-origin: top center;" class="submission-img">
+                             style="width: 100%; height: auto; transform-origin: top center; object-fit: contain;" class="submission-img">
                         {% endif %}
                     </div>
                 </div>
@@ -94,7 +94,7 @@
                 <div class="card-header">
                     <h6 class="mb-0"><i class="bi bi-table me-2"></i>Feedback Table</h6>
                 </div>
-                <div class="card-body p-0" style="height: 70vh; overflow: auto;">
+                <div class="card-body p-0" style="height: calc(100vh - 250px); overflow: auto;">
                     <form id="feedback-form">
                         <table class="table table-bordered mb-0" id="feedback-table">
                             <thead class="table-light sticky-top">
@@ -369,7 +369,7 @@
         
         submissionPanel.className = 'col-lg-7';
         feedbackPanel.style.display = '';
-        submissionBody.style.height = '80vh';
+        submissionBody.style.height = 'calc(100vh - 180px)';
         submissionBody.style.background = '#f0f0f0';
         fullscreenBtn.innerHTML = '<i class="bi bi-arrows-fullscreen"></i>';
         isFullscreen = false;
