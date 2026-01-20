@@ -2879,16 +2879,36 @@ def delete_teachers():
         if not teacher_ids:
             return jsonify({'error': 'No teachers specified'}), 400
         
+        # Get teachers before deletion to log telegram IDs being freed
+        teachers_to_delete = list(db.db.teachers.find({'teacher_id': {'$in': teacher_ids}}))
+        telegram_ids_freed = [t.get('telegram_id') for t in teachers_to_delete if t.get('telegram_id')]
+        
         # Remove teacher from all students
         Student.update_many(
             {'teachers': {'$in': teacher_ids}},
             {'$pull': {'teachers': {'$in': teacher_ids}}}
         )
         
-        # Delete teachers
+        # Delete all messages involving these teachers
+        Message.delete_many({'teacher_id': {'$in': teacher_ids}})
+        
+        # Delete all assignments by these teachers
+        Assignment.delete_many({'teacher_id': {'$in': teacher_ids}})
+        
+        # Delete all submissions for those assignments
+        Submission.delete_many({'teacher_id': {'$in': teacher_ids}})
+        
+        # Delete teachers (this also removes their telegram_id association)
         result = db.db.teachers.delete_many({'teacher_id': {'$in': teacher_ids}})
         
-        return jsonify({'success': True, 'deleted': result.deleted_count})
+        logger.info(f"Deleted {result.deleted_count} teacher(s). Telegram IDs freed: {telegram_ids_freed}")
+        
+        return jsonify({
+            'success': True, 
+            'deleted': result.deleted_count,
+            'telegram_ids_freed': len(telegram_ids_freed),
+            'message': f'Deleted {result.deleted_count} teacher(s). Telegram accounts can now be reused.'
+        })
         
     except Exception as e:
         logger.error(f"Error deleting teachers: {e}")

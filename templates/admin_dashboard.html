@@ -1299,7 +1299,7 @@
         const selected = [...document.querySelectorAll('.teacher-checkbox:checked')].map(cb => cb.value);
         if (selected.length === 0) return;
         
-        document.getElementById('delete-message').textContent = `Delete ${selected.length} selected teacher(s)?`;
+        document.getElementById('delete-message').innerHTML = `Delete ${selected.length} selected teacher(s)?<br><br><small class="text-muted">This will also:<br>• Remove Telegram associations (can be reused)<br>• Delete all their assignments and submissions<br>• Remove them from students</small>`;
         deleteAction = { type: 'teachers', ids: selected };
         deleteModal.show();
     });
