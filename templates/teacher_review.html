@@ -45,30 +45,43 @@
         </div>
     </div>
 
-    <div class="row">
+    <div class="row" id="review-row">
         <!-- Left Panel: Submission Pages -->
-        <div class="col-lg-6">
+        <div class="col-lg-7" id="submission-panel">
             <div class="card">
                 <div class="card-header d-flex justify-content-between align-items-center">
                     <h6 class="mb-0"><i class="bi bi-file-earmark me-2"></i>Student Submission</h6>
-                    <div class="btn-group btn-group-sm">
-                        <button class="btn btn-outline-secondary" onclick="prevPage()" id="prev-btn" disabled>
-                            <i class="bi bi-chevron-left"></i>
-                        </button>
-                        <span class="btn btn-outline-secondary disabled" id="page-indicator">Page 1/{{ page_count }}</span>
-                        <button class="btn btn-outline-secondary" onclick="nextPage()" id="next-btn" {% if page_count <= 1 %}disabled{% endif %}>
-                            <i class="bi bi-chevron-right"></i>
-                        </button>
+                    <div class="d-flex align-items-center gap-2">
+                        <div class="btn-group btn-group-sm">
+                            <button class="btn btn-outline-secondary" onclick="prevPage()" id="prev-btn" disabled>
+                                <i class="bi bi-chevron-left"></i>
+                            </button>
+                            <span class="btn btn-outline-secondary disabled" id="page-indicator">Page 1/{{ page_count }}</span>
+                            <button class="btn btn-outline-secondary" onclick="nextPage()" id="next-btn" {% if page_count <= 1 %}disabled{% endif %}>
+                                <i class="bi bi-chevron-right"></i>
+                            </button>
+                        </div>
+                        <div class="btn-group btn-group-sm">
+                            <button class="btn btn-outline-secondary" onclick="zoomOut()" title="Zoom Out">
+                                <i class="bi bi-zoom-out"></i>
+                            </button>
+                            <button class="btn btn-outline-secondary" onclick="zoomIn()" title="Zoom In">
+                                <i class="bi bi-zoom-in"></i>
+                            </button>
+                            <button class="btn btn-outline-secondary" onclick="toggleFullscreen()" title="Toggle Fullscreen" id="fullscreen-btn">
+                                <i class="bi bi-arrows-fullscreen"></i>
+                            </button>
+                        </div>
                     </div>
                 </div>
-                <div class="card-body p-0" style="height: 70vh; overflow: auto;">
-                    <div id="submission-viewer">
+                <div class="card-body p-0" style="height: 80vh; overflow: auto; background: #f0f0f0;" id="submission-body">
+                    <div id="submission-viewer" style="display: flex; justify-content: center; align-items: flex-start; min-height: 100%;">
                         {% if submission.file_type == 'pdf' %}
                         <iframe id="pdf-viewer" src="{{ url_for('view_submission_file', submission_id=submission.submission_id, file_index=0) }}" 
                                 style="width: 100%; height: 100%; border: none;"></iframe>
                         {% else %}
                         <img id="page-image" src="{{ url_for('view_submission_file', submission_id=submission.submission_id, file_index=0) }}" 
-                             style="width: 100%; height: auto;">
+                             style="max-width: 100%; height: auto; transform-origin: top center;" class="submission-img">
                         {% endif %}
                     </div>
                 </div>
@@ -76,7 +89,7 @@
         </div>
 
         <!-- Right Panel: Feedback Table -->
-        <div class="col-lg-6">
+        <div class="col-lg-5" id="feedback-panel">
             <div class="card">
                 <div class="card-header">
                     <h6 class="mb-0"><i class="bi bi-table me-2"></i>Feedback Table</h6>
@@ -244,6 +257,58 @@
             currentPage--;
             updatePageView();
         }
+    }
+    
+    // Zoom functionality
+    let currentZoom = 1;
+    const zoomStep = 0.25;
+    const maxZoom = 3;
+    const minZoom = 0.5;
+    
+    function zoomIn() {
+        if (currentZoom < maxZoom) {
+            currentZoom += zoomStep;
+            applyZoom();
+        }
+    }
+    
+    function zoomOut() {
+        if (currentZoom > minZoom) {
+            currentZoom -= zoomStep;
+            applyZoom();
+        }
+    }
+    
+    function applyZoom() {
+        const img = document.getElementById('page-image');
+        if (img) {
+            img.style.transform = `scale(${currentZoom})`;
+            img.style.transformOrigin = 'top center';
+        }
+    }
+    
+    // Fullscreen functionality
+    let isFullscreen = false;
+    
+    function toggleFullscreen() {
+        const submissionPanel = document.getElementById('submission-panel');
+        const feedbackPanel = document.getElementById('feedback-panel');
+        const fullscreenBtn = document.getElementById('fullscreen-btn');
+        
+        if (isFullscreen) {
+            // Restore normal view
+            submissionPanel.className = 'col-lg-7';
+            feedbackPanel.style.display = '';
+            fullscreenBtn.innerHTML = '<i class="bi bi-arrows-fullscreen"></i>';
+            document.getElementById('submission-body').style.height = '80vh';
+        } else {
+            // Fullscreen submission
+            submissionPanel.className = 'col-12';
+            feedbackPanel.style.display = 'none';
+            fullscreenBtn.innerHTML = '<i class="bi bi-fullscreen-exit"></i>';
+            document.getElementById('submission-body').style.height = '85vh';
+        }
+        isFullscreen = !isFullscreen;
     }
     
     // Calculate total marks
