@@ -79,28 +79,52 @@ def admin_required(f):
 @app.route('/login', methods=['GET', 'POST'])
 @limiter.limit("10 per minute")
 def login():
-    """Student login"""
+    """Unified login for students, teachers, and admins"""
     if request.method == 'POST':
-        student_id = request.form.get('student_id', '').strip().upper()
+        user_id = request.form.get('user_id', '').strip()
+        # Also check old field name for backwards compatibility
+        if not user_id:
+            user_id = request.form.get('student_id', '').strip()
+        user_id_upper = user_id.upper()
         password = request.form.get('password', '')
         
-        if not student_id or not password:
+        if not user_id or not password:
             return render_template('login.html', error='Please enter both ID and password')
         
-        student = Student.find_one({'student_id': student_id})
+        # Check if admin login (username: "admin")
+        if user_id.lower() == 'admin':
+            if password == ADMIN_PASSWORD:
+                session['is_admin'] = True
+                session.permanent = True
+                return redirect(url_for('admin_dashboard'))
+            else:
+                return render_template('login.html', error='Invalid admin password')
         
-        if not student:
-            return render_template('login.html', error='Invalid student ID')
+        # Check if teacher login
+        teacher = Teacher.find_one({'teacher_id': user_id_upper})
+        if teacher:
+            if verify_password(password, teacher.get('password_hash', '')):
+                session['teacher_id'] = user_id_upper
+                session['teacher_name'] = teacher.get('name', 'Teacher')
+                session.permanent = True
+                return redirect(url_for('teacher_dashboard'))
+            else:
+                return render_template('login.html', error='Invalid password')
         
-        if not verify_password(password, student.get('password_hash', '')):
-            return render_template('login.html', error='Invalid password')
+        # Check if student login
+        student = Student.find_one({'student_id': user_id_upper})
+        if student:
+            if verify_password(password, student.get('password_hash', '')):
+                session['student_id'] = user_id_upper
+                session['student_name'] = student.get('name', 'Student')
+                session['student_class'] = student.get('class', '')
+                session.permanent = True
+                return redirect(url_for('dashboard'))
+            else:
+                return render_template('login.html', error='Invalid password')
         
-        session['student_id'] = student_id
-        session['student_name'] = student.get('name', 'Student')
-        session['student_class'] = student.get('class', '')
-        session.permanent = True
-        
-        return redirect(url_for('dashboard'))
+        # User not found
+        return render_template('login.html', error='User not found. Check your ID.')
     
     return render_template('login.html')
 
@@ -111,53 +135,26 @@ def logout():
     return redirect(url_for('login'))
 
 @app.route('/teacher/login', methods=['GET', 'POST'])
-@limiter.limit("10 per minute")
 def teacher_login():
-    """Teacher login"""
-    if request.method == 'POST':
-        teacher_id = request.form.get('teacher_id', '').strip().upper()
-        password = request.form.get('password', '')
-        
-        if not teacher_id or not password:
-            return render_template('teacher_login.html', error='Please enter both ID and password')
-        
-        teacher = Teacher.find_one({'teacher_id': teacher_id})
-        
-        if not teacher:
-            return render_template('teacher_login.html', error='Invalid teacher ID')
-        
-        if not verify_password(password, teacher.get('password_hash', '')):
-            return render_template('teacher_login.html', error='Invalid password')
-        
-        session['teacher_id'] = teacher_id
-        session['teacher_name'] = teacher.get('name', 'Teacher')
-        session.permanent = True
-        
-        return redirect(url_for('teacher_dashboard'))
-    
-    return render_template('teacher_login.html')
+    """Redirect to unified login"""
+    return redirect(url_for('login'))
 
 @app.route('/teacher/logout')
 def teacher_logout():
     """Teacher logout"""
     session.clear()
-    return redirect(url_for('teacher_login'))
+    return redirect(url_for('login'))
 
 @app.route('/admin/login', methods=['GET', 'POST'])
-@limiter.limit("5 per minute")
 def admin_login():
-    """Admin login"""
-    if request.method == 'POST':
-        password = request.form.get('password', '')
-        
-        if password == ADMIN_PASSWORD:
-            session['is_admin'] = True
-            session.permanent = True
-            return redirect(url_for('admin_dashboard'))
-        
-        return render_template('admin_login.html', error='Invalid password')
-    
-    return render_template('admin_login.html')
+    """Redirect to unified login"""
+    return redirect(url_for('login'))
+
+@app.route('/admin/logout')
+def admin_logout():
+    """Admin logout"""
+    session.clear()
+    return redirect(url_for('login'))
 
 # ============================================================================
 # STUDENT DASHBOARD & CHAT ROUTES

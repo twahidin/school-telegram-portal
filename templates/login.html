@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Student Login - School Portal{% endblock %}
+{% block title %}Login - School Portal{% endblock %}
 
 {% block content %}
 <div class="auth-page">
@@ -11,7 +11,7 @@
                     <i class="bi bi-mortarboard-fill"></i>
                 </div>
                 <h1>Welcome Back</h1>
-                <p>Sign in to your student account</p>
+                <p>Sign in to your account</p>
             </div>
             
             {% if error %}
@@ -23,9 +23,9 @@
             
             <form method="POST" class="auth-form">
                 <div class="form-floating mb-3">
-                    <input type="text" class="form-control" id="student_id" name="student_id" 
-                           placeholder="Student ID" required autofocus>
-                    <label for="student_id"><i class="bi bi-person me-2"></i>Student ID</label>
+                    <input type="text" class="form-control" id="user_id" name="user_id" 
+                           placeholder="User ID" required autofocus>
+                    <label for="user_id"><i class="bi bi-person me-2"></i>User ID</label>
                 </div>
                 
                 <div class="form-floating mb-4">
@@ -40,7 +40,10 @@
             </form>
             
             <div class="auth-footer">
-                <p>Are you a teacher? <a href="{{ url_for('teacher_login') }}">Teacher Login</a></p>
+                <p class="text-muted small mb-0">
+                    <i class="bi bi-info-circle me-1"></i>
+                    Students, Teachers, and Admins can login here
+                </p>
             </div>
         </div>
         
