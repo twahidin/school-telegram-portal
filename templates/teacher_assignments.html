@@ -72,6 +72,9 @@
                         {% if assignment.status == 'draft' %}
                         <span class="badge bg-secondary">Draft</span>
                         {% endif %}
+                        {% if assignment.target_display %}
+                        <span class="badge bg-info mb-2" title="Assigned to"><i class="bi bi-{{ assignment.target_icon }} me-1"></i>{{ assignment.target_display }}</span>
+                        {% endif %}
                     </div>
                     <div class="dropdown">
                         <button class="btn btn-link text-muted" data-bs-toggle="dropdown">

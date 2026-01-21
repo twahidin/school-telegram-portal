@@ -91,6 +91,11 @@
             </button>
         </li>
         <li class="nav-item" role="presentation">
+            <button class="nav-link" id="teaching-groups-tab" data-bs-toggle="tab" data-bs-target="#teaching-groups" type="button">
+                <i class="bi bi-diagram-3 me-1"></i>Teaching Groups
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
             <button class="nav-link" id="prompts-tab" data-bs-toggle="tab" data-bs-target="#prompts" type="button">
                 <i class="bi bi-robot me-1"></i>AI Prompts
             </button>
@@ -458,6 +463,94 @@
                                 {% else %}
                                 <div class="list-group-item text-muted text-center">No classes yet</div>
                                 {% endfor %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Teaching Groups Tab -->
+        <div class="tab-pane fade" id="teaching-groups" role="tabpanel">
+            <div class="row g-4">
+                <!-- Create Teaching Group -->
+                <div class="col-lg-5">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="mb-0"><i class="bi bi-diagram-3 me-2"></i>Create Teaching Group</h5>
+                        </div>
+                        <div class="card-body">
+                            <p class="text-muted small mb-3">
+                                Teaching groups allow you to assign a subset of students from a class to a specific teacher.
+                            </p>
+                            <form id="create-teaching-group-form">
+                                <div class="mb-3">
+                                    <label class="form-label">Group Name *</label>
+                                    <input type="text" class="form-control" id="tg_name" placeholder="e.g., 3I4 Chemistry Group A" required>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">Select Class *</label>
+                                    <select class="form-select" id="tg_class_id" required>
+                                        <option value="">Select a class...</option>
+                                        {% for c in classes %}
+                                        <option value="{{ c.class_id }}">{{ c.class_id }}{% if c.name and c.name != c.class_id %} ({{ c.name }}){% endif %}</option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">Assign to Teacher *</label>
+                                    <select class="form-select" id="tg_teacher_id" required>
+                                        <option value="">Select a teacher...</option>
+                                        {% for t in teachers %}
+                                        <option value="{{ t.teacher_id }}">{{ t.name }} ({{ t.teacher_id }})</option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">Select Students *</label>
+                                    <div id="tg-students-container" class="border rounded p-2" style="max-height: 300px; overflow-y: auto;">
+                                        <p class="text-muted small mb-0">Select a class first to see students</p>
+                                    </div>
+                                    <small class="text-muted">Students from the selected class will appear here</small>
+                                </div>
+                                <button type="submit" class="btn btn-primary">
+                                    <i class="bi bi-plus-circle me-1"></i>Create Teaching Group
+                                </button>
+                            </form>
+                            <div id="create-tg-result" class="mt-3"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Manage Teaching Groups -->
+                <div class="col-lg-7">
+                    <div class="card">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <h5 class="mb-0"><i class="bi bi-list-ul me-2"></i>Manage Teaching Groups</h5>
+                            <button class="btn btn-sm btn-outline-secondary" onclick="loadTeachingGroups()">
+                                <i class="bi bi-arrow-clockwise"></i> Refresh
+                            </button>
+                        </div>
+                        <div class="card-body p-0">
+                            <div class="table-responsive">
+                                <table class="table table-hover mb-0">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th>Group Name</th>
+                                            <th>Class</th>
+                                            <th>Teacher</th>
+                                            <th>Students</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="teaching-groups-tbody">
+                                        <tr>
+                                            <td colspan="5" class="text-center text-muted py-4">
+                                                <i class="bi bi-hourglass me-2"></i>Loading teaching groups...
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
                             </div>
                         </div>
                     </div>
@@ -1868,5 +1961,184 @@
             showResult('prompts-result', 'Failed to save prompts', 'danger');
         }
     });
+
+    // ================== TEACHING GROUPS ==================
+    
+    // Load students when class is selected for teaching group
+    document.getElementById('tg_class_id').addEventListener('change', async (e) => {
+        const classId = e.target.value;
+        const container = document.getElementById('tg-students-container');
+        
+        if (!classId) {
+            container.innerHTML = '<p class="text-muted small mb-0">Select a class first to see students</p>';
+            return;
+        }
+        
+        container.innerHTML = '<div class="text-center py-2"><div class="spinner-border spinner-border-sm"></div> Loading...</div>';
+        
+        try {
+            const response = await fetch(`/admin/api/students?class=${classId}`);
+            const data = await response.json();
+            
+            if (data.students.length === 0) {
+                container.innerHTML = '<p class="text-muted small mb-0">No students in this class</p>';
+                return;
+            }
+            
+            container.innerHTML = `
+                <div class="mb-2">
+                    <input type="checkbox" id="tg-select-all" class="form-check-input me-2">
+                    <label for="tg-select-all" class="form-check-label"><strong>Select All (${data.students.length})</strong></label>
+                </div>
+                <hr class="my-2">
+                ${data.students.map(s => `
+                    <div class="form-check">
+                        <input type="checkbox" class="form-check-input tg-student-checkbox" value="${s.student_id}" id="tg-${s.student_id}">
+                        <label class="form-check-label" for="tg-${s.student_id}">
+                            ${s.name} <small class="text-muted">(${s.student_id})</small>
+                        </label>
+                    </div>
+                `).join('')}
+            `;
+            
+            // Select all handler
+            document.getElementById('tg-select-all').addEventListener('change', (e) => {
+                document.querySelectorAll('.tg-student-checkbox').forEach(cb => cb.checked = e.target.checked);
+            });
+        } catch (e) {
+            container.innerHTML = '<p class="text-danger small mb-0">Error loading students</p>';
+        }
+    });
+    
+    // Create teaching group form
+    document.getElementById('create-teaching-group-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        
+        const name = document.getElementById('tg_name').value.trim();
+        const classId = document.getElementById('tg_class_id').value;
+        const teacherId = document.getElementById('tg_teacher_id').value;
+        const studentIds = [...document.querySelectorAll('.tg-student-checkbox:checked')].map(cb => cb.value);
+        
+        if (!name || !classId || !teacherId) {
+            showResult('create-tg-result', 'Please fill in all required fields', 'warning');
+            return;
+        }
+        
+        if (studentIds.length === 0) {
+            showResult('create-tg-result', 'Please select at least one student', 'warning');
+            return;
+        }
+        
+        try {
+            const response = await fetch('/admin/api/teaching-groups', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, class_id: classId, teacher_id: teacherId, student_ids: studentIds })
+            });
+            const data = await response.json();
+            
+            if (data.success) {
+                showResult('create-tg-result', `Teaching group "${name}" created with ${studentIds.length} students!`, 'success');
+                // Reset form
+                document.getElementById('create-teaching-group-form').reset();
+                document.getElementById('tg-students-container').innerHTML = '<p class="text-muted small mb-0">Select a class first to see students</p>';
+                loadTeachingGroups();
+            } else {
+                showResult('create-tg-result', data.error || 'Failed to create teaching group', 'danger');
+            }
+        } catch (e) {
+            showResult('create-tg-result', 'Error creating teaching group', 'danger');
+        }
+    });
+    
+    // Load teaching groups
+    async function loadTeachingGroups() {
+        const tbody = document.getElementById('teaching-groups-tbody');
+        
+        try {
+            const response = await fetch('/admin/api/teaching-groups');
+            const data = await response.json();
+            
+            if (!data.groups || data.groups.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-4">No teaching groups created yet</td></tr>';
+                return;
+            }
+            
+            tbody.innerHTML = data.groups.map(g => `
+                <tr data-group-id="${g.group_id}">
+                    <td><strong>${g.name}</strong></td>
+                    <td>${g.class_id}</td>
+                    <td>${g.teacher_name || g.teacher_id}</td>
+                    <td>
+                        <span class="badge bg-primary">${g.student_count || g.student_ids?.length || 0} students</span>
+                    </td>
+                    <td>
+                        <button class="btn btn-outline-info btn-sm view-tg-btn me-1" data-group-id="${g.group_id}" title="View Students">
+                            <i class="bi bi-eye"></i>
+                        </button>
+                        <button class="btn btn-outline-danger btn-sm delete-tg-btn" data-group-id="${g.group_id}" data-group-name="${g.name}" title="Delete">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </td>
+                </tr>
+            `).join('');
+            
+            // Attach event listeners
+            attachTeachingGroupListeners();
+        } catch (e) {
+            tbody.innerHTML = '<tr><td colspan="5" class="text-center text-danger py-4">Error loading teaching groups</td></tr>';
+        }
+    }
+    
+    function attachTeachingGroupListeners() {
+        // View students in teaching group
+        document.querySelectorAll('.view-tg-btn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const groupId = btn.dataset.groupId;
+                try {
+                    const response = await fetch(`/admin/api/teaching-groups/${groupId}`);
+                    const data = await response.json();
+                    
+                    if (data.group) {
+                        const students = data.group.students || [];
+                        alert(`Students in "${data.group.name}":\n\n${students.map(s => `• ${s.name} (${s.student_id})`).join('\n') || 'No students'}`);
+                    }
+                } catch (e) {
+                    alert('Error loading teaching group details');
+                }
+            });
+        });
+        
+        // Delete teaching group
+        document.querySelectorAll('.delete-tg-btn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const groupId = btn.dataset.groupId;
+                const groupName = btn.dataset.groupName;
+                
+                if (!confirm(`Delete teaching group "${groupName}"? This will not delete the students.`)) return;
+                
+                try {
+                    const response = await fetch(`/admin/api/teaching-groups/${groupId}`, { method: 'DELETE' });
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        loadTeachingGroups();
+                    } else {
+                        alert(data.error || 'Failed to delete teaching group');
+                    }
+                } catch (e) {
+                    alert('Error deleting teaching group');
+                }
+            });
+        });
+    }
+    
+    // Load teaching groups when tab is shown
+    document.getElementById('teaching-groups-tab').addEventListener('shown.bs.tab', loadTeachingGroups);
+    
+    // Also load on page load if hash is #teaching-groups
+    if (window.location.hash === '#teaching-groups') {
+        document.getElementById('teaching-groups-tab').click();
+    }
 </script>
 {% endblock %}

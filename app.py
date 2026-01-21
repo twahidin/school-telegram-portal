@@ -5,7 +5,7 @@ from functools import wraps
 import os
 import io
 from datetime import datetime, timedelta, timezone
-from models import db, Student, Teacher, Message, Class, Assignment, Submission
+from models import db, Student, Teacher, Message, Class, TeachingGroup, Assignment, Submission
 from utils.auth import hash_password, verify_password, generate_assignment_id, generate_submission_id, encrypt_api_key, decrypt_api_key
 from utils.ai_marking import get_teacher_ai_service, mark_submission
 from utils.google_drive import get_teacher_drive_manager, upload_assignment_file
@@ -175,6 +175,39 @@ def admin_logout():
     """Admin logout"""
     session.clear()
     return redirect(url_for('login'))
+
+# ============================================================================
+# HELPER FUNCTIONS
+# ============================================================================
+
+def can_student_access_assignment(student, assignment):
+    """Check if a student can access an assignment based on its target (class or teaching group)"""
+    # If no target is specified, assignment is available to all students of the teacher
+    target_type = assignment.get('target_type', 'class')
+    target_class_id = assignment.get('target_class_id')
+    target_group_id = assignment.get('target_group_id')
+    
+    # No target specified - accessible to all students of this teacher
+    if not target_class_id and not target_group_id:
+        return True
+    
+    # Get student's class(es)
+    student_classes = student.get('classes', [])
+    if not student_classes and student.get('class'):
+        student_classes = [student.get('class')]
+    
+    # Check class-based targeting
+    if target_type == 'class' and target_class_id:
+        return target_class_id in student_classes
+    
+    # Check teaching group-based targeting
+    if target_type == 'teaching_group' and target_group_id:
+        teaching_group = TeachingGroup.find_one({'group_id': target_group_id})
+        if teaching_group:
+            return student.get('student_id') in teaching_group.get('student_ids', [])
+        return False
+    
+    return True
 
 # ============================================================================
 # STUDENT DASHBOARD & CHAT ROUTES
@@ -381,10 +414,13 @@ def assignments_list():
     teacher_ids = student.get('teachers', [])
     
     # Get all assignments from student's teachers
-    assignments = list(Assignment.find({
+    all_assignments = list(Assignment.find({
         'teacher_id': {'$in': teacher_ids},
         'status': 'published'
     }))
+    
+    # Filter assignments based on target class/teaching group
+    assignments = [a for a in all_assignments if can_student_access_assignment(student, a)]
     
     # Group by subject
     subjects = {}
@@ -419,11 +455,14 @@ def assignments_by_subject(subject):
     student = Student.find_one({'student_id': session['student_id']})
     teacher_ids = student.get('teachers', [])
     
-    assignments = list(Assignment.find({
+    all_assignments = list(Assignment.find({
         'teacher_id': {'$in': teacher_ids},
         'subject': subject,
         'status': 'published'
     }).sort('created_at', -1))
+    
+    # Filter assignments based on target class/teaching group
+    assignments = [a for a in all_assignments if can_student_access_assignment(student, a)]
     
     # Add submission status for each
     for a in assignments:
@@ -446,6 +485,10 @@ def view_assignment(assignment_id):
     assignment = Assignment.find_one({'assignment_id': assignment_id})
     
     if not assignment:
+        return redirect(url_for('assignments_list'))
+    
+    # Check if student can access this assignment
+    if not can_student_access_assignment(student, assignment):
         return redirect(url_for('assignments_list'))
     
     # Get existing submission
@@ -1161,13 +1204,25 @@ def teacher_assignments():
         'teacher_id': session['teacher_id']
     }).sort('created_at', -1))
     
-    # Add submission counts
+    # Add submission counts and target info
     for a in assignments:
         a['submission_count'] = Submission.count({'assignment_id': a['assignment_id']})
         a['pending_count'] = Submission.count({
             'assignment_id': a['assignment_id'],
             'status': {'$in': ['submitted', 'ai_reviewed']}
         })
+        
+        # Add target display name
+        target_type = a.get('target_type', 'class')
+        if target_type == 'teaching_group' and a.get('target_group_id'):
+            group = TeachingGroup.find_one({'group_id': a['target_group_id']})
+            a['target_display'] = group.get('name', a['target_group_id']) if group else 'Unknown Group'
+            a['target_icon'] = 'diagram-3'
+        elif a.get('target_class_id'):
+            a['target_display'] = a['target_class_id']
+            a['target_icon'] = 'collection'
+        else:
+            a['target_display'] = None
     
     return render_template('teacher_assignments.html',
                          teacher=teacher,
@@ -1374,6 +1429,11 @@ def create_assignment():
     """Create a new assignment"""
     teacher = Teacher.find_one({'teacher_id': session['teacher_id']})
     
+    # Get classes and teaching groups for the teacher
+    teacher_classes = teacher.get('classes', [])
+    classes = list(Class.find({'class_id': {'$in': teacher_classes}})) if teacher_classes else []
+    teaching_groups = list(TeachingGroup.find({'teacher_id': session['teacher_id']}))
+    
     if request.method == 'POST':
         try:
             data = request.form
@@ -1385,12 +1445,16 @@ def create_assignment():
             if not question_paper or not answer_key:
                 return render_template('teacher_create_assignment.html',
                                      teacher=teacher,
+                                     classes=classes,
+                                     teaching_groups=teaching_groups,
                                      error='Both question paper and answer key PDFs are required')
             
             # Validate file types
             if not question_paper.filename.lower().endswith('.pdf') or not answer_key.filename.lower().endswith('.pdf'):
                 return render_template('teacher_create_assignment.html',
                                      teacher=teacher,
+                                     classes=classes,
+                                     teaching_groups=teaching_groups,
                                      error='Only PDF files are allowed')
             
             assignment_id = generate_assignment_id()
@@ -1460,6 +1524,11 @@ def create_assignment():
             default_model = teacher.get('default_ai_model', 'anthropic') if teacher else 'anthropic'
             ai_model = data.get('ai_model', default_model)
             
+            # Get assignment target (class or teaching group)
+            target_type = data.get('target_type', 'class')
+            target_class_id = data.get('target_class_id', '').strip() or None
+            target_group_id = data.get('target_group_id', '').strip() or None
+            
             # Build assignment document
             assignment_doc = {
                 'assignment_id': assignment_id,
@@ -1477,6 +1546,9 @@ def create_assignment():
                 'ai_model': ai_model,
                 'feedback_instructions': data.get('feedback_instructions', ''),
                 'grading_instructions': data.get('grading_instructions', ''),
+                'target_type': target_type,
+                'target_class_id': target_class_id if target_type == 'class' else None,
+                'target_group_id': target_group_id if target_type == 'teaching_group' else None,
                 'created_at': datetime.utcnow(),
                 'updated_at': datetime.utcnow()
             }
@@ -1495,9 +1567,14 @@ def create_assignment():
             logger.error(f"Error creating assignment: {e}")
             return render_template('teacher_create_assignment.html',
                                  teacher=teacher,
+                                 classes=classes,
+                                 teaching_groups=teaching_groups,
                                  error=f'Failed to create assignment: {str(e)}')
     
-    return render_template('teacher_create_assignment.html', teacher=teacher)
+    return render_template('teacher_create_assignment.html',
+                         teacher=teacher,
+                         classes=classes,
+                         teaching_groups=teaching_groups)
 
 @app.route('/teacher/assignments/<assignment_id>/edit', methods=['GET', 'POST'])
 @teacher_required
@@ -1512,6 +1589,11 @@ def edit_assignment(assignment_id):
     if not assignment:
         return redirect(url_for('teacher_assignments'))
     
+    # Get classes and teaching groups for the teacher
+    teacher_classes = teacher.get('classes', [])
+    classes = list(Class.find({'class_id': {'$in': teacher_classes}})) if teacher_classes else []
+    teaching_groups = list(TeachingGroup.find({'teacher_id': session['teacher_id']}))
+    
     if request.method == 'POST':
         try:
             data = request.form
@@ -1519,6 +1601,11 @@ def edit_assignment(assignment_id):
             # Get teacher's default AI model if not specified
             default_model = teacher.get('default_ai_model', 'anthropic') if teacher else 'anthropic'
             ai_model = data.get('ai_model', default_model)
+            
+            # Get assignment target (class or teaching group)
+            target_type = data.get('target_type', 'class')
+            target_class_id = data.get('target_class_id', '').strip() or None
+            target_group_id = data.get('target_group_id', '').strip() or None
             
             update_data = {
                 'title': data.get('title', assignment['title']),
@@ -1530,6 +1617,9 @@ def edit_assignment(assignment_id):
                 'ai_model': ai_model,
                 'feedback_instructions': data.get('feedback_instructions', ''),
                 'grading_instructions': data.get('grading_instructions', ''),
+                'target_type': target_type,
+                'target_class_id': target_class_id if target_type == 'class' else None,
+                'target_group_id': target_group_id if target_type == 'teaching_group' else None,
                 'updated_at': datetime.utcnow()
             }
             
@@ -1591,7 +1681,9 @@ def edit_assignment(assignment_id):
     
     return render_template('teacher_edit_assignment.html',
                          teacher=teacher,
-                         assignment=assignment)
+                         assignment=assignment,
+                         classes=classes,
+                         teaching_groups=teaching_groups)
 
 @app.route('/teacher/assignments/<assignment_id>/file/<file_type>')
 @teacher_required
@@ -2397,6 +2489,7 @@ def admin_dashboard():
         'students': Student.count({}),
         'teachers': Teacher.count({}),
         'classes': Class.count({}),
+        'teaching_groups': TeachingGroup.count({}),
         'assignments': Assignment.count({'status': 'published'}),
         'submissions': Submission.count({})
     }
@@ -3062,6 +3155,119 @@ def delete_class():
         
     except Exception as e:
         logger.error(f"Error deleting class: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+# ================== TEACHING GROUPS API ==================
+
+@app.route('/admin/api/teaching-groups')
+@admin_required
+def get_teaching_groups():
+    """Get all teaching groups"""
+    try:
+        groups = list(TeachingGroup.find({}))
+        
+        # Enrich with teacher names and student counts
+        for g in groups:
+            g['_id'] = str(g['_id'])
+            teacher = Teacher.find_one({'teacher_id': g.get('teacher_id')})
+            g['teacher_name'] = teacher.get('name', g.get('teacher_id')) if teacher else g.get('teacher_id')
+            g['student_count'] = len(g.get('student_ids', []))
+        
+        return jsonify({'success': True, 'groups': groups})
+        
+    except Exception as e:
+        logger.error(f"Error getting teaching groups: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/admin/api/teaching-groups', methods=['POST'])
+@admin_required
+def create_teaching_group():
+    """Create a new teaching group"""
+    try:
+        data = request.get_json()
+        name = data.get('name', '').strip()
+        class_id = data.get('class_id')
+        teacher_id = data.get('teacher_id')
+        student_ids = data.get('student_ids', [])
+        
+        if not name or not class_id or not teacher_id:
+            return jsonify({'error': 'Name, class, and teacher are required'}), 400
+        
+        if not student_ids:
+            return jsonify({'error': 'At least one student must be selected'}), 400
+        
+        # Generate unique group ID
+        import uuid
+        group_id = f"TG-{uuid.uuid4().hex[:8].upper()}"
+        
+        group_doc = {
+            'group_id': group_id,
+            'name': name,
+            'class_id': class_id,
+            'teacher_id': teacher_id,
+            'student_ids': student_ids,
+            'created_at': datetime.utcnow(),
+            'updated_at': datetime.utcnow()
+        }
+        
+        TeachingGroup.insert_one(group_doc)
+        
+        return jsonify({
+            'success': True,
+            'group_id': group_id,
+            'message': f'Teaching group "{name}" created with {len(student_ids)} students'
+        })
+        
+    except Exception as e:
+        logger.error(f"Error creating teaching group: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/admin/api/teaching-groups/<group_id>')
+@admin_required
+def get_teaching_group(group_id):
+    """Get details of a specific teaching group"""
+    try:
+        group = TeachingGroup.find_one({'group_id': group_id})
+        
+        if not group:
+            return jsonify({'error': 'Teaching group not found'}), 404
+        
+        group['_id'] = str(group['_id'])
+        
+        # Get student details
+        students = list(Student.find({'student_id': {'$in': group.get('student_ids', [])}}))
+        group['students'] = [{'student_id': s['student_id'], 'name': s.get('name', s['student_id'])} for s in students]
+        
+        # Get teacher name
+        teacher = Teacher.find_one({'teacher_id': group.get('teacher_id')})
+        group['teacher_name'] = teacher.get('name', group.get('teacher_id')) if teacher else group.get('teacher_id')
+        
+        return jsonify({'success': True, 'group': group})
+        
+    except Exception as e:
+        logger.error(f"Error getting teaching group: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/admin/api/teaching-groups/<group_id>', methods=['DELETE'])
+@admin_required
+def delete_teaching_group(group_id):
+    """Delete a teaching group"""
+    try:
+        group = TeachingGroup.find_one({'group_id': group_id})
+        
+        if not group:
+            return jsonify({'error': 'Teaching group not found'}), 404
+        
+        TeachingGroup.delete_one({'group_id': group_id})
+        
+        return jsonify({'success': True, 'message': 'Teaching group deleted'})
+        
+    except Exception as e:
+        logger.error(f"Error deleting teaching group: {e}")
         return jsonify({'error': str(e)}), 500
 
 

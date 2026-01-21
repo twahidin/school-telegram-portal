@@ -47,7 +47,7 @@
 
     <div class="row" id="review-row">
         <!-- Left Panel: Submission Pages -->
-        <div class="col-lg-7" id="submission-panel">
+        <div class="col-lg-4" id="submission-panel">
             <div class="card">
                 <div class="card-header d-flex justify-content-between align-items-center">
                     <h6 class="mb-0"><i class="bi bi-file-earmark me-2"></i>Student Submission</h6>
@@ -89,7 +89,7 @@
         </div>
 
         <!-- Right Panel: Feedback Table -->
-        <div class="col-lg-5" id="feedback-panel">
+        <div class="col-lg-8" id="feedback-panel">
             <div class="card">
                 <div class="card-header">
                     <h6 class="mb-0"><i class="bi bi-table me-2"></i>Feedback Table</h6>
@@ -108,7 +108,22 @@
                             </thead>
                             <tbody id="feedback-tbody">
                                 {% if ai_feedback and ai_feedback.questions %}
+                                    {% set total_marks = assignment.total_marks or 100 %}
+                                    {% set question_count = ai_feedback.questions|length %}
+                                    {% set default_marks_per_question = (total_marks / question_count)|round|int if question_count > 0 else 0 %}
+                                    {% set teacher_feedback = submission.get('teacher_feedback', {}) %}
                                     {% for q in ai_feedback.questions %}
+                                    {% set teacher_q = teacher_feedback.get('questions', {}).get(q.question_num|string, {}) %}
+                                    {% set q_marks_total = teacher_q.get('marks_total') or (q.marks_total if q.marks_total else default_marks_per_question) %}
+                                    {% if teacher_q.get('marks') is not none and teacher_q.get('marks') != '' %}
+                                        {% set q_marks_awarded = teacher_q.get('marks') %}
+                                    {% elif q.marks_awarded is not none and q.marks_awarded != '' %}
+                                        {% set q_marks_awarded = q.marks_awarded %}
+                                    {% elif q.needs_review %}
+                                        {% set q_marks_awarded = '' %}
+                                    {% else %}
+                                        {% set q_marks_awarded = 0 %}
+                                    {% endif %}
                                     <tr class="{% if q.needs_review %}table-warning{% elif q.is_correct %}table-success{% elif q.is_correct == false %}table-danger{% endif %}"
                                         data-question="{{ q.question_num }}">
                                         <td class="text-center fw-bold">
@@ -127,12 +142,12 @@
                                         <td class="small">
                                             <textarea class="form-control form-control-sm" 
                                                       name="correct_{{ q.question_num }}" rows="3"
-                                                      placeholder="Correct answer">{{ q.correct_answer or '' }}</textarea>
+                                                      placeholder="Correct answer">{{ teacher_q.get('correct_answer') or q.correct_answer or '' }}</textarea>
                                         </td>
                                         <td>
                                             <textarea class="form-control form-control-sm feedback-input" 
                                                       name="feedback_{{ q.question_num }}" rows="5"
-                                                      placeholder="{% if q.needs_review %}Enter feedback...{% else %}{{ q.feedback }}{% endif %}">{{ q.feedback if not q.needs_review else '' }}</textarea>
+                                                      placeholder="{% if q.needs_review %}Enter feedback...{% else %}{{ q.feedback }}{% endif %}">{{ teacher_q.get('feedback') or (q.feedback if not q.needs_review else '') }}</textarea>
                                             {% if q.improvement %}
                                             <small class="text-muted d-block mt-1">💡 {{ q.improvement }}</small>
                                             {% endif %}
@@ -141,13 +156,13 @@
                                             <div class="input-group input-group-sm">
                                                 <input type="number" class="form-control marks-input" 
                                                        name="marks_{{ q.question_num }}" 
-                                                       value="{{ q.marks_awarded if q.marks_awarded is not none and not q.needs_review else '' }}"
-                                                       min="0" max="{{ q.marks_total or 10 }}"
-                                                       placeholder="?">
+                                                       value="{{ q_marks_awarded }}"
+                                                       min="0" max="{{ q_marks_total }}"
+                                                       placeholder="0">
                                                 <span class="input-group-text">/</span>
                                                 <input type="number" class="form-control marks-total-input" 
                                                        name="marks_total_{{ q.question_num }}" 
-                                                       value="{{ q.marks_total or '' }}"
+                                                       value="{{ q_marks_total }}"
                                                        min="0"
                                                        placeholder="?">
                                             </div>
@@ -384,7 +399,7 @@
         const fullscreenBtn = document.getElementById('fullscreen-btn');
         const submissionBody = document.getElementById('submission-body');
         
-        submissionPanel.className = 'col-lg-7';
+        submissionPanel.className = 'col-lg-4';
         feedbackPanel.style.display = '';
         submissionBody.style.height = 'calc(100vh - 180px)';
         submissionBody.style.background = '#f0f0f0';

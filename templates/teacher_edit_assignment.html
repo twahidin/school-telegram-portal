@@ -93,6 +93,52 @@
                     </div>
                 </div>
                 
+                <!-- Assignment Target (Class or Teaching Group) -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-people me-2"></i>Assign To</h5>
+                    </div>
+                    <div class="card-body">
+                        <p class="text-muted small mb-3">Choose whether to assign this to an entire class or a specific teaching group.</p>
+                        
+                        {% set current_target_type = assignment.get('target_type', 'class') %}
+                        <div class="mb-3">
+                            <label class="form-label">Assignment Target *</label>
+                            <div class="row">
+                                <div class="col-md-6 mb-3">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="radio" name="target_type" id="target_class" value="class" {% if current_target_type == 'class' %}checked{% endif %}>
+                                        <label class="form-check-label" for="target_class">
+                                            <i class="bi bi-collection me-1"></i>Entire Class
+                                        </label>
+                                    </div>
+                                    <select class="form-select mt-2" id="target_class_id" name="target_class_id" {% if current_target_type != 'class' %}disabled{% endif %}>
+                                        <option value="">Select a class...</option>
+                                        {% for c in classes %}
+                                        <option value="{{ c.class_id }}" {% if assignment.get('target_class_id') == c.class_id %}selected{% endif %}>{{ c.class_id }}{% if c.name and c.name != c.class_id %} ({{ c.name }}){% endif %}</option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="radio" name="target_type" id="target_group" value="teaching_group" {% if current_target_type == 'teaching_group' %}checked{% endif %}>
+                                        <label class="form-check-label" for="target_group">
+                                            <i class="bi bi-diagram-3 me-1"></i>Teaching Group
+                                        </label>
+                                    </div>
+                                    <select class="form-select mt-2" id="target_group_id" name="target_group_id" {% if current_target_type != 'teaching_group' %}disabled{% endif %}>
+                                        <option value="">Select a teaching group...</option>
+                                        {% for g in teaching_groups %}
+                                        <option value="{{ g.group_id }}" {% if assignment.get('target_group_id') == g.group_id %}selected{% endif %}>{{ g.name }} ({{ g.class_id }})</option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                            </div>
+                            <small class="text-muted">Leave empty to make the assignment available to all your students.</small>
+                        </div>
+                    </div>
+                </div>
+                
                 <!-- AI Configuration -->
                 <div class="card mb-4">
                     <div class="card-header">
@@ -388,6 +434,22 @@
             if (files.length && files[0].type === 'application/pdf') {
                 input.files = files;
                 input.dispatchEvent(new Event('change'));
+            }
+        });
+    });
+    
+    // Toggle between class and teaching group selection
+    document.querySelectorAll('input[name="target_type"]').forEach(radio => {
+        radio.addEventListener('change', function() {
+            const isClass = this.value === 'class';
+            document.getElementById('target_class_id').disabled = !isClass;
+            document.getElementById('target_group_id').disabled = isClass;
+            
+            // Clear the disabled field
+            if (isClass) {
+                document.getElementById('target_group_id').value = '';
+            } else {
+                document.getElementById('target_class_id').value = '';
             }
         });
     });

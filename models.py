@@ -31,6 +31,8 @@ class Database:
         self.db.messages.create_index([('student_id', 1), ('teacher_id', 1), ('timestamp', -1)])
         self.db.messages.create_index([('timestamp', -1)])
         self.db.classes.create_index('class_id', unique=True)
+        self.db.teaching_groups.create_index('group_id', unique=True)
+        self.db.teaching_groups.create_index([('class_id', 1), ('teacher_id', 1)])
         self.db.assignments.create_index([('teacher_id', 1), ('subject', 1)])
         self.db.assignments.create_index('assignment_id', unique=True)
         self.db.submissions.create_index([('student_id', 1), ('assignment_id', 1)])
@@ -130,6 +132,31 @@ class Class:
     @staticmethod
     def count(query):
         return db.db.classes.count_documents(query)
+
+class TeachingGroup:
+    @staticmethod
+    def find_one(query):
+        return db.db.teaching_groups.find_one(query)
+    
+    @staticmethod
+    def find(query):
+        return db.db.teaching_groups.find(query)
+    
+    @staticmethod
+    def insert_one(document):
+        return db.db.teaching_groups.insert_one(document).inserted_id
+    
+    @staticmethod
+    def update_one(query, update):
+        return db.db.teaching_groups.update_one(query, update)
+    
+    @staticmethod
+    def delete_one(query):
+        return db.db.teaching_groups.delete_one(query)
+    
+    @staticmethod
+    def count(query):
+        return db.db.teaching_groups.count_documents(query)
 
 class Assignment:
     @staticmethod
