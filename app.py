@@ -1184,11 +1184,23 @@ def teacher_dashboard():
     })
     
     # Get teacher's classes with students
-    teacher_classes = teacher.get('classes', [])
+    # Include both: classes in teacher profile AND classes of students assigned to this teacher
+    teacher_classes = set(teacher.get('classes', []))
+    
+    # Also find classes from students who have this teacher assigned
+    students_with_teacher = list(Student.find({'teachers': session['teacher_id']}))
+    for student in students_with_teacher:
+        if student.get('class'):
+            teacher_classes.add(student.get('class'))
+    
     classes_data = []
-    for class_id in teacher_classes:
+    for class_id in sorted(teacher_classes):
         class_info = Class.find_one({'class_id': class_id}) or {'class_id': class_id}
-        students = list(Student.find({'class': class_id}))
+        # Get students in this class who are assigned to this teacher
+        students = list(Student.find({
+            'class': class_id,
+            'teachers': session['teacher_id']
+        }).sort('name', 1))
         classes_data.append({
             'class_id': class_id,
             'name': class_info.get('name', class_id),
@@ -1224,15 +1236,18 @@ def view_class(class_id):
     """View a specific class with students and assignment status"""
     teacher = Teacher.find_one({'teacher_id': session['teacher_id']})
     
-    # Verify teacher is assigned to this class
-    if class_id not in teacher.get('classes', []):
+    # Get students in this class who are assigned to this teacher
+    students = list(Student.find({
+        'class': class_id,
+        'teachers': session['teacher_id']
+    }).sort('name', 1))
+    
+    # Verify teacher has students in this class
+    if not students and class_id not in teacher.get('classes', []):
         return redirect(url_for('teacher_dashboard'))
     
     # Get class info
     class_info = Class.find_one({'class_id': class_id}) or {'class_id': class_id}
-    
-    # Get students in this class
-    students = list(Student.find({'class': class_id}).sort('name', 1))
     
     # Get teacher's assignments
     assignments = list(Assignment.find({
