@@ -1721,26 +1721,55 @@ def download_assignment_file(assignment_id, file_type):
 @app.route('/teacher/assignments/<assignment_id>/delete', methods=['POST'])
 @teacher_required
 def delete_assignment(assignment_id):
-    """Delete an assignment"""
+    """Delete an assignment and all related submissions"""
     try:
+        from gridfs import GridFS
+        
         assignment = Assignment.find_one({
             'assignment_id': assignment_id,
             'teacher_id': session['teacher_id']
         })
         
-        if assignment:
-            # Check for submissions
-            submission_count = Submission.count({'assignment_id': assignment_id})
-            
-            if submission_count > 0:
-                return jsonify({'error': 'Cannot delete - has submissions'}), 400
-            
-            Assignment.update_one(
-                {'assignment_id': assignment_id},
-                {'$set': {'status': 'deleted', 'deleted_at': datetime.utcnow()}}
-            )
+        if not assignment:
+            return jsonify({'error': 'Assignment not found'}), 404
         
-        return jsonify({'success': True})
+        fs = GridFS(db.db)
+        
+        # Delete all submissions for this assignment
+        submissions = list(Submission.find({'assignment_id': assignment_id}))
+        for submission in submissions:
+            # Delete submission files from GridFS
+            for file_id in submission.get('file_ids', []):
+                try:
+                    from bson import ObjectId
+                    fs.delete(ObjectId(file_id))
+                except Exception as e:
+                    logger.warning(f"Error deleting submission file {file_id}: {e}")
+        
+        # Delete submissions from database
+        submission_count = len(submissions)
+        db.db.submissions.delete_many({'assignment_id': assignment_id})
+        
+        # Delete assignment files from GridFS
+        if assignment.get('question_paper_id'):
+            try:
+                fs.delete(assignment['question_paper_id'])
+            except Exception as e:
+                logger.warning(f"Error deleting question paper: {e}")
+        
+        if assignment.get('answer_key_id'):
+            try:
+                fs.delete(assignment['answer_key_id'])
+            except Exception as e:
+                logger.warning(f"Error deleting answer key: {e}")
+        
+        # Delete the assignment
+        db.db.assignments.delete_one({'assignment_id': assignment_id})
+        
+        return jsonify({
+            'success': True,
+            'message': f'Assignment deleted along with {submission_count} submission(s)'
+        })
         
     except Exception as e:
         logger.error(f"Error deleting assignment: {e}")

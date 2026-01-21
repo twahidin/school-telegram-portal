@@ -153,16 +153,19 @@
 <div class="modal fade" id="delete-modal" tabindex="-1">
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title">Delete Assignment</h5>
+            <div class="modal-header border-danger">
+                <h5 class="modal-title text-danger"><i class="bi bi-exclamation-triangle me-2"></i>Delete Assignment</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
-            <div class="modal-body">
-                <p>Are you sure you want to delete this assignment? This action cannot be undone.</p>
+            <div class="modal-body" id="delete-modal-body">
+                <p>Are you sure you want to delete this assignment?</p>
+                <p class="text-danger fw-bold mb-0">This action cannot be undone.</p>
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                <button type="button" class="btn btn-danger" id="confirm-delete-btn">Delete</button>
+                <button type="button" class="btn btn-danger" id="confirm-delete-btn">
+                    <i class="bi bi-trash me-1"></i>Delete Assignment
+                </button>
             </div>
         </div>
     </div>
@@ -178,12 +181,46 @@
         btn.addEventListener('click', (e) => {
             e.preventDefault();
             deleteAssignmentId = btn.dataset.id;
+            
+            // Get submission count for this assignment
+            const card = btn.closest('.assignment-manage-card');
+            const submissionText = card.querySelector('.assignment-progress .progress-info span:last-child')?.textContent || '';
+            const match = submissionText.match(/(\d+)\s*total/);
+            const submissionCount = match ? parseInt(match[1]) : 0;
+            
+            // Update modal body with submission warning
+            const modalBody = document.getElementById('delete-modal-body');
+            if (submissionCount > 0) {
+                modalBody.innerHTML = `
+                    <div class="alert alert-warning">
+                        <i class="bi bi-exclamation-triangle me-2"></i>
+                        <strong>Warning:</strong> This assignment has <strong>${submissionCount} submission(s)</strong>.
+                    </div>
+                    <p>Deleting this assignment will also permanently delete:</p>
+                    <ul>
+                        <li>All ${submissionCount} student submission(s)</li>
+                        <li>All AI feedback and grades</li>
+                        <li>All uploaded files</li>
+                    </ul>
+                    <p class="text-danger fw-bold mb-0">This action cannot be undone.</p>
+                `;
+            } else {
+                modalBody.innerHTML = `
+                    <p>Are you sure you want to delete this assignment?</p>
+                    <p class="text-danger fw-bold mb-0">This action cannot be undone.</p>
+                `;
+            }
+            
             deleteModal.show();
         });
     });
     
     document.getElementById('confirm-delete-btn').addEventListener('click', async () => {
         if (!deleteAssignmentId) return;
+        
+        const btn = document.getElementById('confirm-delete-btn');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Deleting...';
         
         try {
             const response = await fetch(`/teacher/assignments/${deleteAssignmentId}/delete`, {
@@ -194,10 +231,14 @@
             if (data.success) {
                 window.location.reload();
             } else {
-                showToast('Error', data.error || 'Failed to delete', 'danger');
+                alert(data.error || 'Failed to delete assignment');
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-trash me-1"></i>Delete Assignment';
             }
         } catch (error) {
-            showToast('Error', 'Failed to delete assignment', 'danger');
+            alert('Failed to delete assignment. Please try again.');
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-trash me-1"></i>Delete Assignment';
         }
         
         deleteModal.hide();
