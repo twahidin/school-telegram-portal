@@ -1184,29 +1184,43 @@ def teacher_dashboard():
     })
     
     # Get teacher's classes with students
-    # Include both: classes in teacher profile AND classes of students assigned to this teacher
+    # Include: classes in teacher profile, students assigned to teacher, AND students with submissions
     teacher_classes = set(teacher.get('classes', []))
+    teacher_student_ids = set()
     
-    # Also find classes from students who have this teacher assigned
+    # Find students who have this teacher assigned
     students_with_teacher = list(Student.find({'teachers': session['teacher_id']}))
     for student in students_with_teacher:
+        teacher_student_ids.add(student.get('student_id'))
         if student.get('class'):
+            teacher_classes.add(student.get('class'))
+    
+    # Also find students who have submissions to this teacher's assignments
+    submission_student_ids = Submission.find({
+        'assignment_id': {'$in': assignment_ids}
+    }).distinct('student_id')
+    
+    for student_id in submission_student_ids:
+        teacher_student_ids.add(student_id)
+        student = Student.find_one({'student_id': student_id})
+        if student and student.get('class'):
             teacher_classes.add(student.get('class'))
     
     classes_data = []
     for class_id in sorted(teacher_classes):
         class_info = Class.find_one({'class_id': class_id}) or {'class_id': class_id}
-        # Get students in this class who are assigned to this teacher
+        # Get students in this class who are either assigned to teacher OR have submissions
         students = list(Student.find({
             'class': class_id,
-            'teachers': session['teacher_id']
+            'student_id': {'$in': list(teacher_student_ids)}
         }).sort('name', 1))
-        classes_data.append({
-            'class_id': class_id,
-            'name': class_info.get('name', class_id),
-            'students': students,
-            'student_count': len(students)
-        })
+        if students:  # Only add class if it has relevant students
+            classes_data.append({
+                'class_id': class_id,
+                'name': class_info.get('name', class_id),
+                'students': students,
+                'student_count': len(students)
+            })
     
     # Get teacher's teaching groups with students
     teaching_groups = list(TeachingGroup.find({'teacher_id': session['teacher_id']}))
@@ -1236,10 +1250,37 @@ def view_class(class_id):
     """View a specific class with students and assignment status"""
     teacher = Teacher.find_one({'teacher_id': session['teacher_id']})
     
-    # Get students in this class who are assigned to this teacher
+    # Get teacher's assignments
+    assignments = list(Assignment.find({
+        'teacher_id': session['teacher_id'],
+        'status': 'published'
+    }).sort('created_at', -1))
+    assignment_ids = [a['assignment_id'] for a in assignments]
+    
+    # Find all students relevant to this teacher in this class:
+    # 1. Students assigned to this teacher
+    # 2. Students with submissions to this teacher's assignments
+    teacher_student_ids = set()
+    
+    # Students assigned to teacher
+    assigned_students = Student.find({'class': class_id, 'teachers': session['teacher_id']})
+    for s in assigned_students:
+        teacher_student_ids.add(s['student_id'])
+    
+    # Students with submissions
+    submission_student_ids = Submission.find({
+        'assignment_id': {'$in': assignment_ids}
+    }).distinct('student_id')
+    
+    for student_id in submission_student_ids:
+        student = Student.find_one({'student_id': student_id, 'class': class_id})
+        if student:
+            teacher_student_ids.add(student_id)
+    
+    # Get all relevant students
     students = list(Student.find({
         'class': class_id,
-        'teachers': session['teacher_id']
+        'student_id': {'$in': list(teacher_student_ids)}
     }).sort('name', 1))
     
     # Verify teacher has students in this class
@@ -1248,12 +1289,6 @@ def view_class(class_id):
     
     # Get class info
     class_info = Class.find_one({'class_id': class_id}) or {'class_id': class_id}
-    
-    # Get teacher's assignments
-    assignments = list(Assignment.find({
-        'teacher_id': session['teacher_id'],
-        'status': 'published'
-    }).sort('created_at', -1))
     
     # Get teaching groups from this class
     teaching_groups = list(TeachingGroup.find({
