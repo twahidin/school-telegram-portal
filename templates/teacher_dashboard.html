@@ -160,102 +160,39 @@
     <!-- My Classes & Teaching Groups -->
     {% if classes or teaching_groups %}
     <div class="section-header mb-3">
-        <h2><i class="bi bi-people me-2"></i>My Classes & Students</h2>
-        <div class="d-flex align-items-center gap-2">
-            <label class="small text-muted me-1">View assignment:</label>
-            <select class="form-select form-select-sm" id="assignment-filter" style="width: auto;">
-                <option value="">Select assignment...</option>
-                {% for a in assignments %}
-                <option value="{{ a.assignment_id }}">{{ a.title }}</option>
-                {% endfor %}
-            </select>
-        </div>
+        <h2><i class="bi bi-people me-2"></i>My Classes & Teaching Groups</h2>
     </div>
     
     <div class="row g-4 mb-5">
         {% for cls in classes %}
-        <div class="col-lg-6">
-            <div class="card h-100">
-                <div class="card-header d-flex justify-content-between align-items-center">
-                    <h5 class="mb-0">
-                        <i class="bi bi-collection me-2 text-primary"></i>{{ cls.class_id }}
-                        {% if cls.name and cls.name != cls.class_id %}<small class="text-muted">({{ cls.name }})</small>{% endif %}
-                    </h5>
+        <div class="col-md-4 col-lg-3">
+            <a href="{{ url_for('view_class', class_id=cls.class_id) }}" class="card h-100 text-decoration-none class-card">
+                <div class="card-body text-center py-4">
+                    <div class="mb-3">
+                        <i class="bi bi-collection display-4 text-primary"></i>
+                    </div>
+                    <h5 class="card-title mb-1">{{ cls.class_id }}</h5>
+                    {% if cls.name and cls.name != cls.class_id %}
+                    <p class="text-muted small mb-2">{{ cls.name }}</p>
+                    {% endif %}
                     <span class="badge bg-primary">{{ cls.student_count }} students</span>
                 </div>
-                <div class="card-body p-0">
-                    {% if cls.students %}
-                    <div class="table-responsive" style="max-height: 300px; overflow-y: auto;">
-                        <table class="table table-sm table-hover mb-0">
-                            <thead class="table-light sticky-top">
-                                <tr>
-                                    <th>Student</th>
-                                    <th class="text-end">Status</th>
-                                </tr>
-                            </thead>
-                            <tbody class="student-list" data-class="{{ cls.class_id }}">
-                                {% for student in cls.students %}
-                                <tr data-student-id="{{ student.student_id }}">
-                                    <td>
-                                        <strong>{{ student.name }}</strong>
-                                        <br><small class="text-muted">{{ student.student_id }}</small>
-                                    </td>
-                                    <td class="text-end student-status">
-                                        <span class="badge bg-light text-muted">-</span>
-                                    </td>
-                                </tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
-                    </div>
-                    {% else %}
-                    <p class="text-muted p-3 mb-0">No students in this class</p>
-                    {% endif %}
-                </div>
-            </div>
+            </a>
         </div>
         {% endfor %}
         
         {% for group in teaching_groups %}
-        <div class="col-lg-6">
-            <div class="card h-100">
-                <div class="card-header d-flex justify-content-between align-items-center">
-                    <h5 class="mb-0">
-                        <i class="bi bi-diagram-3 me-2 text-info"></i>{{ group.name }}
-                        <small class="text-muted">({{ group.class_id }})</small>
-                    </h5>
+        <div class="col-md-4 col-lg-3">
+            <a href="{{ url_for('view_teaching_group', group_id=group.group_id) }}" class="card h-100 text-decoration-none class-card">
+                <div class="card-body text-center py-4">
+                    <div class="mb-3">
+                        <i class="bi bi-diagram-3 display-4 text-info"></i>
+                    </div>
+                    <h5 class="card-title mb-1">{{ group.name }}</h5>
+                    <p class="text-muted small mb-2">{{ group.class_id }}</p>
                     <span class="badge bg-info">{{ group.student_count }} students</span>
                 </div>
-                <div class="card-body p-0">
-                    {% if group.students %}
-                    <div class="table-responsive" style="max-height: 300px; overflow-y: auto;">
-                        <table class="table table-sm table-hover mb-0">
-                            <thead class="table-light sticky-top">
-                                <tr>
-                                    <th>Student</th>
-                                    <th class="text-end">Status</th>
-                                </tr>
-                            </thead>
-                            <tbody class="student-list" data-group="{{ group.group_id }}">
-                                {% for student in group.students %}
-                                <tr data-student-id="{{ student.student_id }}">
-                                    <td>
-                                        <strong>{{ student.name }}</strong>
-                                        <br><small class="text-muted">{{ student.student_id }}</small>
-                                    </td>
-                                    <td class="text-end student-status">
-                                        <span class="badge bg-light text-muted">-</span>
-                                    </td>
-                                </tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
-                    </div>
-                    {% else %}
-                    <p class="text-muted p-3 mb-0">No students in this group</p>
-                    {% endif %}
-                </div>
-            </div>
+            </a>
         </div>
         {% endfor %}
     </div>
@@ -315,66 +252,19 @@
 </div>
 {% endblock %}
 
-{% block scripts %}
-<script>
-    // Assignment filter - load student statuses when assignment selected
-    document.getElementById('assignment-filter').addEventListener('change', async function() {
-        const assignmentId = this.value;
-        
-        // Reset all statuses if no assignment selected
-        if (!assignmentId) {
-            document.querySelectorAll('.student-status').forEach(cell => {
-                cell.innerHTML = '<span class="badge bg-light text-muted">-</span>';
-            });
-            return;
-        }
-        
-        // Collect all student IDs
-        const studentIds = [];
-        document.querySelectorAll('[data-student-id]').forEach(row => {
-            studentIds.push(row.dataset.studentId);
-        });
-        
-        if (studentIds.length === 0) return;
-        
-        // Show loading state
-        document.querySelectorAll('.student-status').forEach(cell => {
-            cell.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
-        });
-        
-        try {
-            // Build query string
-            const params = new URLSearchParams();
-            params.append('assignment_id', assignmentId);
-            studentIds.forEach(id => params.append('student_ids[]', id));
-            
-            const response = await fetch(`/teacher/api/student-statuses?${params.toString()}`);
-            const data = await response.json();
-            
-            if (data.success && data.statuses) {
-                // Update each student's status
-                document.querySelectorAll('[data-student-id]').forEach(row => {
-                    const studentId = row.dataset.studentId;
-                    const statusCell = row.querySelector('.student-status');
-                    const status = data.statuses[studentId];
-                    
-                    if (status) {
-                        let icon = '';
-                        if (status.status === 'ai_reviewed') icon = '<i class="bi bi-robot me-1"></i>';
-                        else if (status.status === 'pending') icon = '<i class="bi bi-clock me-1"></i>';
-                        else if (status.status === 'returned') icon = '<i class="bi bi-check-circle me-1"></i>';
-                        else if (status.status === 'none') icon = '<i class="bi bi-dash me-1"></i>';
-                        
-                        statusCell.innerHTML = `<span class="badge bg-${status.class}">${icon}${status.label}</span>`;
-                    }
-                });
-            }
-        } catch (e) {
-            console.error('Error loading statuses:', e);
-            document.querySelectorAll('.student-status').forEach(cell => {
-                cell.innerHTML = '<span class="badge bg-danger">Error</span>';
-            });
-        }
-    });
-</script>
+{% block styles %}
+<style>
+    .class-card {
+        transition: all 0.2s ease;
+        border: 2px solid transparent;
+    }
+    .class-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 8px 25px rgba(0,0,0,0.1);
+        border-color: var(--bs-primary);
+    }
+    .class-card .card-title {
+        color: #333;
+    }
+</style>
 {% endblock %}

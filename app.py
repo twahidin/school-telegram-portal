@@ -1218,6 +1218,84 @@ def teacher_dashboard():
                          classes=classes_data,
                          teaching_groups=teaching_groups)
 
+@app.route('/teacher/class/<class_id>')
+@teacher_required
+def view_class(class_id):
+    """View a specific class with students and assignment status"""
+    teacher = Teacher.find_one({'teacher_id': session['teacher_id']})
+    
+    # Verify teacher is assigned to this class
+    if class_id not in teacher.get('classes', []):
+        return redirect(url_for('teacher_dashboard'))
+    
+    # Get class info
+    class_info = Class.find_one({'class_id': class_id}) or {'class_id': class_id}
+    
+    # Get students in this class
+    students = list(Student.find({'class': class_id}).sort('name', 1))
+    
+    # Get teacher's assignments
+    assignments = list(Assignment.find({
+        'teacher_id': session['teacher_id'],
+        'status': 'published'
+    }).sort('created_at', -1))
+    
+    # Get teaching groups from this class
+    teaching_groups = list(TeachingGroup.find({
+        'teacher_id': session['teacher_id'],
+        'class_id': class_id
+    }))
+    
+    title = class_id
+    subtitle = class_info.get('name') if class_info.get('name') and class_info.get('name') != class_id else None
+    
+    return render_template('teacher_class_view.html',
+                         teacher=teacher,
+                         title=title,
+                         subtitle=subtitle,
+                         students=students,
+                         assignments=assignments,
+                         teaching_groups=teaching_groups,
+                         is_teaching_group=False)
+
+@app.route('/teacher/group/<group_id>')
+@teacher_required
+def view_teaching_group(group_id):
+    """View a specific teaching group with students and assignment status"""
+    teacher = Teacher.find_one({'teacher_id': session['teacher_id']})
+    
+    # Get teaching group
+    group = TeachingGroup.find_one({
+        'group_id': group_id,
+        'teacher_id': session['teacher_id']
+    })
+    
+    if not group:
+        return redirect(url_for('teacher_dashboard'))
+    
+    # Get students in this group
+    students = list(Student.find({
+        'student_id': {'$in': group.get('student_ids', [])}
+    }).sort('name', 1))
+    
+    # Get teacher's assignments
+    assignments = list(Assignment.find({
+        'teacher_id': session['teacher_id'],
+        'status': 'published'
+    }).sort('created_at', -1))
+    
+    title = group.get('name', group_id)
+    subtitle = f"Teaching Group from {group.get('class_id', 'Unknown Class')}"
+    
+    return render_template('teacher_class_view.html',
+                         teacher=teacher,
+                         title=title,
+                         subtitle=subtitle,
+                         students=students,
+                         assignments=assignments,
+                         teaching_groups=[],
+                         is_teaching_group=True)
+
 @app.route('/teacher/assignments')
 @teacher_required
 def teacher_assignments():
