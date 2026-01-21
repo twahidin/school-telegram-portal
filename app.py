@@ -1409,10 +1409,10 @@ def get_student_statuses():
         
         if submission:
             status = submission.get('status', 'submitted')
-            if status == 'ai_reviewed':
-                statuses[student_id] = {'status': 'ai_reviewed', 'label': 'AI Feedback', 'class': 'info'}
-            elif status in ['submitted']:
+            # Pending Review: student has submitted (including AI auto-reviewed)
+            if status in ['submitted', 'ai_reviewed']:
                 statuses[student_id] = {'status': 'pending', 'label': 'Pending Review', 'class': 'warning'}
+            # Returned: teacher has reviewed and returned
             elif status in ['reviewed', 'approved']:
                 statuses[student_id] = {'status': 'returned', 'label': 'Returned', 'class': 'success'}
             else:

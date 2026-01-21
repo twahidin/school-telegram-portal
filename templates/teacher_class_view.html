@@ -99,7 +99,6 @@
                 </div>
                 <div class="col-md-6">
                     <div class="d-flex gap-2 flex-wrap mt-3 mt-md-4">
-                        <span class="badge bg-info"><i class="bi bi-robot me-1"></i>AI Feedback</span>
                         <span class="badge bg-warning text-dark"><i class="bi bi-clock me-1"></i>Pending Review</span>
                         <span class="badge bg-success"><i class="bi bi-check-circle me-1"></i>Returned</span>
                         <span class="badge bg-light text-muted"><i class="bi bi-dash me-1"></i>No Submission</span>
@@ -230,11 +229,9 @@
                     if (status) {
                         let icon = '';
                         let textClass = '';
-                        if (status.status === 'ai_reviewed') {
-                            icon = '<i class="bi bi-robot me-1"></i>';
-                        } else if (status.status === 'pending') {
+                        if (status.status === 'pending') {
                             icon = '<i class="bi bi-clock me-1"></i>';
-                            textClass = status.class === 'warning' ? ' text-dark' : '';
+                            textClass = ' text-dark';
                         } else if (status.status === 'returned') {
                             icon = '<i class="bi bi-check-circle me-1"></i>';
                         } else if (status.status === 'none') {
