@@ -63,7 +63,7 @@
             <div class="assignment-info">
                 <h4>{{ assignment.title }}</h4>
                 <div class="assignment-meta">
-                    <span><i class="bi bi-question-circle me-1"></i>{{ assignment.questions|length if assignment.questions else 0 }} questions</span>
+                    <span><i class="bi bi-person-workspace me-1"></i>{{ assignment.teacher_name }}</span>
                     <span><i class="bi bi-star me-1"></i>{{ assignment.total_marks }} marks</span>
                     {% if assignment.due_date %}
                     <span><i class="bi bi-calendar me-1"></i>Due: {{ assignment.due_date }}</span>

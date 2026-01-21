@@ -464,13 +464,17 @@ def assignments_by_subject(subject):
     # Filter assignments based on target class/teaching group
     assignments = [a for a in all_assignments if can_student_access_assignment(student, a)]
     
-    # Add submission status for each
+    # Add submission status and teacher info for each
     for a in assignments:
         submission = Submission.find_one({
             'assignment_id': a['assignment_id'],
             'student_id': session['student_id']
         })
         a['submission'] = submission
+        
+        # Add teacher info
+        teacher = Teacher.find_one({'teacher_id': a['teacher_id']})
+        a['teacher_name'] = teacher.get('name', a['teacher_id']) if teacher else a['teacher_id']
     
     return render_template('assignments_subject.html',
                          student=student,
