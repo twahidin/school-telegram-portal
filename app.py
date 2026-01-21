@@ -2466,15 +2466,17 @@ def add_teacher():
         
         password = data.get('password', 'teacher123')
         
-        Teacher.insert_one({
+        teacher_doc = {
             'teacher_id': teacher_id,
             'name': data.get('name', teacher_id),
             'password_hash': hash_password(password),
             'subjects': data.get('subjects', []),
             'classes': data.get('classes', []),
-            'telegram_id': None,
             'created_at': datetime.utcnow()
-        })
+        }
+        # Don't set telegram_id - let it be set when teacher verifies via Telegram
+        # This avoids duplicate key errors with the sparse unique index
+        Teacher.insert_one(teacher_doc)
         
         return jsonify({'success': True, 'teacher_id': teacher_id})
         
