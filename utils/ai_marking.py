@@ -102,6 +102,7 @@ IMPORTANT RULES:
 5. Award partial marks where appropriate
 6. If rubrics are provided, use them to evaluate subjective answers (essays, literature, etc.)
 7. If reference materials are provided, use them to verify factual accuracy and context
+8. ALWAYS extract and include the correct answer from the answer key for each question
 
 Respond ONLY with valid JSON in this exact format:
 {{
@@ -109,6 +110,7 @@ Respond ONLY with valid JSON in this exact format:
         {{
             "question_num": 1,
             "student_answer": "transcribed answer or 'UNCLEAR' if illegible",
+            "correct_answer": "the correct answer from the answer key (use 'Refer to answer key for diagram' if it contains diagrams/images)",
             "is_correct": true/false/null,
             "marks_awarded": number or null,
             "marks_total": number,
