@@ -1,0 +1,733 @@
+{% extends "base.html" %}
+
+{% block title %}Review Essay Submission - Teacher Portal{% endblock %}
+
+{% block navbar %}
+<nav class="navbar navbar-expand-lg navbar-dark teacher-nav">
+    <div class="container-fluid">
+        <a class="navbar-brand" href="{{ url_for('teacher_dashboard') }}">
+            <i class="bi bi-mortarboard-fill me-2"></i>Teacher Portal
+        </a>
+        <div class="navbar-nav ms-auto">
+            <a class="nav-link" href="{{ url_for('teacher_submissions') }}">
+                <i class="bi bi-arrow-left me-1"></i>Back to Submissions
+            </a>
+        </div>
+    </div>
+</nav>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-3">
+    <!-- Header -->
+    <div class="row mb-3">
+        <div class="col">
+            <div class="d-flex justify-content-between align-items-start">
+                <div>
+                    <h4 class="mb-1">
+                        <i class="bi bi-file-text me-2"></i>Review Essay: {{ assignment.title }}
+                    </h4>
+                    <p class="text-muted mb-0">
+                        <strong>{{ student.name }}</strong> ({{ student.student_id }}) 
+                        | {{ assignment.subject }}
+                        | Submitted: {{ (submission.submitted_at|sgt).strftime('%d %b %Y %H:%M') if submission.submitted_at else 'N/A' }} SGT
+                    </p>
+                </div>
+                <div class="d-flex align-items-center gap-2">
+                    <span class="badge bg-warning text-dark me-2">
+                        <i class="bi bi-file-text me-1"></i>Rubric Marking
+                    </span>
+                    <div class="btn-group">
+                        <button class="btn btn-success" onclick="sendFeedback()">
+                            <i class="bi bi-send me-1"></i>Send Feedback
+                        </button>
+                        <button class="btn btn-outline-primary" onclick="downloadPDF()" title="Download PDF with current feedback">
+                            <i class="bi bi-file-pdf me-1"></i>Download PDF
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row" id="review-row">
+        <!-- Left Panel: Submission Pages -->
+        <div class="col-lg-4" id="submission-panel">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0"><i class="bi bi-file-earmark me-2"></i>Student Essay</h6>
+                    <div class="d-flex align-items-center gap-2">
+                        <div class="btn-group btn-group-sm">
+                            <button class="btn btn-outline-secondary" onclick="prevPage()" id="prev-btn" disabled>
+                                <i class="bi bi-chevron-left"></i>
+                            </button>
+                            <span class="btn btn-outline-secondary disabled" id="page-indicator">Page 1/{{ page_count }}</span>
+                            <button class="btn btn-outline-secondary" onclick="nextPage()" id="next-btn" {% if page_count <= 1 %}disabled{% endif %}>
+                                <i class="bi bi-chevron-right"></i>
+                            </button>
+                        </div>
+                        <div class="btn-group btn-group-sm">
+                            <button class="btn btn-outline-secondary" onclick="zoomOut()" title="Zoom Out">
+                                <i class="bi bi-zoom-out"></i>
+                            </button>
+                            <button class="btn btn-outline-secondary" onclick="zoomIn()" title="Zoom In">
+                                <i class="bi bi-zoom-in"></i>
+                            </button>
+                            <button class="btn btn-outline-secondary" onclick="toggleFullscreen()" title="Toggle Fullscreen" id="fullscreen-btn">
+                                <i class="bi bi-arrows-fullscreen"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <div class="card-body p-0" style="height: calc(100vh - 180px); overflow: auto; background: #f0f0f0;" id="submission-body">
+                    <div id="submission-viewer" style="display: flex; justify-content: center; align-items: flex-start; padding: 10px;">
+                        {% if submission.file_type == 'pdf' %}
+                        <iframe id="pdf-viewer" src="{{ url_for('view_submission_file', submission_id=submission.submission_id, file_index=0) }}" 
+                                style="width: 100%; height: calc(100vh - 200px); border: none;"></iframe>
+                        {% else %}
+                        <img id="page-image" src="{{ url_for('view_submission_file', submission_id=submission.submission_id, file_index=0) }}" 
+                             style="width: 100%; height: auto; transform-origin: top center; object-fit: contain;" class="submission-img">
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right Panel: Rubric Feedback Tables -->
+        <div class="col-lg-8" id="feedback-panel">
+            <!-- Table 1: Rubric Criteria -->
+            <div class="card mb-3">
+                <div class="card-header bg-primary text-white">
+                    <h6 class="mb-0"><i class="bi bi-list-check me-2"></i>Rubric Criteria Assessment</h6>
+                </div>
+                <div class="card-body p-0" style="max-height: 45vh; overflow: auto;">
+                    <form id="rubric-form">
+                        <table class="table table-bordered mb-0" id="rubric-table">
+                            <thead class="table-light sticky-top">
+                                <tr>
+                                    <th style="width: 15%;">Criterion</th>
+                                    <th style="width: 35%;">AI Reasoning for Mark</th>
+                                    <th style="width: 35%;">Feedback / Area for Improvement (AFI)</th>
+                                    <th style="width: 15%;">Marks</th>
+                                </tr>
+                            </thead>
+                            <tbody id="rubric-tbody">
+                                {% if ai_feedback and ai_feedback.criteria %}
+                                    {% set teacher_feedback = submission.get('teacher_feedback', {}) %}
+                                    {% for criterion in ai_feedback.criteria %}
+                                    {% set teacher_c = teacher_feedback.get('criteria', {}).get(criterion.name|string, {}) %}
+                                    <tr data-criterion="{{ criterion.name }}">
+                                        <td class="fw-bold align-middle">
+                                            {{ criterion.name }}
+                                        </td>
+                                        <td>
+                                            <textarea class="form-control form-control-sm reasoning-input" 
+                                                      name="reasoning_{{ loop.index }}" rows="3"
+                                                      placeholder="Why this mark was awarded...">{{ teacher_c.get('reasoning') or criterion.reasoning or '' }}</textarea>
+                                        </td>
+                                        <td>
+                                            <textarea class="form-control form-control-sm afi-input" 
+                                                      name="afi_{{ loop.index }}" rows="3"
+                                                      placeholder="Areas for improvement...">{{ teacher_c.get('afi') or criterion.afi or '' }}</textarea>
+                                        </td>
+                                        <td>
+                                            <div class="input-group input-group-sm">
+                                                <input type="number" class="form-control criterion-marks-input" 
+                                                       name="criterion_marks_{{ loop.index }}" 
+                                                       value="{{ teacher_c.get('marks') if teacher_c.get('marks') is not none else criterion.marks_awarded }}"
+                                                       min="0" max="{{ criterion.max_marks or 10 }}"
+                                                       placeholder="0">
+                                                <span class="input-group-text">/</span>
+                                                <input type="number" class="form-control criterion-max-input" 
+                                                       name="criterion_max_{{ loop.index }}" 
+                                                       value="{{ teacher_c.get('max_marks') or criterion.max_marks or 10 }}"
+                                                       min="0"
+                                                       placeholder="10">
+                                            </div>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                {% else %}
+                                    <tr id="no-criteria-row">
+                                        <td colspan="4" class="text-center text-muted py-4">
+                                            <i class="bi bi-hourglass me-2"></i>
+                                            No rubric criteria loaded. AI analysis may still be processing.
+                                        </td>
+                                    </tr>
+                                {% endif %}
+                            </tbody>
+                            <tfoot class="table-light">
+                                <tr>
+                                    <td class="fw-bold">Overall Feedback</td>
+                                    <td colspan="2">
+                                        <textarea class="form-control form-control-sm" id="overall-feedback" 
+                                                  name="overall_feedback" rows="3"
+                                                  placeholder="Overall assessment of the essay...">{{ submission.get('teacher_feedback', {}).get('overall_feedback') or (ai_feedback.overall_feedback if ai_feedback else '') }}</textarea>
+                                    </td>
+                                    <td>
+                                        <div class="input-group input-group-sm">
+                                            <input type="number" class="form-control fw-bold" id="total-marks" 
+                                                   name="total_marks"
+                                                   value="{{ submission.get('teacher_feedback', {}).get('total_marks') or (ai_feedback.total_marks if ai_feedback and ai_feedback.total_marks else '') }}"
+                                                   min="0">
+                                            <span class="input-group-text">/</span>
+                                            <input type="number" class="form-control fw-bold" id="total-marks-max" 
+                                                   name="total_marks_max"
+                                                   value="{{ assignment.total_marks or 100 }}"
+                                                   min="0">
+                                        </div>
+                                    </td>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Table 2: Detailed Errors/Corrections -->
+            <div class="card">
+                <div class="card-header bg-warning text-dark d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0"><i class="bi bi-exclamation-triangle me-2"></i>Detailed Corrections</h6>
+                    <button class="btn btn-sm btn-dark" onclick="openAddErrorModal()">
+                        <i class="bi bi-plus-circle me-1"></i>Add Correction
+                    </button>
+                </div>
+                <div class="card-body p-0" style="max-height: 35vh; overflow: auto;">
+                    <table class="table table-bordered table-hover mb-0" id="errors-table">
+                        <thead class="table-light sticky-top">
+                            <tr>
+                                <th style="width: 15%;">Location</th>
+                                <th style="width: 25%;">Error</th>
+                                <th style="width: 30%;">Suggested Correction</th>
+                                <th style="width: 25%;">Feedback</th>
+                                <th style="width: 5%;">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="errors-tbody">
+                            {% if ai_feedback and ai_feedback.errors %}
+                                {% set teacher_errors = submission.get('teacher_feedback', {}).get('errors', []) %}
+                                {% for error in ai_feedback.errors %}
+                                {% set idx = loop.index0 %}
+                                {% set teacher_e = teacher_errors[idx] if idx < teacher_errors|length else {} %}
+                                <tr data-error-index="{{ idx }}">
+                                    <td>
+                                        <input type="text" class="form-control form-control-sm location-input" 
+                                               name="error_location_{{ idx }}" 
+                                               value="{{ teacher_e.get('location') or error.location or '' }}"
+                                               placeholder="e.g., Paragraph 1">
+                                    </td>
+                                    <td>
+                                        <textarea class="form-control form-control-sm error-input" 
+                                                  name="error_text_{{ idx }}" rows="2"
+                                                  placeholder="Describe the error...">{{ teacher_e.get('error') or error.error or '' }}</textarea>
+                                    </td>
+                                    <td>
+                                        <textarea class="form-control form-control-sm correction-input" 
+                                                  name="error_correction_{{ idx }}" rows="2"
+                                                  placeholder="Suggested correction...">{{ teacher_e.get('correction') or error.correction or '' }}</textarea>
+                                    </td>
+                                    <td>
+                                        <textarea class="form-control form-control-sm error-feedback-input" 
+                                                  name="error_feedback_{{ idx }}" rows="2"
+                                                  placeholder="Feedback on this error...">{{ teacher_e.get('feedback') or error.feedback or '' }}</textarea>
+                                    </td>
+                                    <td class="text-center">
+                                        <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeErrorRow(this)" title="Remove">
+                                            <i class="bi bi-trash"></i>
+                                        </button>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            {% else %}
+                                <tr id="no-errors-row">
+                                    <td colspan="5" class="text-center text-muted py-3">
+                                        <i class="bi bi-check-circle me-2"></i>
+                                        No specific errors detected. Click "Add Correction" to manually add feedback.
+                                    </td>
+                                </tr>
+                            {% endif %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add Error Modal -->
+<div class="modal fade" id="addErrorModal" tabindex="-1" aria-labelledby="addErrorModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header bg-warning text-dark">
+                <h5 class="modal-title" id="addErrorModalLabel">
+                    <i class="bi bi-plus-circle me-2"></i>Add Correction
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label for="new-error-location" class="form-label">Location *</label>
+                    <input type="text" class="form-control" id="new-error-location" 
+                           placeholder="e.g., Paragraph 1, Introduction, Line 5, etc.">
+                    <small class="text-muted">Specify where in the essay this error occurs</small>
+                </div>
+                <div class="mb-3">
+                    <label for="new-error-text" class="form-label">Error Description *</label>
+                    <textarea class="form-control" id="new-error-text" rows="2"
+                              placeholder="Describe what the error is..."></textarea>
+                </div>
+                <div class="mb-3">
+                    <label for="new-error-correction" class="form-label">Suggested Correction</label>
+                    <textarea class="form-control" id="new-error-correction" rows="2"
+                              placeholder="What should the correct version be..."></textarea>
+                </div>
+                <div class="mb-3">
+                    <label for="new-error-feedback" class="form-label">Feedback</label>
+                    <textarea class="form-control" id="new-error-feedback" rows="2"
+                              placeholder="Additional feedback or explanation for the student..."></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-warning" onclick="addErrorRow()">
+                    <i class="bi bi-plus-circle me-1"></i>Add Correction
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Toast for notifications -->
+<div class="position-fixed bottom-0 end-0 p-3" style="z-index: 1050">
+    <div id="toast" class="toast" role="alert">
+        <div class="toast-header">
+            <strong class="me-auto" id="toast-title">Notification</strong>
+            <button type="button" class="btn-close" data-bs-dismiss="toast"></button>
+        </div>
+        <div class="toast-body" id="toast-message"></div>
+    </div>
+</div>
+
+<style>
+.reasoning-input:focus, .afi-input:focus, .criterion-marks-input:focus,
+.location-input:focus, .error-input:focus, .correction-input:focus, .error-feedback-input:focus {
+    border-color: #0d6efd;
+    box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.25);
+}
+
+#rubric-table textarea {
+    font-size: 0.85rem;
+    min-height: 70px;
+    resize: vertical;
+}
+
+#errors-table textarea {
+    font-size: 0.85rem;
+    min-height: 50px;
+    resize: vertical;
+}
+
+#rubric-table td, #errors-table td {
+    vertical-align: top;
+    padding: 8px;
+}
+
+#errors-table tbody tr:hover {
+    background-color: #fff3cd;
+}
+
+/* Fullscreen styles */
+#submission-body:fullscreen {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background: #1a1a1a !important;
+    padding: 20px;
+}
+
+#submission-body:fullscreen img {
+    max-height: 95vh !important;
+    max-width: 95vw !important;
+    object-fit: contain;
+    margin: auto;
+}
+
+#submission-body:fullscreen iframe {
+    width: 95vw !important;
+    height: 95vh !important;
+}
+
+/* Webkit browsers */
+#submission-body:-webkit-full-screen {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background: #1a1a1a !important;
+}
+
+#submission-body:-webkit-full-screen img {
+    max-height: 95vh !important;
+    max-width: 95vw !important;
+    object-fit: contain;
+}
+
+.card-header.bg-primary {
+    background: linear-gradient(135deg, #0d6efd, #0a58ca) !important;
+}
+
+.card-header.bg-warning {
+    background: linear-gradient(135deg, #ffc107, #e0a800) !important;
+}
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const submissionId = "{{ submission.submission_id }}";
+    const pageCount = {{ page_count }};
+    const fileType = "{{ submission.file_type }}";
+    let currentPage = 0;
+    let errorIndex = {{ (ai_feedback.errors|length if ai_feedback and ai_feedback.errors else 0) }};
+    
+    // Page navigation
+    function updatePageView() {
+        document.getElementById('page-indicator').textContent = `Page ${currentPage + 1}/${pageCount}`;
+        document.getElementById('prev-btn').disabled = currentPage === 0;
+        document.getElementById('next-btn').disabled = currentPage >= pageCount - 1;
+        
+        if (fileType === 'pdf') {
+            document.getElementById('pdf-viewer').src = `/teacher/submission/${submissionId}/file/${currentPage}`;
+        } else {
+            document.getElementById('page-image').src = `/teacher/submission/${submissionId}/file/${currentPage}`;
+        }
+    }
+    
+    function nextPage() {
+        if (currentPage < pageCount - 1) {
+            currentPage++;
+            updatePageView();
+        }
+    }
+    
+    function prevPage() {
+        if (currentPage > 0) {
+            currentPage--;
+            updatePageView();
+        }
+    }
+    
+    // Zoom functionality
+    let currentZoom = 1;
+    const zoomStep = 0.25;
+    const maxZoom = 3;
+    const minZoom = 0.5;
+    
+    function zoomIn() {
+        if (currentZoom < maxZoom) {
+            currentZoom += zoomStep;
+            applyZoom();
+        }
+    }
+    
+    function zoomOut() {
+        if (currentZoom > minZoom) {
+            currentZoom -= zoomStep;
+            applyZoom();
+        }
+    }
+    
+    function applyZoom() {
+        const img = document.getElementById('page-image');
+        if (img) {
+            img.style.transform = `scale(${currentZoom})`;
+            img.style.transformOrigin = 'top center';
+        }
+    }
+    
+    // Fullscreen functionality
+    let isFullscreen = false;
+    
+    function toggleFullscreen() {
+        const submissionBody = document.getElementById('submission-body');
+        const fullscreenBtn = document.getElementById('fullscreen-btn');
+        
+        if (!document.fullscreenElement) {
+            submissionBody.requestFullscreen().then(() => {
+                submissionBody.style.height = '100vh';
+                submissionBody.style.background = '#1a1a1a';
+                fullscreenBtn.innerHTML = '<i class="bi bi-fullscreen-exit"></i>';
+                isFullscreen = true;
+            }).catch(err => {
+                expandView();
+            });
+        } else {
+            document.exitFullscreen().then(() => {
+                restoreView();
+            });
+        }
+    }
+    
+    function expandView() {
+        const submissionPanel = document.getElementById('submission-panel');
+        const feedbackPanel = document.getElementById('feedback-panel');
+        const fullscreenBtn = document.getElementById('fullscreen-btn');
+        
+        submissionPanel.className = 'col-12';
+        feedbackPanel.style.display = 'none';
+        document.getElementById('submission-body').style.height = '90vh';
+        fullscreenBtn.innerHTML = '<i class="bi bi-fullscreen-exit"></i>';
+        isFullscreen = true;
+    }
+    
+    function restoreView() {
+        const submissionPanel = document.getElementById('submission-panel');
+        const feedbackPanel = document.getElementById('feedback-panel');
+        const fullscreenBtn = document.getElementById('fullscreen-btn');
+        const submissionBody = document.getElementById('submission-body');
+        
+        submissionPanel.className = 'col-lg-4';
+        feedbackPanel.style.display = '';
+        submissionBody.style.height = 'calc(100vh - 180px)';
+        submissionBody.style.background = '#f0f0f0';
+        fullscreenBtn.innerHTML = '<i class="bi bi-arrows-fullscreen"></i>';
+        isFullscreen = false;
+    }
+    
+    document.addEventListener('fullscreenchange', () => {
+        if (!document.fullscreenElement && isFullscreen) {
+            restoreView();
+        }
+    });
+    
+    // Calculate total marks from criteria
+    function calculateTotal() {
+        let total = 0;
+        document.querySelectorAll('.criterion-marks-input').forEach(input => {
+            const val = parseFloat(input.value) || 0;
+            total += val;
+        });
+        const totalMarksInput = document.getElementById('total-marks');
+        if (totalMarksInput) {
+            totalMarksInput.value = total;
+        }
+    }
+    
+    // Add listeners for auto-calculate
+    document.querySelectorAll('.criterion-marks-input').forEach(input => {
+        input.addEventListener('input', calculateTotal);
+    });
+    
+    // Open Add Error Modal
+    function openAddErrorModal() {
+        // Clear previous values
+        document.getElementById('new-error-location').value = '';
+        document.getElementById('new-error-text').value = '';
+        document.getElementById('new-error-correction').value = '';
+        document.getElementById('new-error-feedback').value = '';
+        
+        new bootstrap.Modal(document.getElementById('addErrorModal')).show();
+    }
+    
+    // Add new error row
+    function addErrorRow() {
+        const location = document.getElementById('new-error-location').value.trim();
+        const errorText = document.getElementById('new-error-text').value.trim();
+        const correction = document.getElementById('new-error-correction').value.trim();
+        const feedback = document.getElementById('new-error-feedback').value.trim();
+        
+        if (!location || !errorText) {
+            alert('Please fill in at least the Location and Error Description fields.');
+            return;
+        }
+        
+        // Remove "no errors" row if present
+        const noErrorsRow = document.getElementById('no-errors-row');
+        if (noErrorsRow) {
+            noErrorsRow.remove();
+        }
+        
+        const tbody = document.getElementById('errors-tbody');
+        const newRow = document.createElement('tr');
+        newRow.dataset.errorIndex = errorIndex;
+        
+        newRow.innerHTML = `
+            <td>
+                <input type="text" class="form-control form-control-sm location-input" 
+                       name="error_location_${errorIndex}" 
+                       value="${escapeHtml(location)}"
+                       placeholder="e.g., Paragraph 1">
+            </td>
+            <td>
+                <textarea class="form-control form-control-sm error-input" 
+                          name="error_text_${errorIndex}" rows="2"
+                          placeholder="Describe the error...">${escapeHtml(errorText)}</textarea>
+            </td>
+            <td>
+                <textarea class="form-control form-control-sm correction-input" 
+                          name="error_correction_${errorIndex}" rows="2"
+                          placeholder="Suggested correction...">${escapeHtml(correction)}</textarea>
+            </td>
+            <td>
+                <textarea class="form-control form-control-sm error-feedback-input" 
+                          name="error_feedback_${errorIndex}" rows="2"
+                          placeholder="Feedback on this error...">${escapeHtml(feedback)}</textarea>
+            </td>
+            <td class="text-center">
+                <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeErrorRow(this)" title="Remove">
+                    <i class="bi bi-trash"></i>
+                </button>
+            </td>
+        `;
+        
+        tbody.appendChild(newRow);
+        errorIndex++;
+        
+        // Close modal
+        bootstrap.Modal.getInstance(document.getElementById('addErrorModal')).hide();
+        
+        // Auto-save
+        clearTimeout(saveTimeout);
+        saveTimeout = setTimeout(saveFeedback, 2000);
+    }
+    
+    // Remove error row
+    function removeErrorRow(btn) {
+        const row = btn.closest('tr');
+        row.remove();
+        
+        // If no more rows, add placeholder
+        const tbody = document.getElementById('errors-tbody');
+        if (tbody.children.length === 0) {
+            tbody.innerHTML = `
+                <tr id="no-errors-row">
+                    <td colspan="5" class="text-center text-muted py-3">
+                        <i class="bi bi-check-circle me-2"></i>
+                        No specific errors detected. Click "Add Correction" to manually add feedback.
+                    </td>
+                </tr>
+            `;
+        }
+        
+        // Auto-save
+        clearTimeout(saveTimeout);
+        saveTimeout = setTimeout(saveFeedback, 2000);
+    }
+    
+    // Escape HTML to prevent XSS
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+    
+    // Save feedback
+    async function saveFeedback() {
+        const data = {
+            overall_feedback: document.getElementById('overall-feedback').value,
+            total_marks: document.getElementById('total-marks').value,
+            total_marks_max: document.getElementById('total-marks-max').value,
+            criteria: {},
+            errors: []
+        };
+        
+        // Collect criteria data
+        document.querySelectorAll('#rubric-tbody tr[data-criterion]').forEach((row, idx) => {
+            const criterion = row.dataset.criterion;
+            data.criteria[criterion] = {
+                reasoning: row.querySelector('.reasoning-input').value,
+                afi: row.querySelector('.afi-input').value,
+                marks: row.querySelector('.criterion-marks-input').value,
+                max_marks: row.querySelector('.criterion-max-input').value
+            };
+        });
+        
+        // Collect error data
+        document.querySelectorAll('#errors-tbody tr[data-error-index]').forEach(row => {
+            data.errors.push({
+                location: row.querySelector('.location-input').value,
+                error: row.querySelector('.error-input').value,
+                correction: row.querySelector('.correction-input').value,
+                feedback: row.querySelector('.error-feedback-input').value
+            });
+        });
+        
+        try {
+            const response = await fetch(`/teacher/review/${submissionId}/save-rubric`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(data)
+            });
+            
+            const result = await response.json();
+            showToast(result.success ? 'Success' : 'Error', result.message || 'Saved');
+            return result.success;
+        } catch (e) {
+            showToast('Error', 'Failed to save');
+            return false;
+        }
+    }
+    
+    // Send feedback to student
+    async function sendFeedback() {
+        if (!confirm('Send feedback to student? This will mark the submission as reviewed.')) return;
+        
+        // Save first
+        const saved = await saveFeedback();
+        if (!saved) return;
+        
+        try {
+            const response = await fetch(`/teacher/review/${submissionId}/send-rubric`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({})
+            });
+            
+            const result = await response.json();
+            if (result.success) {
+                showToast('Success', 'Feedback sent to student!');
+                setTimeout(() => location.reload(), 1500);
+            } else {
+                showToast('Error', result.error || 'Failed to send');
+            }
+        } catch (e) {
+            showToast('Error', 'Failed to send feedback');
+        }
+    }
+    
+    // Download PDF report
+    async function downloadPDF() {
+        try {
+            await saveFeedback();
+        } catch (e) {
+            console.warn('Could not save before download, continuing anyway:', e);
+        }
+        
+        window.open(`/teacher/review/${submissionId}/pdf-rubric`, '_blank');
+    }
+    
+    // Toast notification
+    function showToast(title, message) {
+        document.getElementById('toast-title').textContent = title;
+        document.getElementById('toast-message').textContent = message;
+        new bootstrap.Toast(document.getElementById('toast')).show();
+    }
+    
+    // Auto-save on change
+    let saveTimeout;
+    document.querySelectorAll('#rubric-form input, #rubric-form textarea, #overall-feedback').forEach(el => {
+        el.addEventListener('change', () => {
+            clearTimeout(saveTimeout);
+            saveTimeout = setTimeout(saveFeedback, 2000);
+        });
+    });
+    
+    // Also track changes in error table
+    document.getElementById('errors-tbody').addEventListener('change', () => {
+        clearTimeout(saveTimeout);
+        saveTimeout = setTimeout(saveFeedback, 2000);
+    });
+    
+    // Initial total calculation
+    calculateTotal();
+</script>
+{% endblock %}

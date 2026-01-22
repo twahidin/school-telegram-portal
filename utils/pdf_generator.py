@@ -295,6 +295,208 @@ def generate_feedback_pdf(submission: dict, assignment: dict, student: dict) -> 
     """Legacy function - redirects to generate_review_pdf"""
     return generate_review_pdf(submission, assignment, student)
 
+def generate_rubric_review_pdf(submission: dict, assignment: dict, student: dict, teacher: dict = None) -> bytes:
+    """
+    Generate a comprehensive PDF feedback report for rubric-based essay marking
+    
+    Args:
+        submission: The submission document with criteria and error feedback
+        assignment: The assignment document
+        student: The student document
+        teacher: Optional teacher document
+    
+    Returns:
+        PDF content as bytes
+    """
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=1.5*cm,
+        leftMargin=1.5*cm,
+        topMargin=1.5*cm,
+        bottomMargin=1.5*cm
+    )
+    
+    styles = get_styles()
+    story = []
+    
+    # Header with school info
+    story.append(Paragraph("📝 Essay Feedback Report", styles['Title_Custom']))
+    story.append(Spacer(1, 5))
+    
+    # Info box
+    info_data = [
+        ['Student:', student.get('name', 'Unknown'), 'Date:', datetime.utcnow().strftime('%d %B %Y')],
+        ['ID:', student.get('student_id', 'N/A'), 'Class:', student.get('class', 'N/A')],
+        ['Assignment:', assignment.get('title', 'Untitled'), 'Subject:', assignment.get('subject', 'N/A')],
+    ]
+    
+    info_table = Table(info_data, colWidths=[2*cm, 6*cm, 2*cm, 6*cm])
+    info_table.setStyle(TableStyle([
+        ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+        ('FONTNAME', (2, 0), (2, -1), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 9),
+        ('TEXTCOLOR', (0, 0), (-1, -1), TEXT_COLOR),
+        ('BACKGROUND', (0, 0), (-1, -1), LIGHT_GRAY),
+        ('BOX', (0, 0), (-1, -1), 1, BORDER_COLOR),
+        ('GRID', (0, 0), (-1, -1), 0.5, BORDER_COLOR),
+        ('PADDING', (0, 0), (-1, -1), 6),
+    ]))
+    story.append(info_table)
+    story.append(Spacer(1, 15))
+    
+    # Score summary box
+    final_marks = submission.get('final_marks')
+    total_marks = assignment.get('total_marks', 100)
+    
+    if final_marks is not None:
+        percentage = (float(final_marks) / total_marks * 100) if total_marks > 0 else 0
+        grade = get_grade(percentage)
+        
+        score_data = [[
+            Paragraph(f"<b>Total Score</b>", styles['TableCell']),
+            Paragraph(f"<b>{final_marks} / {total_marks}</b>", styles['TableCell']),
+            Paragraph(f"<b>{percentage:.1f}%</b>", styles['TableCell']),
+            Paragraph(f"<b>Grade: {grade}</b>", styles['TableCell'])
+        ]]
+        
+        score_table = Table(score_data, colWidths=[4*cm, 4*cm, 4*cm, 4*cm])
+        score_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, -1), PRIMARY_COLOR),
+            ('TEXTCOLOR', (0, 0), (-1, -1), white),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('PADDING', (0, 0), (-1, -1), 10),
+            ('BOX', (0, 0), (-1, -1), 2, PRIMARY_COLOR),
+        ]))
+        story.append(score_table)
+        story.append(Spacer(1, 15))
+    
+    # Get feedback data
+    ai_feedback = submission.get('ai_feedback', {})
+    teacher_feedback = submission.get('teacher_feedback', {})
+    
+    # Table 1: Rubric Criteria Assessment
+    story.append(Paragraph("📋 Rubric Criteria Assessment", styles['Heading_Custom']))
+    
+    criteria = ai_feedback.get('criteria', [])
+    teacher_criteria = teacher_feedback.get('criteria', {})
+    
+    if criteria:
+        # Table headers
+        criteria_data = [[
+            Paragraph('<b>Criterion</b>', styles['TableHeader']),
+            Paragraph('<b>AI Reasoning</b>', styles['TableHeader']),
+            Paragraph('<b>Feedback / AFI</b>', styles['TableHeader']),
+            Paragraph('<b>Marks</b>', styles['TableHeader'])
+        ]]
+        
+        for c in criteria:
+            criterion_name = c.get('name', 'Unknown')
+            teacher_c = teacher_criteria.get(criterion_name, {})
+            
+            reasoning = teacher_c.get('reasoning') or c.get('reasoning', '')
+            afi = teacher_c.get('afi') or c.get('afi', '')
+            marks = teacher_c.get('marks') if teacher_c.get('marks') is not None else c.get('marks_awarded', '')
+            max_marks = teacher_c.get('max_marks') or c.get('max_marks', 10)
+            
+            row = [
+                Paragraph(f"<b>{criterion_name}</b>", styles['TableCell']),
+                Paragraph(truncate_text(reasoning, 120), styles['TableCell']),
+                Paragraph(truncate_text(afi, 120), styles['TableCell']),
+                Paragraph(f"<b>{marks}</b>/{max_marks}" if marks != '' else f"?/{max_marks}", styles['TableCell'])
+            ]
+            criteria_data.append(row)
+        
+        criteria_table = Table(criteria_data, colWidths=[3*cm, 5*cm, 5.5*cm, 2.5*cm])
+        criteria_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), PRIMARY_COLOR),
+            ('TEXTCOLOR', (0, 0), (-1, 0), white),
+            ('BACKGROUND', (0, 1), (-1, -1), white),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [white, LIGHT_GRAY]),
+            ('BOX', (0, 0), (-1, -1), 1, BORDER_COLOR),
+            ('GRID', (0, 0), (-1, -1), 0.5, BORDER_COLOR),
+            ('ALIGN', (-1, 0), (-1, -1), 'CENTER'),
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('PADDING', (0, 0), (-1, -1), 6),
+        ]))
+        story.append(criteria_table)
+    else:
+        story.append(Paragraph("No rubric criteria assessment available.", styles['Body_Custom']))
+    
+    story.append(Spacer(1, 15))
+    
+    # Overall feedback section
+    overall = teacher_feedback.get('overall_feedback') or ai_feedback.get('overall_feedback', '')
+    if overall:
+        story.append(Paragraph("💬 Overall Feedback", styles['Heading_Custom']))
+        
+        overall_data = [[Paragraph(overall, styles['Body_Custom'])]]
+        overall_table = Table(overall_data, colWidths=[16*cm])
+        overall_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, -1), HexColor('#e8f5e9')),
+            ('BOX', (0, 0), (-1, -1), 1, SUCCESS_COLOR),
+            ('PADDING', (0, 0), (-1, -1), 10),
+        ]))
+        story.append(overall_table)
+        story.append(Spacer(1, 15))
+    
+    # Table 2: Detailed Corrections
+    story.append(Paragraph("⚠️ Detailed Corrections", styles['Heading_Custom']))
+    
+    errors = teacher_feedback.get('errors', []) or ai_feedback.get('errors', [])
+    
+    if errors:
+        error_data = [[
+            Paragraph('<b>Location</b>', styles['TableHeader']),
+            Paragraph('<b>Error</b>', styles['TableHeader']),
+            Paragraph('<b>Suggested Correction</b>', styles['TableHeader']),
+            Paragraph('<b>Feedback</b>', styles['TableHeader'])
+        ]]
+        
+        for e in errors:
+            row = [
+                Paragraph(e.get('location', 'N/A'), styles['TableCell']),
+                Paragraph(truncate_text(e.get('error', ''), 80), styles['TableCell']),
+                Paragraph(truncate_text(e.get('correction', ''), 80), styles['TableCell']),
+                Paragraph(truncate_text(e.get('feedback', ''), 80), styles['TableCell'])
+            ]
+            error_data.append(row)
+        
+        error_table = Table(error_data, colWidths=[2.5*cm, 4.5*cm, 4.5*cm, 4.5*cm])
+        error_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), WARNING_COLOR),
+            ('TEXTCOLOR', (0, 0), (-1, 0), black),
+            ('BACKGROUND', (0, 1), (-1, -1), white),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [white, HexColor('#fff9e6')]),
+            ('BOX', (0, 0), (-1, -1), 1, BORDER_COLOR),
+            ('GRID', (0, 0), (-1, -1), 0.5, BORDER_COLOR),
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('PADDING', (0, 0), (-1, -1), 6),
+        ]))
+        story.append(error_table)
+    else:
+        story.append(Paragraph("No specific errors or corrections noted. Well done!", styles['Body_Custom']))
+    
+    # Footer
+    story.append(Spacer(1, 30))
+    story.append(HRFlowable(width="100%", thickness=1, color=BORDER_COLOR))
+    story.append(Spacer(1, 5))
+    
+    teacher_name = teacher.get('name', 'Teacher') if teacher else 'Teacher'
+    footer_text = f"Reviewed by: {teacher_name} | Generated: {datetime.utcnow().strftime('%d %B %Y, %H:%M UTC')}"
+    story.append(Paragraph(footer_text, styles['Footer']))
+    
+    # Build PDF
+    try:
+        doc.build(story)
+        buffer.seek(0)
+        return buffer.getvalue()
+    except Exception as e:
+        logger.error(f"Error generating rubric PDF: {e}")
+        raise
+
 def generate_class_report_pdf(assignment: dict, submissions: list, students_map: dict, teacher: dict = None) -> bytes:
     """
     Generate a comprehensive class report for an assignment

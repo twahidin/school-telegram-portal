@@ -1695,24 +1695,52 @@ def create_assignment():
         try:
             data = request.form
             
+            # Get marking type (standard or rubric)
+            marking_type = data.get('marking_type', 'standard')
+            
             # Get uploaded files
             question_paper = request.files.get('question_paper')
             answer_key = request.files.get('answer_key')
+            rubrics = request.files.get('rubrics')
             
-            if not question_paper or not answer_key:
-                return render_template('teacher_create_assignment.html',
-                                     teacher=teacher,
-                                     classes=classes,
-                                     teaching_groups=teaching_groups,
-                                     error='Both question paper and answer key PDFs are required')
+            # Validate required files based on marking type
+            if marking_type == 'rubric':
+                # For rubric-based: question paper and rubrics are required
+                if not question_paper:
+                    return render_template('teacher_create_assignment.html',
+                                         teacher=teacher,
+                                         classes=classes,
+                                         teaching_groups=teaching_groups,
+                                         error='Question paper PDF is required')
+                if not rubrics or not rubrics.filename:
+                    return render_template('teacher_create_assignment.html',
+                                         teacher=teacher,
+                                         classes=classes,
+                                         teaching_groups=teaching_groups,
+                                         error='Rubrics PDF is required for rubric-based marking')
+            else:
+                # For standard: question paper and answer key are required
+                if not question_paper or not answer_key:
+                    return render_template('teacher_create_assignment.html',
+                                         teacher=teacher,
+                                         classes=classes,
+                                         teaching_groups=teaching_groups,
+                                         error='Both question paper and answer key PDFs are required')
             
             # Validate file types
-            if not question_paper.filename.lower().endswith('.pdf') or not answer_key.filename.lower().endswith('.pdf'):
+            if not question_paper.filename.lower().endswith('.pdf'):
                 return render_template('teacher_create_assignment.html',
                                      teacher=teacher,
                                      classes=classes,
                                      teaching_groups=teaching_groups,
-                                     error='Only PDF files are allowed')
+                                     error='Question paper must be a PDF file')
+            
+            if answer_key and answer_key.filename and not answer_key.filename.lower().endswith('.pdf'):
+                return render_template('teacher_create_assignment.html',
+                                     teacher=teacher,
+                                     classes=classes,
+                                     teaching_groups=teaching_groups,
+                                     error='Answer key must be a PDF file')
             
             assignment_id = generate_assignment_id()
             total_marks = int(data.get('total_marks', 100))
@@ -1720,13 +1748,17 @@ def create_assignment():
             
             # Get optional files
             reference_materials = request.files.get('reference_materials')
-            rubrics = request.files.get('rubrics')
+            # Note: rubrics was already fetched above during validation
             
             # Read file contents (need to read before storing in GridFS since we also upload to Drive)
             question_paper_content = question_paper.read()
             question_paper.seek(0)  # Reset for GridFS
-            answer_key_content = answer_key.read()
-            answer_key.seek(0)  # Reset for GridFS
+            
+            # Answer key may be optional for rubric-based marking
+            answer_key_content = None
+            if answer_key and answer_key.filename:
+                answer_key_content = answer_key.read()
+                answer_key.seek(0)  # Reset for GridFS
             
             # Read optional file contents
             reference_materials_content = None
@@ -1741,7 +1773,7 @@ def create_assignment():
             
             # Extract text from PDFs for cost-effective AI processing
             question_paper_text = extract_text_from_pdf(question_paper_content)
-            answer_key_text = extract_text_from_pdf(answer_key_content)
+            answer_key_text = extract_text_from_pdf(answer_key_content) if answer_key_content else ""
             reference_materials_text = extract_text_from_pdf(reference_materials_content) if reference_materials_content else ""
             rubrics_text = extract_text_from_pdf(rubrics_content) if rubrics_content else ""
             
@@ -1758,14 +1790,16 @@ def create_assignment():
                 file_type='question_paper'
             )
             
-            # Save answer key
-            answer_key_id = fs.put(
-                answer_key_content,
-                filename=f"{assignment_id}_answer.pdf",
-                content_type='application/pdf',
-                assignment_id=assignment_id,
-                file_type='answer_key'
-            )
+            # Save answer key (optional for rubric-based marking)
+            answer_key_id = None
+            if answer_key_content:
+                answer_key_id = fs.put(
+                    answer_key_content,
+                    filename=f"{assignment_id}_answer.pdf",
+                    content_type='application/pdf',
+                    assignment_id=assignment_id,
+                    file_type='answer_key'
+                )
             
             # Save reference materials if provided
             reference_materials_id = None
@@ -1837,10 +1871,11 @@ def create_assignment():
                 'subject': data.get('subject', 'General'),
                 'instructions': data.get('instructions', ''),
                 'total_marks': total_marks,
+                'marking_type': marking_type,  # 'standard' or 'rubric'
                 'question_paper_id': question_paper_id,
                 'answer_key_id': answer_key_id,
                 'question_paper_name': question_paper.filename,
-                'answer_key_name': answer_key.filename,
+                'answer_key_name': answer_key.filename if answer_key and answer_key.filename else None,
                 # New optional document fields
                 'reference_materials_id': reference_materials_id,
                 'reference_materials_name': reference_materials.filename if reference_materials_content else None,
@@ -2249,13 +2284,24 @@ def review_submission(submission_id):
     # Get page count
     page_count = submission.get('page_count', len(submission.get('file_ids', [1])))
     
-    return render_template('teacher_review.html',
-                         teacher=teacher,
-                         submission=submission,
-                         assignment=assignment,
-                         student=student,
-                         ai_feedback=ai_feedback,
-                         page_count=page_count)
+    # Choose template based on marking type
+    marking_type = assignment.get('marking_type', 'standard')
+    if marking_type == 'rubric':
+        return render_template('teacher_review_rubric.html',
+                             teacher=teacher,
+                             submission=submission,
+                             assignment=assignment,
+                             student=student,
+                             ai_feedback=ai_feedback,
+                             page_count=page_count)
+    else:
+        return render_template('teacher_review.html',
+                             teacher=teacher,
+                             submission=submission,
+                             assignment=assignment,
+                             student=student,
+                             ai_feedback=ai_feedback,
+                             page_count=page_count)
 
 @app.route('/teacher/submission/<submission_id>/file/<int:file_index>')
 @teacher_required
@@ -2414,6 +2460,156 @@ def send_feedback_to_student(submission_id):
     except Exception as e:
         logger.error(f"Error sending feedback: {e}")
         return jsonify({'error': str(e)}), 500
+
+@app.route('/teacher/review/<submission_id>/save-rubric', methods=['POST'])
+@teacher_required
+def save_rubric_feedback(submission_id):
+    """Save teacher feedback for rubric-based essay marking"""
+    try:
+        data = request.get_json()
+        
+        submission = Submission.find_one({'submission_id': submission_id})
+        if not submission:
+            return jsonify({'error': 'Submission not found'}), 404
+        
+        assignment = Assignment.find_one({'assignment_id': submission['assignment_id']})
+        if not assignment or assignment['teacher_id'] != session['teacher_id']:
+            return jsonify({'error': 'Unauthorized'}), 403
+        
+        # Update teacher feedback for rubric-based marking
+        teacher_feedback = {
+            'criteria': data.get('criteria', {}),
+            'errors': data.get('errors', []),
+            'overall_feedback': data.get('overall_feedback', ''),
+            'total_marks': data.get('total_marks'),
+            'total_marks_max': data.get('total_marks_max'),
+            'edited_at': datetime.utcnow(),
+            'edited_by': session['teacher_id']
+        }
+        
+        update_data = {
+            'teacher_feedback': teacher_feedback,
+            'final_marks': data.get('total_marks'),
+            'updated_at': datetime.utcnow()
+        }
+        
+        Submission.update_one(
+            {'submission_id': submission_id},
+            {'$set': update_data}
+        )
+        
+        return jsonify({'success': True, 'message': 'Rubric feedback saved'})
+        
+    except Exception as e:
+        logger.error(f"Error saving rubric feedback: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/teacher/review/<submission_id>/send-rubric', methods=['POST'])
+@teacher_required
+def send_rubric_feedback_to_student(submission_id):
+    """Send rubric-based feedback to student via Telegram"""
+    try:
+        submission = Submission.find_one({'submission_id': submission_id})
+        if not submission:
+            return jsonify({'error': 'Submission not found'}), 404
+        
+        assignment = Assignment.find_one({'assignment_id': submission['assignment_id']})
+        if not assignment or assignment['teacher_id'] != session['teacher_id']:
+            return jsonify({'error': 'Unauthorized'}), 403
+        
+        student = Student.find_one({'student_id': submission['student_id']})
+        teacher = Teacher.find_one({'teacher_id': session['teacher_id']})
+        
+        # Update status and mark feedback as sent (no answer key option for rubric-based)
+        Submission.update_one(
+            {'submission_id': submission_id},
+            {'$set': {
+                'status': 'reviewed',
+                'feedback_sent': True,
+                'reviewed_at': datetime.utcnow()
+            }}
+        )
+        
+        # Send Telegram notification if student has linked account
+        if student and student.get('telegram_id'):
+            try:
+                from telegram import Bot
+                bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
+                if bot_token:
+                    import asyncio
+                    
+                    async def send_notification():
+                        bot = Bot(token=bot_token)
+                        
+                        # Format feedback message for essay
+                        feedback = submission.get('teacher_feedback', {})
+                        marks = submission.get('final_marks', 'N/A')
+                        total = assignment.get('total_marks', 100)
+                        
+                        message = (
+                            f"📬 *Essay Feedback*\n\n"
+                            f"📝 {assignment.get('title')}\n"
+                            f"📊 Total Marks: *{marks}/{total}*\n\n"
+                        )
+                        
+                        if feedback.get('overall_feedback'):
+                            message += f"💬 {feedback['overall_feedback']}\n\n"
+                        
+                        message += f"👨‍🏫 Reviewed by: {teacher.get('name', 'Teacher')}"
+                        
+                        await bot.send_message(
+                            chat_id=student['telegram_id'],
+                            text=message,
+                            parse_mode='Markdown'
+                        )
+                    
+                    # Run async function
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    loop.run_until_complete(send_notification())
+                    loop.close()
+                    
+            except Exception as e:
+                logger.error(f"Failed to send Telegram notification: {e}")
+        
+        return jsonify({'success': True, 'message': 'Essay feedback sent to student'})
+        
+    except Exception as e:
+        logger.error(f"Error sending rubric feedback: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/teacher/review/<submission_id>/pdf-rubric')
+@teacher_required
+def download_rubric_feedback_pdf(submission_id):
+    """Generate and download PDF feedback report for rubric-based essays"""
+    from utils.pdf_generator import generate_rubric_review_pdf
+    
+    submission = Submission.find_one({'submission_id': submission_id})
+    if not submission:
+        return 'Not found', 404
+    
+    assignment = Assignment.find_one({'assignment_id': submission['assignment_id']})
+    if not assignment or assignment['teacher_id'] != session['teacher_id']:
+        return 'Unauthorized', 403
+    
+    student = Student.find_one({'student_id': submission['student_id']})
+    teacher = Teacher.find_one({'teacher_id': session['teacher_id']})
+    
+    try:
+        pdf_content = generate_rubric_review_pdf(submission, assignment, student, teacher)
+        
+        filename = f"essay_feedback_{student['student_id']}_{assignment['assignment_id']}.pdf"
+        
+        return Response(
+            pdf_content,
+            mimetype='application/pdf',
+            headers={
+                'Content-Disposition': f'attachment; filename="{filename}"'
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error generating rubric PDF: {e}")
+        return f'Error generating PDF: {str(e)}', 500
 
 @app.route('/teacher/review/<submission_id>/pdf')
 @teacher_required

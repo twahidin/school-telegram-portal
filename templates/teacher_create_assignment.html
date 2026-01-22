@@ -83,6 +83,23 @@
                                 <input type="number" class="form-control" id="total_marks" name="total_marks" 
                                        min="1" value="100" required placeholder="e.g., 100">
                             </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Assignment Type *</label>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="marking_type" id="marking_standard" value="standard" checked>
+                                    <label class="form-check-label" for="marking_standard">
+                                        <i class="bi bi-list-ol me-1"></i>Standard (Question-based)
+                                    </label>
+                                    <small class="text-muted d-block ms-4">For worksheets, quizzes, and tests with specific questions and answers</small>
+                                </div>
+                                <div class="form-check mt-2">
+                                    <input class="form-check-input" type="radio" name="marking_type" id="marking_rubric" value="rubric">
+                                    <label class="form-check-label" for="marking_rubric">
+                                        <i class="bi bi-file-text me-1"></i>Rubric-based (Essay)
+                                    </label>
+                                    <small class="text-muted d-block ms-4">For essays and written compositions graded using rubric criteria</small>
+                                </div>
+                            </div>
                         </div>
                         
                         <div class="mb-3">
@@ -117,7 +134,7 @@
                             </div>
                             
                             <!-- Answer Key -->
-                            <div class="col-md-6 mb-3">
+                            <div class="col-md-6 mb-3" id="answer-key-container">
                                 <div class="upload-zone" id="answer-zone">
                                     <input type="file" class="form-control d-none" id="answer_key" name="answer_key" 
                                            accept=".pdf" onchange="handleFileSelect(this, 'answer')">
@@ -125,8 +142,8 @@
                                         <div class="upload-icon answer">
                                             <i class="bi bi-file-earmark-check"></i>
                                         </div>
-                                        <h6>Answer Key *</h6>
-                                        <p class="text-muted small mb-0">Questions with answers</p>
+                                        <h6 id="answer-key-title">Answer Key *</h6>
+                                        <p class="text-muted small mb-0" id="answer-key-desc">Questions with answers</p>
                                         <span class="file-name" id="answer-filename">Click to upload PDF</span>
                                     </label>
                                 </div>
@@ -152,7 +169,7 @@
                             </div>
                             
                             <!-- Rubrics -->
-                            <div class="col-md-6 mb-3">
+                            <div class="col-md-6 mb-3" id="rubrics-container">
                                 <div class="upload-zone" id="rubrics-zone">
                                     <input type="file" class="form-control d-none" id="rubrics" name="rubrics" 
                                            accept=".pdf" onchange="handleFileSelect(this, 'rubrics')">
@@ -160,12 +177,12 @@
                                         <div class="upload-icon rubrics">
                                             <i class="bi bi-list-check"></i>
                                         </div>
-                                        <h6>Rubrics</h6>
-                                        <p class="text-muted small mb-0">Grading criteria for essays</p>
+                                        <h6 id="rubrics-title">Rubrics</h6>
+                                        <p class="text-muted small mb-0" id="rubrics-desc">Grading criteria for essays</p>
                                         <span class="file-name" id="rubrics-filename">Click to upload PDF (optional)</span>
                                     </label>
                                 </div>
-                                <small class="text-muted d-block mt-1">Upload grading rubrics for essays, literature, or subjective answers where there's no single correct answer.</small>
+                                <small class="text-muted d-block mt-1" id="rubrics-help">Upload grading rubrics for essays, literature, or subjective answers where there's no single correct answer.</small>
                             </div>
                         </div>
                         
@@ -282,6 +299,10 @@
                         <div class="summary-item">
                             <span>Rubrics:</span>
                             <strong id="summary-rubrics"><span class="text-muted">Optional</span></strong>
+                        </div>
+                        <div class="summary-item">
+                            <span>Marking Type:</span>
+                            <strong id="summary-marking-type"><span class="text-primary">Standard</span></strong>
                         </div>
                         <div class="summary-item">
                             <span>Total Marks:</span>
@@ -454,23 +475,105 @@
     function validateForm() {
         const questionPaper = document.getElementById('question_paper').files.length > 0;
         const answerKey = document.getElementById('answer_key').files.length > 0;
+        const rubrics = document.getElementById('rubrics').files.length > 0;
+        const markingType = document.querySelector('input[name="marking_type"]:checked').value;
         const submitBtn = document.getElementById('submit-btn');
         
-        // Both files are required
-        submitBtn.disabled = !(questionPaper && answerKey);
+        if (markingType === 'rubric') {
+            // For rubric-based: question paper and rubrics are required
+            submitBtn.disabled = !(questionPaper && rubrics);
+        } else {
+            // For standard: question paper and answer key are required
+            submitBtn.disabled = !(questionPaper && answerKey);
+        }
     }
     
     // Form validation
     document.getElementById('create-assignment-form').addEventListener('submit', function(e) {
         const questionPaper = document.getElementById('question_paper').files.length;
         const answerKey = document.getElementById('answer_key').files.length;
+        const rubrics = document.getElementById('rubrics').files.length;
+        const markingType = document.querySelector('input[name="marking_type"]:checked').value;
         
-        if (!questionPaper || !answerKey) {
-            e.preventDefault();
-            alert('Please upload both the question paper and answer key PDFs.');
-            return false;
+        if (markingType === 'rubric') {
+            if (!questionPaper || !rubrics) {
+                e.preventDefault();
+                alert('Please upload both the question paper and rubrics PDFs for rubric-based marking.');
+                return false;
+            }
+        } else {
+            if (!questionPaper || !answerKey) {
+                e.preventDefault();
+                alert('Please upload both the question paper and answer key PDFs.');
+                return false;
+            }
         }
     });
+    
+    // Handle marking type toggle
+    document.querySelectorAll('input[name="marking_type"]').forEach(radio => {
+        radio.addEventListener('change', function() {
+            const isRubric = this.value === 'rubric';
+            updateMarkingTypeUI(isRubric);
+            validateForm();
+        });
+    });
+    
+    function updateMarkingTypeUI(isRubric) {
+        // Update answer key section
+        const answerKeyTitle = document.getElementById('answer-key-title');
+        const answerKeyDesc = document.getElementById('answer-key-desc');
+        const answerFilename = document.getElementById('answer-filename');
+        const summaryAnswer = document.getElementById('summary-answer');
+        
+        // Update rubrics section
+        const rubricsTitle = document.getElementById('rubrics-title');
+        const rubricsDesc = document.getElementById('rubrics-desc');
+        const rubricsFilename = document.getElementById('rubrics-filename');
+        const rubricsHelp = document.getElementById('rubrics-help');
+        const summaryRubrics = document.getElementById('summary-rubrics');
+        
+        // Update marking type summary
+        const summaryMarkingType = document.getElementById('summary-marking-type');
+        
+        if (isRubric) {
+            // Rubric-based marking: answer key optional, rubrics required
+            answerKeyTitle.innerHTML = 'Answer Key';
+            answerKeyDesc.textContent = 'Optional model essay/answer';
+            if (!document.getElementById('answer_key').files.length) {
+                answerFilename.textContent = 'Click to upload PDF (optional)';
+                summaryAnswer.innerHTML = '<span class="text-muted">Optional</span>';
+            }
+            
+            rubricsTitle.innerHTML = 'Rubrics *';
+            rubricsDesc.textContent = 'Required grading criteria';
+            rubricsHelp.innerHTML = '<strong>Required:</strong> Upload the rubrics document containing the criteria for grading this essay.';
+            if (!document.getElementById('rubrics').files.length) {
+                rubricsFilename.textContent = 'Click to upload PDF';
+                summaryRubrics.innerHTML = '<span class="text-danger">Not uploaded</span>';
+            }
+            
+            summaryMarkingType.innerHTML = '<span class="text-warning">Rubric (Essay)</span>';
+        } else {
+            // Standard marking: answer key required, rubrics optional
+            answerKeyTitle.innerHTML = 'Answer Key *';
+            answerKeyDesc.textContent = 'Questions with answers';
+            if (!document.getElementById('answer_key').files.length) {
+                answerFilename.textContent = 'Click to upload PDF';
+                summaryAnswer.innerHTML = '<span class="text-danger">Not uploaded</span>';
+            }
+            
+            rubricsTitle.innerHTML = 'Rubrics';
+            rubricsDesc.textContent = 'Grading criteria for essays';
+            rubricsHelp.textContent = 'Upload grading rubrics for essays, literature, or subjective answers where there\'s no single correct answer.';
+            if (!document.getElementById('rubrics').files.length) {
+                rubricsFilename.textContent = 'Click to upload PDF (optional)';
+                summaryRubrics.innerHTML = '<span class="text-muted">Optional</span>';
+            }
+            
+            summaryMarkingType.innerHTML = '<span class="text-primary">Standard</span>';
+        }
+    }
     
     // Initial validation
     validateForm();
