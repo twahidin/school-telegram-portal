@@ -51,7 +51,7 @@
                 {{ msg.message }}
             </div>
             <div class="message-time">
-                {{ msg.timestamp.strftime('%H:%M') if msg.timestamp else '' }}
+                {{ (msg.timestamp|sgt).strftime('%H:%M') if msg.timestamp else '' }}
                 {% if msg.sent_via == 'telegram' %}
                 <i class="bi bi-telegram ms-1" title="Sent via Telegram"></i>
                 {% endif %}
@@ -85,6 +85,24 @@
 <script>
     const studentId = '{{ student.student_id }}';
     
+    // Format timestamp to Singapore time (UTC+8)
+    function formatTimeSGT(timestamp) {
+        if (!timestamp) {
+            timestamp = new Date().toISOString();
+        }
+        
+        const date = new Date(timestamp);
+        // Convert to Singapore time (UTC+8)
+        const sgtOffset = 8 * 60; // 8 hours in minutes
+        const utcTime = date.getTime() + (date.getTimezoneOffset() * 60000);
+        const sgtTime = new Date(utcTime + (sgtOffset * 60000));
+        
+        // Format as HH:MM
+        const hours = String(sgtTime.getHours()).padStart(2, '0');
+        const minutes = String(sgtTime.getMinutes()).padStart(2, '0');
+        return `${hours}:${minutes}`;
+    }
+    
     document.getElementById('teacher-message-form').addEventListener('submit', async (e) => {
         e.preventDefault();
         
@@ -115,7 +133,7 @@
                 msgDiv.className = 'message sent';
                 msgDiv.innerHTML = `
                     <div class="message-content">${message}</div>
-                    <div class="message-time">${new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}</div>
+                    <div class="message-time">${formatTimeSGT()}</div>
                 `;
                 container.appendChild(msgDiv);
                 container.scrollTop = container.scrollHeight;

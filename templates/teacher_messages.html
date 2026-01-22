@@ -80,7 +80,7 @@
                     {% endif %}
                 </p>
                 <small class="text-muted">
-                    {{ student.last_message.timestamp.strftime('%d %b, %H:%M') if student.last_message.timestamp else '' }}
+                    {{ (student.last_message.timestamp|sgt).strftime('%d %b, %H:%M') if student.last_message.timestamp else '' }}
                 </small>
                 {% endif %}
             </div>

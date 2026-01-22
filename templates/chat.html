@@ -61,7 +61,7 @@
                 {{ msg.message }}
             </div>
             <div class="message-time">
-                {{ msg.timestamp.strftime('%H:%M') if msg.timestamp else '' }}
+                {{ (msg.timestamp|sgt).strftime('%H:%M') if msg.timestamp else '' }}
             </div>
         </div>
         {% endfor %}

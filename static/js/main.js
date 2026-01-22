@@ -86,15 +86,33 @@ function initChat(teacherId, lastTime) {
     startPolling(teacherId, lastTime);
 }
 
-function addMessage(text, isSent) {
+// Format timestamp to Singapore time (UTC+8)
+function formatTimeSGT(timestamp) {
+    if (!timestamp) {
+        const now = new Date();
+        timestamp = now.toISOString();
+    }
+    
+    const date = new Date(timestamp);
+    // Convert to Singapore time (UTC+8)
+    const sgtOffset = 8 * 60; // 8 hours in minutes
+    const utcTime = date.getTime() + (date.getTimezoneOffset() * 60000);
+    const sgtTime = new Date(utcTime + (sgtOffset * 60000));
+    
+    // Format as HH:MM
+    const hours = String(sgtTime.getHours()).padStart(2, '0');
+    const minutes = String(sgtTime.getMinutes()).padStart(2, '0');
+    return `${hours}:${minutes}`;
+}
+
+function addMessage(text, isSent, timestamp = null) {
     const container = document.getElementById('messages-container');
     if (!container) return;
     
     const msgDiv = document.createElement('div');
     msgDiv.className = `message ${isSent ? 'sent' : 'received'}`;
     
-    const now = new Date();
-    const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    const timeStr = formatTimeSGT(timestamp);
     
     msgDiv.innerHTML = `
         <div class="message-content">${escapeHtml(text)}</div>
@@ -124,7 +142,7 @@ function startPolling(teacherId, lastTime) {
                 
                 data.messages.forEach(msg => {
                     if (!msg.from_student) {
-                        addMessage(msg.text, false);
+                        addMessage(msg.text, false, msg.timestamp);
                         
                         // Trigger notification callback if set
                         if (window.onNewMessageReceived) {
