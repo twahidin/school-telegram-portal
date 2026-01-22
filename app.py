@@ -1493,8 +1493,17 @@ def assignment_summary(assignment_id):
     reviewed_count = len([s for s in submissions if s['status'] == 'reviewed'])
     pending_count = len(submissions) - reviewed_count
     
-    scores = [s['final_marks'] for s in submissions if s.get('final_marks') is not None]
-    total_marks = assignment.get('total_marks', 100)
+    # Convert final_marks to float, handling string values
+    scores = []
+    for s in submissions:
+        fm = s.get('final_marks')
+        if fm is not None:
+            try:
+                scores.append(float(fm))
+            except (ValueError, TypeError):
+                pass  # Skip invalid values
+    
+    total_marks = float(assignment.get('total_marks', 100) or 100)
     
     avg_marks = sum(scores) / len(scores) if scores else 0
     avg_score = (avg_marks / total_marks * 100) if total_marks > 0 else 0
@@ -1543,7 +1552,11 @@ def assignment_summary(assignment_id):
         sub = submission_map.get(student['student_id'])
         percentage = 0
         if sub and sub.get('final_marks') is not None:
-            percentage = (sub['final_marks'] / total_marks * 100) if total_marks > 0 else 0
+            try:
+                fm = float(sub['final_marks'])
+                percentage = (fm / total_marks * 100) if total_marks > 0 else 0
+            except (ValueError, TypeError):
+                percentage = 0
         
         student_submissions.append({
             'student': student,
