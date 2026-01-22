@@ -523,7 +523,12 @@ def generate_class_report_pdf(assignment: dict, submissions: list, students_map:
     styles = get_styles()
     story = []
     
-    total_marks = assignment.get('total_marks', 100)
+    # Ensure total_marks is a float for arithmetic operations
+    try:
+        total_marks = float(assignment.get('total_marks', 100) or 100)
+    except (ValueError, TypeError):
+        total_marks = 100.0
+    
     total_students = len(students_map)
     
     # ==================== PAGE 1: SUMMARY ====================
@@ -552,15 +557,23 @@ def generate_class_report_pdf(assignment: dict, submissions: list, students_map:
     story.append(info_table)
     story.append(Spacer(1, 20))
     
-    # Calculate statistics
-    scores = [s['final_marks'] for s in submissions if s.get('final_marks') is not None]
-    reviewed_count = len([s for s in submissions if s['status'] == 'reviewed'])
+    # Calculate statistics - convert final_marks to float safely
+    scores = []
+    for s in submissions:
+        fm = s.get('final_marks')
+        if fm is not None:
+            try:
+                scores.append(float(fm))
+            except (ValueError, TypeError):
+                pass  # Skip invalid values
+    
+    reviewed_count = len([s for s in submissions if s.get('status') == 'reviewed'])
     
     if scores:
         avg_score = sum(scores) / len(scores)
         min_score = min(scores)
         max_score = max(scores)
-        pass_count = len([s for s in scores if s >= total_marks * 0.5])
+        pass_count = len([s for s in scores if s >= float(total_marks) * 0.5])
         pass_rate = pass_count / len(scores) * 100
     else:
         avg_score = min_score = max_score = pass_rate = 0
@@ -572,10 +585,10 @@ def generate_class_report_pdf(assignment: dict, submissions: list, students_map:
     stats_data = [
         ['Metric', 'Value', 'Metric', 'Value'],
         ['Submissions', f'{len(submissions)}/{total_students}', 'Reviewed', str(reviewed_count)],
-        ['Average Score', f'{avg_score:.1f}/{total_marks} ({avg_score/total_marks*100:.0f}%)' if total_marks > 0 else 'N/A', 
+        ['Average Score', f'{avg_score:.1f}/{total_marks:.0f} ({avg_score/total_marks*100:.0f}%)' if total_marks > 0 else 'N/A', 
          'Pass Rate', f'{pass_rate:.0f}%'],
-        ['Highest', f'{max_score}/{total_marks}' if scores else 'N/A',
-         'Lowest', f'{min_score}/{total_marks}' if scores else 'N/A']
+        ['Highest', f'{max_score:.1f}/{total_marks:.0f}' if scores else 'N/A',
+         'Lowest', f'{min_score:.1f}/{total_marks:.0f}' if scores else 'N/A']
     ]
     
     stats_table = Table(stats_data, colWidths=[4*cm, 4*cm, 4*cm, 4*cm])
@@ -657,10 +670,17 @@ def generate_class_report_pdf(assignment: dict, submissions: list, students_map:
     sorted_submissions = []
     for student_id, student in students_map.items():
         sub = next((s for s in submissions if s['student_id'] == student_id), None)
+        # Convert final_marks to float for proper sorting
+        score = None
+        if sub and sub.get('final_marks') is not None:
+            try:
+                score = float(sub['final_marks'])
+            except (ValueError, TypeError):
+                score = None
         sorted_submissions.append({
             'student': student,
             'submission': sub,
-            'score': sub.get('final_marks') if sub else None
+            'score': score
         })
     
     sorted_submissions.sort(key=lambda x: (x['score'] is None, -(x['score'] or 0)))
@@ -684,9 +704,14 @@ def generate_class_report_pdf(assignment: dict, submissions: list, students_map:
                 status = 'Pending'
             
             if sub.get('final_marks') is not None:
-                score = f"{sub['final_marks']}/{total_marks}"
-                pct = (sub['final_marks'] / total_marks * 100) if total_marks > 0 else 0
-                grade = get_grade(pct)
+                try:
+                    marks = float(sub['final_marks'])
+                    score = f"{marks:.1f}/{total_marks:.0f}"
+                    pct = (marks / total_marks * 100) if total_marks > 0 else 0
+                    grade = get_grade(pct)
+                except (ValueError, TypeError):
+                    score = '-'
+                    grade = '-'
             else:
                 score = '-'
                 grade = '-'

@@ -1477,8 +1477,29 @@ def assignment_summary(assignment_id):
     if not assignment:
         return redirect(url_for('teacher_assignments'))
     
-    # Get all students assigned to this teacher
-    all_students = list(Student.find({'teachers': session['teacher_id']}))
+    # Get students based on the assignment's target type (class or teaching group)
+    target_type = assignment.get('target_type', 'class')
+    target_class_id = assignment.get('target_class_id')
+    target_group_id = assignment.get('target_group_id')
+    
+    if target_type == 'teaching_group' and target_group_id:
+        # Get students from the specific teaching group
+        teaching_group = TeachingGroup.find_one({'group_id': target_group_id})
+        if teaching_group:
+            student_ids = teaching_group.get('student_ids', [])
+            all_students = list(Student.find({'student_id': {'$in': student_ids}}))
+        else:
+            all_students = []
+    elif target_type == 'class' and target_class_id:
+        # Get students from the specific class who are also assigned to this teacher
+        all_students = list(Student.find({
+            'class': target_class_id,
+            'teachers': session['teacher_id']
+        }))
+    else:
+        # Fallback: get all students assigned to this teacher
+        all_students = list(Student.find({'teachers': session['teacher_id']}))
+    
     total_students = len(all_students)
     
     # Get all submissions for this assignment
@@ -1580,11 +1601,13 @@ def assignment_summary(assignment_id):
                          student_submissions=student_submissions)
 
 def analyze_class_insights(submissions: list) -> dict:
-    """Analyze AI feedback to identify class-wide patterns"""
+    """Analyze AI feedback to identify class-wide patterns, misconceptions, and topics to review"""
     strengths = []
     improvements = []
+    misconceptions = []
     
     question_stats = {}
+    wrong_answers = {}  # Track common wrong answers per question
     
     for sub in submissions:
         ai_feedback = sub.get('ai_feedback', {})
@@ -1593,13 +1616,28 @@ def analyze_class_insights(submissions: list) -> dict:
         for q in questions:
             q_num = q.get('question_num', 0)
             if q_num not in question_stats:
-                question_stats[q_num] = {'correct': 0, 'incorrect': 0, 'total': 0}
+                question_stats[q_num] = {
+                    'correct': 0, 
+                    'incorrect': 0, 
+                    'total': 0,
+                    'correct_answer': q.get('correct_answer', ''),
+                    'feedbacks': []  # Collect feedback for pattern analysis
+                }
+                wrong_answers[q_num] = {}
             
             question_stats[q_num]['total'] += 1
             if q.get('is_correct') == True:
                 question_stats[q_num]['correct'] += 1
             elif q.get('is_correct') == False:
                 question_stats[q_num]['incorrect'] += 1
+                # Track wrong answer patterns
+                student_answer = str(q.get('student_answer', '')).strip().lower()[:100]  # Normalize
+                if student_answer and student_answer != 'unclear':
+                    wrong_answers[q_num][student_answer] = wrong_answers[q_num].get(student_answer, 0) + 1
+            
+            # Collect improvement feedback for misconception analysis
+            if q.get('improvement'):
+                question_stats[q_num]['feedbacks'].append(q.get('improvement'))
     
     for q_num, stats in sorted(question_stats.items()):
         if stats['total'] > 0:
@@ -1615,20 +1653,56 @@ def analyze_class_insights(submissions: list) -> dict:
                 })
             
             if incorrect_pct >= 50:
+                # Find common wrong answers
+                common_wrong = []
+                if q_num in wrong_answers:
+                    sorted_wrong = sorted(wrong_answers[q_num].items(), key=lambda x: -x[1])
+                    for answer, count in sorted_wrong[:3]:  # Top 3 common wrong answers
+                        if count >= 2:  # At least 2 students gave this wrong answer
+                            common_wrong.append({
+                                'answer': answer[:50] + '...' if len(answer) > 50 else answer,
+                                'count': count
+                            })
+                
                 improvements.append({
                     'question': q_num,
                     'incorrect': stats['incorrect'],
                     'total': stats['total'],
-                    'percentage': round(incorrect_pct)
+                    'percentage': round(incorrect_pct),
+                    'correct_answer': stats.get('correct_answer', ''),
+                    'common_wrong': common_wrong
                 })
+                
+                # Analyze feedbacks for misconception patterns
+                if stats['feedbacks']:
+                    misconceptions.append({
+                        'question': q_num,
+                        'sample_feedback': stats['feedbacks'][0][:150] + '...' if len(stats['feedbacks'][0]) > 150 else stats['feedbacks'][0],
+                        'affected_count': stats['incorrect']
+                    })
     
     # Sort by percentage
     strengths.sort(key=lambda x: -x['percentage'])
     improvements.sort(key=lambda x: -x['percentage'])
+    misconceptions.sort(key=lambda x: -x['affected_count'])
+    
+    # Generate teaching recommendations
+    recommendations = []
+    if improvements:
+        most_problematic = improvements[0]
+        recommendations.append(f"Focus on Question {most_problematic['question']} - {most_problematic['percentage']}% of students need improvement")
+    
+    if len(improvements) >= 2:
+        recommendations.append(f"Consider reviewing concepts in Questions {', '.join([str(i['question']) for i in improvements[:3]])}")
+    
+    if misconceptions:
+        recommendations.append("Schedule a class discussion to address common misconceptions")
     
     return {
         'strengths': strengths[:5],
-        'improvements': improvements[:5]
+        'improvements': improvements[:5],
+        'misconceptions': misconceptions[:5],
+        'recommendations': recommendations
     }
 
 @app.route('/teacher/assignment/<assignment_id>/report')
@@ -1647,8 +1721,29 @@ def download_assignment_report(assignment_id):
     
     teacher = Teacher.find_one({'teacher_id': session['teacher_id']})
     
-    # Get all students and submissions
-    students = list(Student.find({'teachers': session['teacher_id']}))
+    # Get students based on the assignment's target type (class or teaching group)
+    target_type = assignment.get('target_type', 'class')
+    target_class_id = assignment.get('target_class_id')
+    target_group_id = assignment.get('target_group_id')
+    
+    if target_type == 'teaching_group' and target_group_id:
+        # Get students from the specific teaching group
+        teaching_group = TeachingGroup.find_one({'group_id': target_group_id})
+        if teaching_group:
+            student_ids = teaching_group.get('student_ids', [])
+            students = list(Student.find({'student_id': {'$in': student_ids}}))
+        else:
+            students = []
+    elif target_type == 'class' and target_class_id:
+        # Get students from the specific class who are also assigned to this teacher
+        students = list(Student.find({
+            'class': target_class_id,
+            'teachers': session['teacher_id']
+        }))
+    else:
+        # Fallback: get all students assigned to this teacher
+        students = list(Student.find({'teachers': session['teacher_id']}))
+    
     students_map = {s['student_id']: s for s in students}
     
     submissions = list(Submission.find({
