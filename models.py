@@ -197,5 +197,9 @@ class Submission:
         return db.db.submissions.update_one(query, update)
     
     @staticmethod
+    def update_many(query, update):
+        return db.db.submissions.update_many(query, update)
+    
+    @staticmethod
     def count(query):
         return db.db.submissions.count_documents(query)
