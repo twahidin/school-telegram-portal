@@ -52,6 +52,36 @@
 
 {% block content %}
 <div class="container py-4">
+    <!-- PWA Install Banner (shown when not installed) -->
+    <div class="alert alert-primary alert-dismissible fade show mb-4" id="pwa-install-banner" style="display: none;">
+        <div class="d-flex align-items-center">
+            <i class="bi bi-phone me-3" style="font-size: 1.5rem;"></i>
+            <div class="flex-grow-1">
+                <strong>Install School Portal</strong>
+                <p class="mb-0 small">Add to your home screen for easy access and notifications</p>
+            </div>
+            <button type="button" class="btn btn-primary btn-sm ms-3" id="pwa-install-btn">
+                <i class="bi bi-download me-1"></i>Install
+            </button>
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+    
+    <!-- Notification Permission Banner -->
+    <div class="alert alert-info alert-dismissible fade show mb-4" id="notification-banner" style="display: none;">
+        <div class="d-flex align-items-center">
+            <i class="bi bi-bell me-3" style="font-size: 1.5rem;"></i>
+            <div class="flex-grow-1">
+                <strong>Enable Notifications</strong>
+                <p class="mb-0 small">Get notified when teachers post new assignments</p>
+            </div>
+            <button type="button" class="btn btn-info btn-sm ms-3" id="enable-notifications-btn">
+                <i class="bi bi-bell me-1"></i>Enable
+            </button>
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+    
     <!-- Welcome Section -->
     <div class="welcome-section mb-4">
         <h1 class="mb-1">Hello, {{ student.name }}! 👋</h1>
@@ -278,6 +308,192 @@
 </div>
 
 <script>
+// ============================================================================
+// PWA Install & Push Notifications
+// ============================================================================
+
+let deferredPrompt = null;
+
+// Check if already installed as PWA
+const isPWA = window.matchMedia('(display-mode: standalone)').matches || 
+              window.navigator.standalone === true;
+
+// Listen for the beforeinstallprompt event (for Chrome/Edge)
+window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredPrompt = e;
+    
+    // Show install banner if not already a PWA
+    if (!isPWA) {
+        document.getElementById('pwa-install-banner').style.display = 'block';
+    }
+});
+
+// Handle install button click
+document.getElementById('pwa-install-btn')?.addEventListener('click', async () => {
+    if (deferredPrompt) {
+        deferredPrompt.prompt();
+        const { outcome } = await deferredPrompt.userChoice;
+        console.log('PWA install outcome:', outcome);
+        deferredPrompt = null;
+        document.getElementById('pwa-install-banner').style.display = 'none';
+    }
+});
+
+// For iOS - show manual instructions
+if (/iPad|iPhone|iPod/.test(navigator.userAgent) && !isPWA) {
+    // Check if user has dismissed before
+    if (!localStorage.getItem('pwa-install-dismissed')) {
+        const banner = document.getElementById('pwa-install-banner');
+        if (banner) {
+            banner.style.display = 'block';
+            // Update button for iOS
+            const btn = document.getElementById('pwa-install-btn');
+            if (btn) {
+                btn.innerHTML = '<i class="bi bi-box-arrow-up me-1"></i>How to Install';
+                btn.onclick = () => {
+                    alert('To install:\n\n1. Tap the Share button (box with arrow)\n2. Scroll down and tap "Add to Home Screen"\n3. Tap "Add" in the top right');
+                };
+            }
+        }
+    }
+}
+
+// Handle banner dismissal
+document.querySelector('#pwa-install-banner .btn-close')?.addEventListener('click', () => {
+    localStorage.setItem('pwa-install-dismissed', 'true');
+});
+
+// ============================================================================
+// Push Notification Subscription
+// ============================================================================
+
+async function checkNotificationStatus() {
+    // Only show for PWA or if notifications are supported
+    if (!('Notification' in window) || !('serviceWorker' in navigator)) {
+        return;
+    }
+    
+    // Don't show if already granted or denied
+    if (Notification.permission === 'granted') {
+        // Check if subscribed on server
+        try {
+            const response = await fetch('/api/push/status');
+            const data = await response.json();
+            if (!data.subscribed && data.configured) {
+                // Has permission but not subscribed - subscribe now
+                await subscribeToPush();
+            }
+        } catch (e) {
+            console.log('Error checking push status:', e);
+        }
+        return;
+    }
+    
+    if (Notification.permission === 'denied') {
+        return;
+    }
+    
+    // Check if push is configured on server
+    try {
+        const response = await fetch('/api/push/vapid-public-key');
+        if (response.ok) {
+            // Show notification banner if not dismissed
+            if (!localStorage.getItem('notification-banner-dismissed')) {
+                document.getElementById('notification-banner').style.display = 'block';
+            }
+        }
+    } catch (e) {
+        console.log('Push notifications not available');
+    }
+}
+
+async function subscribeToPush() {
+    try {
+        // Get VAPID public key
+        const keyResponse = await fetch('/api/push/vapid-public-key');
+        if (!keyResponse.ok) {
+            throw new Error('Push not configured');
+        }
+        const { publicKey } = await keyResponse.json();
+        
+        // Wait for service worker to be ready
+        const registration = await navigator.serviceWorker.ready;
+        
+        // Subscribe to push
+        const subscription = await registration.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: urlBase64ToUint8Array(publicKey)
+        });
+        
+        // Send subscription to server
+        const response = await fetch('/api/push/subscribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ subscription: subscription.toJSON() })
+        });
+        
+        if (response.ok) {
+            console.log('Push subscription successful');
+            showToast('Notifications Enabled', 'You will be notified when new assignments are posted.', 'success');
+        }
+        
+    } catch (error) {
+        console.error('Push subscription failed:', error);
+    }
+}
+
+// Handle enable notifications button
+document.getElementById('enable-notifications-btn')?.addEventListener('click', async () => {
+    try {
+        const permission = await Notification.requestPermission();
+        
+        if (permission === 'granted') {
+            await subscribeToPush();
+            document.getElementById('notification-banner').style.display = 'none';
+        } else if (permission === 'denied') {
+            showToast('Notifications Blocked', 'You can enable them in your browser settings.', 'warning');
+        }
+    } catch (e) {
+        console.error('Error requesting notification permission:', e);
+    }
+});
+
+// Handle notification banner dismissal
+document.querySelector('#notification-banner .btn-close')?.addEventListener('click', () => {
+    localStorage.setItem('notification-banner-dismissed', 'true');
+});
+
+// Utility function to convert VAPID key
+function urlBase64ToUint8Array(base64String) {
+    const padding = '='.repeat((4 - base64String.length % 4) % 4);
+    const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+    const rawData = window.atob(base64);
+    const outputArray = new Uint8Array(rawData.length);
+    for (let i = 0; i < rawData.length; ++i) {
+        outputArray[i] = rawData.charCodeAt(i);
+    }
+    return outputArray;
+}
+
+// Show toast helper
+function showToast(title, message, type = 'info') {
+    const toastEl = document.getElementById('notification-toast');
+    if (toastEl) {
+        document.getElementById('toast-title').textContent = title;
+        document.getElementById('toast-body').textContent = message;
+        const toast = new bootstrap.Toast(toastEl);
+        toast.show();
+    }
+}
+
+// Check notification status on page load
+checkNotificationStatus();
+
+// ============================================================================
+// Password Change
+// ============================================================================
+
 document.getElementById('save-password-btn').addEventListener('click', async () => {
     const currentPassword = document.getElementById('current-password').value;
     const newPassword = document.getElementById('new-password').value;

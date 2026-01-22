@@ -1759,6 +1759,21 @@ def create_assignment():
             
             Assignment.insert_one(assignment_doc)
             
+            # Send push notifications if assignment is published
+            if assignment_doc['status'] == 'published':
+                try:
+                    from utils.push_notifications import send_assignment_notification, is_push_configured
+                    if is_push_configured():
+                        push_result = send_assignment_notification(
+                            db=db,
+                            assignment=assignment_doc,
+                            class_id=target_class_id,
+                            teaching_group_id=target_group_id
+                        )
+                        logger.info(f"Push notifications sent for assignment {assignment_id}: {push_result}")
+                except Exception as push_error:
+                    logger.warning(f"Push notification failed (non-critical): {push_error}")
+            
             return redirect(url_for('teacher_assignments'))
             
         except Exception as e:
@@ -3558,6 +3573,92 @@ def reset_prompts():
         logger.error(f"Error resetting prompts: {e}")
         return jsonify({'error': str(e)}), 500
 
+
+# ============================================================================
+# PWA AND PUSH NOTIFICATION ROUTES
+# ============================================================================
+
+@app.route('/service-worker.js')
+def service_worker():
+    """Serve service worker from root for proper scope"""
+    return send_file('static/service-worker.js', mimetype='application/javascript')
+
+@app.route('/offline.html')
+def offline_page():
+    """Offline fallback page"""
+    return render_template('offline.html')
+
+@app.route('/api/push/vapid-public-key')
+def get_vapid_public_key():
+    """Get the VAPID public key for push subscription"""
+    from utils.push_notifications import get_vapid_public_key, is_push_configured
+    
+    if not is_push_configured():
+        return jsonify({'error': 'Push notifications not configured'}), 503
+    
+    return jsonify({'publicKey': get_vapid_public_key()})
+
+@app.route('/api/push/subscribe', methods=['POST'])
+@login_required
+def subscribe_push():
+    """Save a student's push subscription"""
+    try:
+        data = request.get_json()
+        subscription = data.get('subscription')
+        
+        if not subscription:
+            return jsonify({'error': 'No subscription provided'}), 400
+        
+        # Save subscription to student document
+        Student.update_one(
+            {'student_id': session['student_id']},
+            {'$set': {
+                'push_subscription': subscription,
+                'push_subscribed_at': datetime.utcnow()
+            }}
+        )
+        
+        logger.info(f"Push subscription saved for student {session['student_id']}")
+        return jsonify({'success': True, 'message': 'Subscribed to notifications'})
+        
+    except Exception as e:
+        logger.error(f"Error saving push subscription: {e}")
+        return jsonify({'error': 'Failed to subscribe'}), 500
+
+@app.route('/api/push/unsubscribe', methods=['POST'])
+@login_required
+def unsubscribe_push():
+    """Remove a student's push subscription"""
+    try:
+        Student.update_one(
+            {'student_id': session['student_id']},
+            {'$unset': {'push_subscription': '', 'push_subscribed_at': ''}}
+        )
+        
+        logger.info(f"Push subscription removed for student {session['student_id']}")
+        return jsonify({'success': True, 'message': 'Unsubscribed from notifications'})
+        
+    except Exception as e:
+        logger.error(f"Error removing push subscription: {e}")
+        return jsonify({'error': 'Failed to unsubscribe'}), 500
+
+@app.route('/api/push/status')
+@login_required
+def push_status():
+    """Check if student has push notifications enabled"""
+    try:
+        student = Student.find_one({'student_id': session['student_id']})
+        has_subscription = bool(student and student.get('push_subscription'))
+        
+        from utils.push_notifications import is_push_configured
+        
+        return jsonify({
+            'subscribed': has_subscription,
+            'configured': is_push_configured()
+        })
+        
+    except Exception as e:
+        return jsonify({'subscribed': False, 'configured': False})
 
 # ============================================================================
 # ERROR HANDLERS

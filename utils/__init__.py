@@ -36,6 +36,15 @@ from utils.notifications import (
     notify_assignment_published
 )
 
+from utils.push_notifications import (
+    send_push_notification,
+    send_assignment_notification,
+    send_feedback_notification,
+    send_message_notification,
+    get_vapid_public_key,
+    is_push_configured
+)
+
 __all__ = [
     # Auth
     'hash_password',
@@ -63,5 +72,12 @@ __all__ = [
     'notify_submission_ready',
     'notify_feedback_ready',
     'notify_new_message',
-    'notify_assignment_published'
+    'notify_assignment_published',
+    # Push Notifications
+    'send_push_notification',
+    'send_assignment_notification',
+    'send_feedback_notification',
+    'send_message_notification',
+    'get_vapid_public_key',
+    'is_push_configured'
 ]
