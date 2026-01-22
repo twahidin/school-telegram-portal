@@ -2315,13 +2315,19 @@ def save_review_feedback(submission_id):
             'edited_by': session['teacher_id']
         }
         
+        update_data = {
+            'teacher_feedback': teacher_feedback,
+            'final_marks': data.get('total_marks'),
+            'updated_at': datetime.utcnow()
+        }
+        
+        # Save include_answer_key preference if provided
+        if 'include_answer_key' in data:
+            update_data['include_answer_key'] = data.get('include_answer_key', False)
+        
         Submission.update_one(
             {'submission_id': submission_id},
-            {'$set': {
-                'teacher_feedback': teacher_feedback,
-                'final_marks': data.get('total_marks'),
-                'updated_at': datetime.utcnow()
-            }}
+            {'$set': update_data}
         )
         
         return jsonify({'success': True, 'message': 'Feedback saved'})
@@ -2335,6 +2341,10 @@ def save_review_feedback(submission_id):
 def send_feedback_to_student(submission_id):
     """Send feedback to student via Telegram"""
     try:
+        # Get request data (may include include_answer_key flag)
+        data = request.get_json() or {}
+        include_answer_key = data.get('include_answer_key', False)
+        
         submission = Submission.find_one({'submission_id': submission_id})
         if not submission:
             return jsonify({'error': 'Submission not found'}), 404
@@ -2346,12 +2356,13 @@ def send_feedback_to_student(submission_id):
         student = Student.find_one({'student_id': submission['student_id']})
         teacher = Teacher.find_one({'teacher_id': session['teacher_id']})
         
-        # Update status and mark feedback as sent
+        # Update status and mark feedback as sent, including answer key preference
         Submission.update_one(
             {'submission_id': submission_id},
             {'$set': {
                 'status': 'reviewed',
                 'feedback_sent': True,
+                'include_answer_key': include_answer_key,
                 'reviewed_at': datetime.utcnow()
             }}
         )

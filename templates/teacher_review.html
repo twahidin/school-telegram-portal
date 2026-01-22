@@ -33,13 +33,22 @@
                         | Submitted: {{ (submission.submitted_at|sgt).strftime('%d %b %Y %H:%M') if submission.submitted_at else 'N/A' }} SGT
                     </p>
                 </div>
-                <div class="btn-group">
-                    <button class="btn btn-success" onclick="sendFeedback()">
-                        <i class="bi bi-send me-1"></i>Send Feedback
-                    </button>
-                    <button class="btn btn-outline-primary" onclick="downloadPDF()" title="Download PDF with current feedback (works at any time)">
-                        <i class="bi bi-file-pdf me-1"></i>Download PDF
-                    </button>
+                <div class="d-flex align-items-center gap-2">
+                    <div class="form-check me-2">
+                        <input class="form-check-input" type="checkbox" id="include-answer-key" 
+                               {% if submission.get('include_answer_key', False) %}checked{% endif %}>
+                        <label class="form-check-label small" for="include-answer-key">
+                            Include answer key for student
+                        </label>
+                    </div>
+                    <div class="btn-group">
+                        <button class="btn btn-success" onclick="sendFeedback()">
+                            <i class="bi bi-send me-1"></i>Send Feedback
+                        </button>
+                        <button class="btn btn-outline-primary" onclick="downloadPDF()" title="Download PDF with current feedback (works at any time)">
+                            <i class="bi bi-file-pdf me-1"></i>Download PDF
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -99,10 +108,10 @@
                         <table class="table table-bordered mb-0" id="feedback-table">
                             <thead class="table-light sticky-top">
                                 <tr>
-                                    <th style="width: 60px;">Q#</th>
-                                    <th style="width: 25%;">Student Answer</th>
-                                    <th style="width: 25%;">Correct Answer</th>
-                                    <th style="width: 25%;">Feedback</th>
+                                    <th style="width: 50px;">Q#</th>
+                                    <th style="width: 20%;">AI Extracted<br>Student Answer</th>
+                                    <th style="width: 20%;">Answer Key</th>
+                                    <th style="width: 30%;">Feedback</th>
                                     <th style="width: 80px;">Marks</th>
                                 </tr>
                             </thead>
@@ -132,21 +141,38 @@
                                             <br><span class="badge bg-warning text-dark" title="Needs Review">⚠️</span>
                                             {% endif %}
                                         </td>
-                                        <td class="small">
+                                        <td class="small student-answer-cell">
                                             {% if q.student_answer == 'UNCLEAR' or q.needs_review %}
                                             <span class="text-muted fst-italic">Unclear/Empty</span>
                                             {% else %}
-                                            {{ q.student_answer[:100] }}{% if q.student_answer|length > 100 %}...{% endif %}
+                                            <div class="student-answer-text">{{ q.student_answer }}</div>
                                             {% endif %}
                                         </td>
                                         <td class="small">
-                                            <textarea class="form-control form-control-sm" 
-                                                      name="correct_{{ q.question_num }}" rows="3"
-                                                      placeholder="Correct answer">{{ teacher_q.get('correct_answer') or q.correct_answer or '' }}</textarea>
+                                            <textarea class="form-control form-control-sm answer-key-input" 
+                                                      name="answer_key_{{ q.question_num }}" rows="3"
+                                                      placeholder="Enter correct answer or 'Refer to answer key for diagram'">{{ teacher_q.get('answer_key') or q.correct_answer or '' }}</textarea>
+                                            <div class="answer-key-image-container mt-2" id="answer-key-image-{{ q.question_num }}">
+                                                {% if teacher_q.get('answer_key_image') %}
+                                                <div class="position-relative d-inline-block">
+                                                    <img src="{{ teacher_q.get('answer_key_image') }}" class="img-thumbnail" style="max-height: 80px;">
+                                                    <button type="button" class="btn btn-sm btn-danger position-absolute top-0 end-0" 
+                                                            onclick="removeAnswerKeyImage({{ q.question_num }})" style="padding: 0 4px; font-size: 10px;">×</button>
+                                                </div>
+                                                <input type="hidden" name="answer_key_image_{{ q.question_num }}" value="{{ teacher_q.get('answer_key_image') }}">
+                                                {% endif %}
+                                            </div>
+                                            <div class="mt-1">
+                                                <label class="btn btn-outline-secondary btn-sm py-0 px-1" style="font-size: 11px;">
+                                                    <i class="bi bi-image"></i> Add Image
+                                                    <input type="file" class="d-none" accept="image/*" 
+                                                           onchange="handleAnswerKeyImage(this, {{ q.question_num }})">
+                                                </label>
+                                            </div>
                                         </td>
                                         <td>
                                             <textarea class="form-control form-control-sm feedback-input" 
-                                                      name="feedback_{{ q.question_num }}" rows="5"
+                                                      name="feedback_{{ q.question_num }}" rows="4"
                                                       placeholder="{% if q.needs_review %}Enter feedback...{% else %}{{ q.feedback }}{% endif %}">{{ teacher_q.get('feedback') or (q.feedback if not q.needs_review else '') }}</textarea>
                                             {% if q.improvement %}
                                             <small class="text-muted d-block mt-1">💡 {{ q.improvement }}</small>
@@ -242,12 +268,34 @@
 
 #feedback-table textarea {
     font-size: 0.85rem;
-    min-height: 100px;
+    min-height: 80px;
     resize: vertical;
 }
 
 #feedback-table .feedback-input {
-    min-height: 120px;
+    min-height: 100px;
+}
+
+#feedback-table .answer-key-input {
+    min-height: 60px;
+}
+
+.student-answer-cell {
+    max-height: 150px;
+    overflow-y: auto;
+}
+
+.student-answer-text {
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.answer-key-image-container img {
+    cursor: pointer;
+}
+
+.answer-key-image-container img:hover {
+    opacity: 0.8;
 }
 
 #feedback-table td {
@@ -445,12 +493,37 @@
         }
     }
     
+    // Handle answer key image upload
+    function handleAnswerKeyImage(input, qNum) {
+        if (input.files && input.files[0]) {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const container = document.getElementById(`answer-key-image-${qNum}`);
+                container.innerHTML = `
+                    <div class="position-relative d-inline-block">
+                        <img src="${e.target.result}" class="img-thumbnail" style="max-height: 80px;">
+                        <button type="button" class="btn btn-sm btn-danger position-absolute top-0 end-0" 
+                                onclick="removeAnswerKeyImage(${qNum})" style="padding: 0 4px; font-size: 10px;">×</button>
+                    </div>
+                    <input type="hidden" name="answer_key_image_${qNum}" value="${e.target.result}">
+                `;
+            };
+            reader.readAsDataURL(input.files[0]);
+        }
+    }
+    
+    function removeAnswerKeyImage(qNum) {
+        const container = document.getElementById(`answer-key-image-${qNum}`);
+        container.innerHTML = '';
+    }
+    
     // Save feedback
     async function saveFeedback() {
         const formData = new FormData(document.getElementById('feedback-form'));
         const data = {
             overall_feedback: document.getElementById('overall-feedback').value,
             total_marks: document.getElementById('total-marks').value,
+            include_answer_key: document.getElementById('include-answer-key').checked,
             questions: {}
         };
         
@@ -459,7 +532,8 @@
             const qNum = row.dataset.question;
             if (qNum) {
                 data.questions[qNum] = {
-                    correct_answer: formData.get(`correct_${qNum}`),
+                    answer_key: formData.get(`answer_key_${qNum}`),
+                    answer_key_image: formData.get(`answer_key_image_${qNum}`) || null,
                     feedback: formData.get(`feedback_${qNum}`),
                     marks: formData.get(`marks_${qNum}`),
                     marks_total: formData.get(`marks_total_${qNum}`)
@@ -488,7 +562,12 @@
     
     // Send feedback to student
     async function sendFeedback() {
-        if (!confirm('Send feedback to student? This will mark the submission as reviewed.')) return;
+        const includeAnswerKey = document.getElementById('include-answer-key').checked;
+        const confirmMsg = includeAnswerKey 
+            ? 'Send feedback WITH answer key to student? This will mark the submission as reviewed.'
+            : 'Send feedback to student (without answer key)? This will mark the submission as reviewed.';
+        
+        if (!confirm(confirmMsg)) return;
         
         // Save first
         const saved = await saveFeedback();
@@ -496,7 +575,9 @@
         
         try {
             const response = await fetch(`/teacher/review/${submissionId}/send`, {
-                method: 'POST'
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ include_answer_key: includeAnswerKey })
             });
             
             const result = await response.json();

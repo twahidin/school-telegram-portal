@@ -146,14 +146,18 @@
                         {% set questions = ai_feedback.get('questions', []) %}
                         
                         {% if questions %}
+                        {% set include_answer_key = submission.get('include_answer_key', False) %}
                         <!-- Feedback Table -->
                         <div class="table-responsive">
                             <table class="table table-sm feedback-table">
                                 <thead class="table-light">
                                     <tr>
                                         <th style="width: 50px;">Q#</th>
+                                        {% if include_answer_key %}
+                                        <th style="width: 35%;">Answer Key</th>
+                                        {% endif %}
                                         <th>Feedback</th>
-                                        <th style="width: 80px;">Marks</th>
+                                        <th style="width: 70px;">Marks</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -170,6 +174,23 @@
                                             <br><i class="bi bi-question-circle text-warning"></i>
                                             {% endif %}
                                         </td>
+                                        {% if include_answer_key %}
+                                        <td class="small">
+                                            {% set answer_key = teacher_q.get('answer_key') or q.get('correct_answer', '') %}
+                                            {% if answer_key %}
+                                            <div class="answer-key-text">{{ answer_key }}</div>
+                                            {% endif %}
+                                            {% if teacher_q.get('answer_key_image') %}
+                                            <div class="mt-1">
+                                                <img src="{{ teacher_q.get('answer_key_image') }}" class="img-thumbnail" style="max-height: 100px; cursor: pointer;" 
+                                                     onclick="window.open(this.src, '_blank')">
+                                            </div>
+                                            {% endif %}
+                                            {% if not answer_key and not teacher_q.get('answer_key_image') %}
+                                            <span class="text-muted fst-italic">-</span>
+                                            {% endif %}
+                                        </td>
+                                        {% endif %}
                                         <td>
                                             {% set feedback = teacher_q.get('feedback') or q.get('feedback', '') %}
                                             {% if feedback %}
@@ -290,6 +311,13 @@
 
 .table-warning {
     background-color: rgba(255, 193, 7, 0.15) !important;
+}
+
+.answer-key-text {
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: #198754;
+    font-weight: 500;
 }
 </style>
 {% endblock %}
