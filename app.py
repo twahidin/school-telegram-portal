@@ -2382,6 +2382,65 @@ def save_review_feedback(submission_id):
         logger.error(f"Error saving feedback: {e}")
         return jsonify({'error': str(e)}), 500
 
+@app.route('/teacher/review/<submission_id>/extract-answer-key', methods=['POST'])
+@teacher_required
+def extract_answer_key(submission_id):
+    """Extract answers from an uploaded answer key file using AI"""
+    try:
+        from utils.ai_marking import extract_answers_from_key
+        
+        submission = Submission.find_one({'submission_id': submission_id})
+        if not submission:
+            return jsonify({'error': 'Submission not found'}), 404
+        
+        assignment = Assignment.find_one({'assignment_id': submission['assignment_id']})
+        if not assignment or assignment['teacher_id'] != session['teacher_id']:
+            return jsonify({'error': 'Unauthorized'}), 403
+        
+        # Get uploaded file
+        if 'answer_key' not in request.files:
+            return jsonify({'error': 'No file uploaded'}), 400
+        
+        file = request.files['answer_key']
+        if not file.filename:
+            return jsonify({'error': 'No file selected'}), 400
+        
+        # Determine file type
+        filename = file.filename.lower()
+        if filename.endswith('.pdf'):
+            file_type = 'pdf'
+        elif filename.endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp')):
+            file_type = 'image'
+        else:
+            return jsonify({'error': 'Unsupported file type. Please upload PDF or image.'}), 400
+        
+        file_content = file.read()
+        
+        # Get question count from AI feedback or default
+        ai_feedback = submission.get('ai_feedback', {})
+        questions = ai_feedback.get('questions', [])
+        question_count = int(request.form.get('question_count', len(questions) or 10))
+        
+        # Get teacher for API key
+        teacher = Teacher.find_one({'teacher_id': session['teacher_id']})
+        
+        # Extract answers using AI
+        result = extract_answers_from_key(file_content, file_type, question_count, teacher)
+        
+        if 'error' in result and not result.get('answers'):
+            return jsonify({'error': result['error']}), 500
+        
+        return jsonify({
+            'success': True,
+            'answers': result.get('answers', {}),
+            'notes': result.get('notes', '')
+        })
+        
+    except Exception as e:
+        logger.error(f"Error extracting answer key: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/teacher/review/<submission_id>/send', methods=['POST'])
 @teacher_required
 def send_feedback_to_student(submission_id):

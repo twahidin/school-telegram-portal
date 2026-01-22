@@ -937,6 +937,98 @@ def get_question_help(question: str, student_answer: str, help_type: str, assign
             'response': f'Error generating help: {str(e)}'
         }
 
+def extract_answers_from_key(file_content: bytes, file_type: str, question_count: int, teacher: dict = None) -> dict:
+    """
+    Extract answers from an uploaded answer key file (PDF or image).
+    
+    Args:
+        file_content: The file content as bytes
+        file_type: 'pdf' or 'image'
+        question_count: Number of questions to extract answers for
+        teacher: Teacher document for API key
+    
+    Returns:
+        Dictionary with extracted answers for each question
+    """
+    client = get_teacher_ai_service(teacher)
+    if not client:
+        return {
+            'error': 'AI service not available',
+            'answers': {}
+        }
+    
+    try:
+        content = []
+        
+        # Add the answer key file
+        file_b64 = base64.standard_b64encode(file_content).decode('utf-8')
+        
+        if file_type == 'pdf':
+            content.append({
+                "type": "document",
+                "source": {
+                    "type": "base64",
+                    "media_type": "application/pdf",
+                    "data": file_b64
+                }
+            })
+        else:
+            # Image file
+            content.append({
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/jpeg",
+                    "data": file_b64
+                }
+            })
+        
+        content.append({
+            "type": "text",
+            "text": f"""This is an answer key for an assignment with {question_count} questions.
+
+Please extract the correct answer for each question from this answer key.
+
+IMPORTANT RULES:
+1. Extract EXACTLY {question_count} answers (questions 1 through {question_count})
+2. For text answers, provide the complete answer text
+3. For mathematical answers, include formulas, working steps, and final answers
+4. For diagrams/images that cannot be expressed as text, use "Refer to answer key for diagram"
+5. If a question's answer is not found in the document, use "Answer not found in document"
+6. Preserve any special formatting, formulas, or symbols where possible
+
+Respond ONLY with valid JSON in this exact format:
+{{
+    "answers": {{
+        "1": "the complete answer for question 1",
+        "2": "the complete answer for question 2",
+        ... continue for all {question_count} questions
+    }},
+    "notes": "any notes about answers that couldn't be fully extracted"
+}}"""
+        })
+        
+        # Make API call
+        message = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=4000,
+            messages=[{"role": "user", "content": content}]
+        )
+        
+        response_text = message.content[0].text
+        
+        # Parse JSON response
+        result = parse_ai_response(response_text)
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error extracting answers from key: {e}")
+        return {
+            'error': str(e),
+            'answers': {}
+        }
+
+
 def generate_feedback_summary(submission: dict, assignment: dict, ai_feedback: dict, teacher_edits: dict = None) -> dict:
     """
     Generate a final feedback summary combining AI and teacher feedback
