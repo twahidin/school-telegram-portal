@@ -613,6 +613,38 @@
         <!-- Reports & Tools Tab -->
         <div class="tab-pane fade" id="reports" role="tabpanel">
             <div class="row g-4">
+                <!-- Generate Reports by Teacher -->
+                <div class="col-12">
+                    <div class="card border-primary">
+                        <div class="card-header bg-primary text-white">
+                            <h5 class="mb-0"><i class="bi bi-person-badge me-2"></i>Generate Reports by Teacher</h5>
+                        </div>
+                        <div class="card-body">
+                            <p class="text-muted small mb-3">
+                                Select a teacher to see their assigned classes and teaching groups, then generate PDF student lists.
+                            </p>
+                            <div class="row">
+                                <div class="col-md-4">
+                                    <label class="form-label">Select Teacher</label>
+                                    <select class="form-select" id="teacher_report_select">
+                                        <option value="">Choose a teacher...</option>
+                                        {% for t in teachers %}
+                                        <option value="{{ t.teacher_id }}">{{ t.name }} ({{ t.teacher_id }})</option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                                <div class="col-md-8">
+                                    <div id="teacher-report-content" class="mt-3 mt-md-0">
+                                        <div class="text-muted text-center py-4">
+                                            <i class="bi bi-arrow-left me-2"></i>Select a teacher to view their classes and groups
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Class Student List PDF -->
                 <div class="col-lg-6">
                     <div class="card">
@@ -2340,6 +2372,96 @@
     
     // Load teaching groups for report dropdown when tab is shown
     document.getElementById('reports-tab').addEventListener('shown.bs.tab', loadTeachingGroupsForReport);
+    
+    // Teacher report dropdown
+    document.getElementById('teacher_report_select').addEventListener('change', async (e) => {
+        const teacherId = e.target.value;
+        const contentDiv = document.getElementById('teacher-report-content');
+        
+        if (!teacherId) {
+            contentDiv.innerHTML = `
+                <div class="text-muted text-center py-4">
+                    <i class="bi bi-arrow-left me-2"></i>Select a teacher to view their classes and groups
+                </div>
+            `;
+            return;
+        }
+        
+        contentDiv.innerHTML = `
+            <div class="text-center py-4">
+                <div class="spinner-border spinner-border-sm text-primary"></div>
+                <span class="ms-2">Loading...</span>
+            </div>
+        `;
+        
+        try {
+            const response = await fetch(`/admin/api/teacher/${teacherId}/assignments`);
+            const data = await response.json();
+            
+            if (!data.success) {
+                contentDiv.innerHTML = `<div class="alert alert-danger">${data.error || 'Error loading data'}</div>`;
+                return;
+            }
+            
+            let html = `<label class="form-label fw-bold">${escapeHtml(data.teacher.name)}'s Classes & Groups</label>`;
+            
+            // Classes section
+            if (data.classes.length > 0) {
+                html += `<div class="mb-3"><small class="text-muted">Classes:</small><div class="list-group list-group-flush">`;
+                data.classes.forEach(c => {
+                    html += `
+                        <div class="list-group-item d-flex justify-content-between align-items-center py-2 px-0">
+                            <div>
+                                <strong>${escapeHtml(c.class_id)}</strong>
+                                ${c.name && c.name !== c.class_id ? `<small class="text-muted"> - ${escapeHtml(c.name)}</small>` : ''}
+                                <span class="badge bg-secondary ms-2">${c.student_count} students</span>
+                            </div>
+                            <button class="btn btn-primary btn-sm" onclick="window.open('/admin/api/class-report/${c.class_id}/pdf?teacher_id=${teacherId}', '_blank')">
+                                <i class="bi bi-download me-1"></i>PDF
+                            </button>
+                        </div>
+                    `;
+                });
+                html += `</div></div>`;
+            } else {
+                html += `<div class="text-muted small mb-3">No classes assigned</div>`;
+            }
+            
+            // Teaching groups section
+            if (data.teaching_groups.length > 0) {
+                html += `<div><small class="text-muted">Teaching Groups:</small><div class="list-group list-group-flush">`;
+                data.teaching_groups.forEach(g => {
+                    html += `
+                        <div class="list-group-item d-flex justify-content-between align-items-center py-2 px-0">
+                            <div>
+                                <strong>${escapeHtml(g.name)}</strong>
+                                <small class="text-muted"> (${escapeHtml(g.class_id)})</small>
+                                <span class="badge bg-info ms-2">${g.student_count} students</span>
+                            </div>
+                            <button class="btn btn-info btn-sm" onclick="window.open('/admin/api/teaching-group-report/${g.group_id}/pdf', '_blank')">
+                                <i class="bi bi-download me-1"></i>PDF
+                            </button>
+                        </div>
+                    `;
+                });
+                html += `</div></div>`;
+            } else {
+                html += `<div class="text-muted small">No teaching groups assigned</div>`;
+            }
+            
+            if (data.classes.length === 0 && data.teaching_groups.length === 0) {
+                html = `<div class="alert alert-warning mb-0">
+                    <i class="bi bi-exclamation-triangle me-2"></i>
+                    This teacher has no assigned classes or teaching groups.
+                </div>`;
+            }
+            
+            contentDiv.innerHTML = html;
+            
+        } catch (e) {
+            contentDiv.innerHTML = `<div class="alert alert-danger">Error loading teacher data</div>`;
+        }
+    });
     
     async function loadTeachingGroupsForReport() {
         const select = document.getElementById('report_tg_id');

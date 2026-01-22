@@ -3981,6 +3981,60 @@ def reset_prompts():
 # ADMIN REPORTS AND DUPLICATE MANAGEMENT
 # ============================================================================
 
+@app.route('/admin/api/teacher/<teacher_id>/assignments')
+@admin_required
+def get_teacher_class_assignments(teacher_id):
+    """Get all classes and teaching groups assigned to a teacher"""
+    try:
+        teacher = Teacher.find_one({'teacher_id': teacher_id})
+        if not teacher:
+            return jsonify({'error': 'Teacher not found'}), 404
+        
+        # Get classes where this teacher is assigned
+        # A teacher is assigned to a class if students in that class have this teacher
+        pipeline = [
+            {'$match': {'teachers': teacher_id}},
+            {'$group': {'_id': '$class', 'student_count': {'$sum': 1}}},
+            {'$match': {'_id': {'$ne': None, '$ne': ''}}}
+        ]
+        class_results = list(db.db.students.aggregate(pipeline))
+        
+        classes = []
+        for result in class_results:
+            class_id = result['_id']
+            class_doc = Class.find_one({'class_id': class_id})
+            classes.append({
+                'class_id': class_id,
+                'name': class_doc.get('name', '') if class_doc else '',
+                'student_count': result['student_count']
+            })
+        
+        # Get teaching groups for this teacher
+        teaching_groups = list(TeachingGroup.find({'teacher_id': teacher_id}))
+        groups = []
+        for g in teaching_groups:
+            groups.append({
+                'group_id': g['group_id'],
+                'name': g.get('name', ''),
+                'class_id': g.get('class_id', ''),
+                'student_count': len(g.get('student_ids', []))
+            })
+        
+        return jsonify({
+            'success': True,
+            'teacher': {
+                'teacher_id': teacher_id,
+                'name': teacher.get('name', teacher_id)
+            },
+            'classes': classes,
+            'teaching_groups': groups
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting teacher assignments: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/admin/api/class-report/<class_id>/pdf')
 @admin_required
 def generate_class_student_list(class_id):
