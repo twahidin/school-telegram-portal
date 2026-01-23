@@ -64,7 +64,8 @@
                     <label class="form-label">Status</label>
                     <select name="status" class="form-select" onchange="this.form.submit()">
                         <option value="pending" {% if status_filter == 'pending' %}selected{% endif %}>Pending Review</option>
-                        <option value="approved" {% if status_filter == 'approved' %}selected{% endif %}>Approved</option>
+                        <option value="approved" {% if status_filter == 'approved' %}selected{% endif %}>Reviewed</option>
+                        <option value="rejected" {% if status_filter == 'rejected' %}selected{% endif %}>Rejected</option>
                         <option value="all" {% if status_filter == 'all' %}selected{% endif %}>All</option>
                     </select>
                 </div>
@@ -120,12 +121,12 @@
                         {{ (sub.submitted_at|sgt).strftime('%d %b %Y, %H:%M') if sub.submitted_at else 'N/A' }} SGT
                     </td>
                     <td>
-                        {% if sub.status == 'approved' %}
-                        <span class="badge bg-success"><i class="bi bi-check-circle me-1"></i>Approved</span>
-                        {% elif sub.status == 'ai_reviewed' %}
-                        <span class="badge bg-info"><i class="bi bi-robot me-1"></i>AI Reviewed</span>
+                        {% if sub.status == 'reviewed' or sub.status == 'approved' %}
+                        <span class="badge bg-success"><i class="bi bi-check-circle me-1"></i>Reviewed</span>
+                        {% elif sub.status == 'rejected' %}
+                        <span class="badge bg-danger"><i class="bi bi-x-circle me-1"></i>Rejected</span>
                         {% else %}
-                        <span class="badge bg-warning"><i class="bi bi-clock me-1"></i>Pending</span>
+                        <span class="badge bg-warning text-dark"><i class="bi bi-clock me-1"></i>Pending Review</span>
                         {% endif %}
                     </td>
                     <td>
@@ -137,8 +138,10 @@
                     </td>
                     <td>
                         <a href="{{ url_for('review_submission', submission_id=sub.submission_id) }}" 
-                           class="btn btn-sm {% if sub.status == 'approved' %}btn-outline-success{% else %}btn-primary{% endif %}">
-                            {% if sub.status == 'approved' %}
+                           class="btn btn-sm {% if sub.status in ['approved', 'reviewed'] %}btn-outline-success{% elif sub.status == 'rejected' %}btn-outline-danger{% else %}btn-primary{% endif %}">
+                            {% if sub.status in ['approved', 'reviewed'] %}
+                            <i class="bi bi-eye me-1"></i>View
+                            {% elif sub.status == 'rejected' %}
                             <i class="bi bi-eye me-1"></i>View
                             {% else %}
                             <i class="bi bi-pencil me-1"></i>Review

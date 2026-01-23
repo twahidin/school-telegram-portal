@@ -2640,7 +2640,9 @@ def teacher_submissions():
     if status_filter == 'pending':
         query['status'] = {'$in': ['submitted', 'ai_reviewed']}
     elif status_filter == 'approved':
-        query['status'] = 'approved'
+        query['status'] = {'$in': ['reviewed', 'approved']}
+    elif status_filter == 'rejected':
+        query['status'] = 'rejected'
     
     if assignment_filter:
         query['assignment_id'] = assignment_filter
