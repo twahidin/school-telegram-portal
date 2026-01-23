@@ -521,6 +521,8 @@ def assignments_list():
     
     # Group by subject
     subjects = {}
+    total_feedback_count = 0
+    
     for a in assignments:
         subject = a.get('subject', 'General')
         if subject not in subjects:
@@ -528,7 +530,8 @@ def assignments_list():
                 'name': subject,
                 'assignments': [],
                 'total': 0,
-                'completed': 0
+                'submitted': 0,
+                'feedback': 0
             }
         subjects[subject]['assignments'].append(a)
         subjects[subject]['total'] += 1
@@ -538,12 +541,20 @@ def assignments_list():
             'assignment_id': a['assignment_id'],
             'student_id': session['student_id']
         })
-        if submission and submission.get('status') in ['submitted', 'ai_reviewed', 'approved']:
-            subjects[subject]['completed'] += 1
+        
+        if submission:
+            # Check if feedback has been received
+            if submission.get('feedback_sent', False) or submission.get('status') == 'reviewed':
+                subjects[subject]['feedback'] += 1
+                total_feedback_count += 1
+            # Check if submitted but no feedback yet
+            elif submission.get('status') in ['submitted', 'ai_reviewed']:
+                subjects[subject]['submitted'] += 1
     
     return render_template('assignments_list.html',
                          student=student,
-                         subjects=subjects)
+                         subjects=subjects,
+                         total_feedback_count=total_feedback_count)
 
 @app.route('/assignments/subject/<subject>')
 @login_required
