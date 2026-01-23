@@ -172,7 +172,19 @@ def login():
         # Check if student login
         student = Student.find_one({'student_id': user_id_upper})
         if student:
-            if verify_password(password, student.get('password_hash', '')):
+            password_hash = student.get('password_hash', '')
+            
+            # If password_hash is missing or empty, set it to default 'student123'
+            if not password_hash:
+                logger.warning(f"Student {user_id_upper} has no password_hash, setting default")
+                default_hash = hash_password('student123')
+                Student.update_one(
+                    {'student_id': user_id_upper},
+                    {'$set': {'password_hash': default_hash}}
+                )
+                password_hash = default_hash
+            
+            if verify_password(password, password_hash):
                 session['student_id'] = user_id_upper
                 session['student_name'] = student.get('name', 'Student')
                 session['student_class'] = student.get('class', '')
