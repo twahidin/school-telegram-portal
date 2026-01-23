@@ -9,25 +9,344 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-def get_teacher_ai_service(teacher):
-    """Get AI service configured for a specific teacher"""
-    api_key = None
+# Try to import optional dependencies
+try:
+    from openai import OpenAI
+    OPENAI_AVAILABLE = True
+except ImportError:
+    OPENAI_AVAILABLE = False
+    logger.warning("OpenAI package not installed. Install with: pip install openai")
+
+try:
+    import google.generativeai as genai
+    GEMINI_AVAILABLE = True
+except ImportError:
+    GEMINI_AVAILABLE = False
+    logger.warning("Google Generative AI package not installed. Install with: pip install google-generativeai")
+
+try:
+    from pdf2image import convert_from_bytes
+    from PIL import Image
+    import io
+    PDF2IMAGE_AVAILABLE = True
+except ImportError:
+    PDF2IMAGE_AVAILABLE = False
+    logger.warning("pdf2image or PIL not available. PDF to image conversion disabled. Install with: pip install pdf2image pillow")
+
+def convert_pdf_to_images(pdf_bytes: bytes, max_pages: int = 10) -> list:
+    """
+    Convert PDF pages to JPEG images for providers that don't support PDF directly.
     
-    if teacher and teacher.get('anthropic_api_key'):
-        api_key = decrypt_api_key(teacher['anthropic_api_key'])
+    Args:
+        pdf_bytes: PDF file content as bytes
+        max_pages: Maximum number of pages to convert (to avoid token limits)
     
-    if not api_key:
-        api_key = os.getenv('ANTHROPIC_API_KEY')
-    
-    if not api_key:
-        logger.warning("No Anthropic API key available")
-        return None
+    Returns:
+        List of base64-encoded JPEG image strings
+    """
+    if not PDF2IMAGE_AVAILABLE:
+        return []
     
     try:
-        return Anthropic(api_key=api_key)
+        # Convert PDF pages to PIL Images
+        images = convert_from_bytes(pdf_bytes, first_page=1, last_page=max_pages)
+        
+        image_b64_list = []
+        for i, img in enumerate(images):
+            # Convert PIL Image to JPEG bytes
+            img_buffer = io.BytesIO()
+            # Convert to RGB if necessary (for JPEG compatibility)
+            if img.mode in ('RGBA', 'P'):
+                img = img.convert('RGB')
+            img.save(img_buffer, format='JPEG', quality=85)
+            img_buffer.seek(0)
+            
+            # Encode to base64
+            image_b64 = base64.b64encode(img_buffer.read()).decode('utf-8')
+            image_b64_list.append(image_b64)
+        
+        logger.info(f"Converted {len(image_b64_list)} PDF pages to images")
+        return image_b64_list
+    
     except Exception as e:
-        logger.error(f"Error creating Anthropic client: {e}")
-        return None
+        logger.error(f"Error converting PDF to images: {e}")
+        return []
+
+# Model mappings for each provider
+MODEL_MAPPINGS = {
+    'anthropic': 'claude-sonnet-4-5-20250929',
+    'openai': 'gpt-5.2-2025-12-11',  # GPT-5.2 with vision support
+    'deepseek': 'deepseek-reasoner',  # DeepSeek-V3.2 thinking mode (best for complex reasoning tasks like marking)
+    'google': 'gemini-3-flash-preview'  # Gemini 3 Flash Preview with vision support
+}
+
+def get_teacher_ai_service(teacher, model_type='anthropic'):
+    """
+    Get AI service configured for a specific teacher and model type
+    
+    Args:
+        teacher: Teacher document with API keys
+        model_type: 'anthropic', 'openai', 'deepseek', or 'google'
+    
+    Returns:
+        Tuple of (client, model_name, provider_type) or (None, None, None) if unavailable
+    """
+    if model_type == 'anthropic':
+        api_key = None
+        if teacher and teacher.get('anthropic_api_key'):
+            api_key = decrypt_api_key(teacher['anthropic_api_key'])
+        if not api_key:
+            api_key = os.getenv('ANTHROPIC_API_KEY')
+        if not api_key:
+            logger.warning("No Anthropic API key available")
+            return None, None, None
+        try:
+            client = Anthropic(api_key=api_key)
+            return client, MODEL_MAPPINGS['anthropic'], 'anthropic'
+        except Exception as e:
+            logger.error(f"Error creating Anthropic client: {e}")
+            return None, None, None
+    
+    elif model_type == 'openai':
+        if not OPENAI_AVAILABLE:
+            logger.error("OpenAI package not installed")
+            return None, None, None
+        api_key = None
+        if teacher and teacher.get('openai_api_key'):
+            api_key = decrypt_api_key(teacher['openai_api_key'])
+        if not api_key:
+            api_key = os.getenv('OPENAI_API_KEY')
+        if not api_key:
+            logger.warning("No OpenAI API key available")
+            return None, None, None
+        try:
+            client = OpenAI(api_key=api_key)
+            return client, MODEL_MAPPINGS['openai'], 'openai'
+        except Exception as e:
+            logger.error(f"Error creating OpenAI client: {e}")
+            return None, None, None
+    
+    elif model_type == 'deepseek':
+        if not OPENAI_AVAILABLE:
+            logger.error("OpenAI package required for DeepSeek (uses OpenAI-compatible API)")
+            return None, None, None
+        api_key = None
+        if teacher and teacher.get('deepseek_api_key'):
+            api_key = decrypt_api_key(teacher['deepseek_api_key'])
+        if not api_key:
+            api_key = os.getenv('DEEPSEEK_API_KEY')
+        if not api_key:
+            logger.warning("No DeepSeek API key available")
+            return None, None, None
+        try:
+            # DeepSeek uses OpenAI-compatible API but different base URL
+            client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
+            return client, MODEL_MAPPINGS['deepseek'], 'deepseek'
+        except Exception as e:
+            logger.error(f"Error creating DeepSeek client: {e}")
+            return None, None, None
+    
+    elif model_type == 'google':
+        if not GEMINI_AVAILABLE:
+            logger.error("Google Generative AI package not installed")
+            return None, None, None
+        api_key = None
+        if teacher and teacher.get('google_api_key'):
+            api_key = decrypt_api_key(teacher['google_api_key'])
+        if not api_key:
+            api_key = os.getenv('GOOGLE_API_KEY')
+        if not api_key:
+            logger.warning("No Google Gemini API key available")
+            return None, None, None
+        try:
+            genai.configure(api_key=api_key)
+            return genai, MODEL_MAPPINGS['google'], 'google'
+        except Exception as e:
+            logger.error(f"Error configuring Google Gemini: {e}")
+            return None, None, None
+    
+    else:
+        logger.error(f"Unknown model type: {model_type}")
+        return None, None, None
+
+def make_ai_api_call(client, model_name, provider, system_prompt, messages_content, max_tokens=4000, assignment=None):
+    """
+    Unified API call function that handles different provider formats
+    
+    Args:
+        client: The AI service client
+        model_name: Model name to use
+        provider: 'anthropic', 'openai', 'deepseek', or 'google'
+        system_prompt: System prompt string
+        messages_content: List of content items (text, images, etc.)
+        max_tokens: Maximum tokens in response
+        assignment: Optional assignment dict to access extracted text for PDFs
+    
+    Returns:
+        Response text string
+    """
+    try:
+        if provider == 'anthropic':
+            # Anthropic format
+            message = client.messages.create(
+                model=model_name,
+                max_tokens=max_tokens,
+                messages=[{"role": "user", "content": messages_content}],
+                system=system_prompt
+            )
+            return message.content[0].text
+        
+        elif provider in ['openai', 'deepseek']:
+            # OpenAI/DeepSeek format - need to convert content format
+            openai_messages = []
+            if system_prompt:
+                openai_messages.append({"role": "system", "content": system_prompt})
+            
+            # Convert Anthropic-style content to OpenAI format
+            user_content = []
+            for item in messages_content:
+                if isinstance(item, dict):
+                    if item.get('type') == 'text':
+                        user_content.append({"type": "text", "text": item.get('text', '')})
+                    elif item.get('type') == 'image':
+                        # OpenAI format for images
+                        image_data = item.get('source', {}).get('data', '')
+                        media_type = item.get('source', {}).get('media_type', 'image/jpeg')
+                        user_content.append({
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:{media_type};base64,{image_data}"
+                            }
+                        })
+                    elif item.get('type') == 'document':
+                        # For PDFs, OpenAI/DeepSeek doesn't support PDF directly in vision API
+                        # Convert PDF pages to images to preserve diagrams and visual content
+                        pdf_data = item.get('source', {}).get('data', '')
+                        pdf_bytes = base64.b64decode(pdf_data)
+                        
+                        # Convert PDF to images (preserves diagrams, formulas, etc.)
+                        pdf_images = convert_pdf_to_images(pdf_bytes, max_pages=10)
+                        
+                        if pdf_images:
+                            # Add each page as an image
+                            for page_num, img_b64 in enumerate(pdf_images, 1):
+                                user_content.append({
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": f"data:image/jpeg;base64,{img_b64}"
+                                    }
+                                })
+                                # Add page label
+                                user_content.append({
+                                    "type": "text",
+                                    "text": f"(PDF Page {page_num})"
+                                })
+                            logger.info(f"Converted PDF to {len(pdf_images)} images for OpenAI/DeepSeek")
+                        else:
+                            # Fallback: try extracted text if conversion failed
+                            pdf_text = None
+                            if assignment:
+                                # Check previous messages to identify PDF type
+                                context_text = ""
+                                for prev_item in messages_content[:messages_content.index(item)]:
+                                    if isinstance(prev_item, dict) and prev_item.get('type') == 'text':
+                                        context_text += prev_item.get('text', '') + " "
+                                
+                                # Identify PDF type based on context
+                                context_lower = context_text.lower()
+                                if "answer key" in context_lower or "answer_key" in context_lower:
+                                    pdf_text = assignment.get('answer_key_text', '')
+                                elif "question paper" in context_lower or "question_paper" in context_lower:
+                                    pdf_text = assignment.get('question_paper_text', '')
+                                elif "rubric" in context_lower:
+                                    pdf_text = assignment.get('rubrics_text', '')
+                                elif "reference" in context_lower:
+                                    pdf_text = assignment.get('reference_materials_text', '')
+                            
+                            if pdf_text and pdf_text.strip():
+                                # Use extracted text as fallback
+                                user_content.append({
+                                    "type": "text",
+                                    "text": f"[PDF Content - Extracted Text (diagrams may be missing)]:\n{pdf_text}"
+                                })
+                            else:
+                                # Final fallback: warning message
+                                user_content.append({
+                                    "type": "text",
+                                    "text": "[PDF document - Note: PDF to image conversion failed. For best results with PDFs containing diagrams, use Anthropic Claude or Google Gemini, or ensure pdf2image is properly installed with poppler-utils.]"
+                                })
+                elif isinstance(item, str):
+                    user_content.append({"type": "text", "text": item})
+            
+            # Combine text parts and images
+            text_parts = [c.get('text', '') for c in user_content if c.get('type') == 'text']
+            image_parts = [c for c in user_content if c.get('type') == 'image_url']
+            
+            if image_parts:
+                # OpenAI vision API format
+                content_list = []
+                for text in text_parts:
+                    if text.strip():
+                        content_list.append({"type": "text", "text": text})
+                content_list.extend(image_parts)
+                user_content = content_list
+            else:
+                # Text only
+                user_content = [{"type": "text", "text": " ".join(text_parts)}]
+            
+            openai_messages.append({"role": "user", "content": user_content})
+            
+            response = client.chat.completions.create(
+                model=model_name,
+                messages=openai_messages,
+                max_tokens=max_tokens
+            )
+            return response.choices[0].message.content
+        
+        elif provider == 'google':
+            # Google Gemini format
+            # client is the genai module (configured globally)
+            # Combine system prompt with user content
+            full_prompt = (system_prompt + "\n\n") if system_prompt else ""
+            
+            # Build content parts for Gemini
+            content_parts = []
+            
+            for item in messages_content:
+                if isinstance(item, dict):
+                    if item.get('type') == 'text':
+                        full_prompt += item.get('text', '') + "\n"
+                    elif item.get('type') == 'image':
+                        image_data = item.get('source', {}).get('data', '')
+                        content_parts.append({
+                            "mime_type": item.get('source', {}).get('media_type', 'image/jpeg'),
+                            "data": base64.b64decode(image_data)
+                        })
+                    elif item.get('type') == 'document':
+                        # Gemini supports PDF
+                        pdf_data = item.get('source', {}).get('data', '')
+                        content_parts.append({
+                            "mime_type": "application/pdf",
+                            "data": base64.b64decode(pdf_data)
+                        })
+                elif isinstance(item, str):
+                    full_prompt += item + "\n"
+            
+            # Add text prompt first
+            if full_prompt.strip():
+                content_parts.insert(0, full_prompt.strip())
+            
+            # client is genai module for Google
+            model = client.GenerativeModel(model_name)
+            response = model.generate_content(content_parts)
+            return response.text
+        
+        else:
+            raise ValueError(f"Unknown provider: {provider}")
+    
+    except Exception as e:
+        logger.error(f"Error making API call to {provider}: {e}")
+        raise
 
 def analyze_submission_images(pages: list, assignment: dict, answer_key_content: bytes = None, teacher: dict = None) -> dict:
     """
@@ -42,12 +361,15 @@ def analyze_submission_images(pages: list, assignment: dict, answer_key_content:
     Returns:
         Dictionary with structured feedback
     """
-    client = get_teacher_ai_service(teacher)
+    # Get model type from assignment, fallback to teacher default, then to anthropic
+    model_type = assignment.get('ai_model') or (teacher.get('default_ai_model') if teacher else None) or 'anthropic'
+    
+    client, model_name, provider = get_teacher_ai_service(teacher, model_type)
     if not client:
         return {
-            'error': 'AI service not available',
+            'error': f'AI service not available for {model_type}',
             'questions': [],
-            'overall_feedback': 'AI feedback unavailable - no API key configured'
+            'overall_feedback': f'AI feedback unavailable - no {model_type} API key configured'
         }
     
     try:
@@ -185,20 +507,16 @@ Respond ONLY with valid JSON in this exact format:
             "text": "\nAnalyze this submission and provide JSON feedback:"
         })
         
-        # Make API call
-        message = client.messages.create(
-            model="claude-sonnet-4-5-20250929",
+        # Make API call using unified function
+        response_text = make_ai_api_call(
+            client=client,
+            model_name=model_name,
+            provider=provider,
+            system_prompt=system_prompt,
+            messages_content=content,
             max_tokens=4000,
-            messages=[
-                {
-                    "role": "user",
-                    "content": content
-                }
-            ],
-            system=system_prompt
+            assignment=assignment
         )
-        
-        response_text = message.content[0].text
         
         # Parse JSON response
         result = parse_ai_response(response_text)
@@ -232,9 +550,10 @@ def analyze_single_page(page_data: bytes, page_type: str, assignment: dict, teac
     
     Returns quick feedback for initial review
     """
-    client = get_teacher_ai_service(teacher)
+    model_type = assignment.get('ai_model') or (teacher.get('default_ai_model') if teacher else None) or 'anthropic'
+    client, model_name, provider = get_teacher_ai_service(teacher, model_type)
     if not client:
-        return {'error': 'AI not available'}
+        return {'error': f'AI not available for {model_type}'}
     
     try:
         content = []
@@ -269,14 +588,18 @@ Quickly identify which questions are visible and note any obvious errors.
 Format: Brief table of questions found with status (correct/incorrect/unclear)"""
         })
         
-        message = client.messages.create(
-            model="claude-sonnet-4-5-20250929",
+        response_text = make_ai_api_call(
+            client=client,
+            model_name=model_name,
+            provider=provider,
+            system_prompt="",
+            messages_content=content,
             max_tokens=1000,
-            messages=[{"role": "user", "content": content}]
+            assignment=assignment
         )
         
         return {
-            'preview_feedback': message.content[0].text,
+            'preview_feedback': response_text,
             'generated_at': datetime.utcnow().isoformat()
         }
         
@@ -288,12 +611,13 @@ def mark_submission(submission: dict, assignment: dict, teacher: dict = None) ->
     """
     Legacy function - Use AI to mark a text-based student submission
     """
-    client = get_teacher_ai_service(teacher)
+    model_type = assignment.get('ai_model') or (teacher.get('default_ai_model') if teacher else None) or 'anthropic'
+    client, model_name, provider = get_teacher_ai_service(teacher, model_type)
     if not client:
         return {
-            'error': 'AI service not available',
+            'error': f'AI service not available for {model_type}',
             'questions': {},
-            'overall': 'Unable to generate AI feedback - no API key configured'
+            'overall': f'Unable to generate AI feedback - no {model_type} API key configured'
         }
     
     try:
@@ -327,13 +651,16 @@ Then provide an overall summary.
 
 Format your response as structured feedback."""
 
-        message = client.messages.create(
-            model="claude-sonnet-4-5-20250929",
+        content = [{"type": "text", "text": prompt}]
+        feedback_text = make_ai_api_call(
+            client=client,
+            model_name=model_name,
+            provider=provider,
+            system_prompt="",
+            messages_content=content,
             max_tokens=2000,
-            messages=[{"role": "user", "content": prompt}]
+            assignment=assignment
         )
-        
-        feedback_text = message.content[0].text
         
         return {
             'raw_feedback': feedback_text,
@@ -364,11 +691,12 @@ def get_preview_feedback(pages: list, assignment: dict, feedback_type: str = 'ov
     Returns:
         Dictionary with feedback based on type requested
     """
-    client = get_teacher_ai_service(teacher)
+    model_type = assignment.get('ai_model') or (teacher.get('default_ai_model') if teacher else None) or 'anthropic'
+    client, model_name, provider = get_teacher_ai_service(teacher, model_type)
     if not client:
         return {
-            'error': 'AI service not available',
-            'feedback': 'AI feedback unavailable - no API key configured'
+            'error': f'AI service not available for {model_type}',
+            'feedback': f'AI feedback unavailable - no {model_type} API key configured'
         }
     
     try:
@@ -482,19 +810,15 @@ Respond with JSON:
         })
         
         # Make API call
-        message = client.messages.create(
-            model="claude-sonnet-4-5-20250929",
+        response_text = make_ai_api_call(
+            client=client,
+            model_name=model_name,
+            provider=provider,
+            system_prompt=system_prompt,
+            messages_content=content,
             max_tokens=1500,
-            messages=[
-                {
-                    "role": "user",
-                    "content": content
-                }
-            ],
-            system=system_prompt
+            assignment=assignment
         )
-        
-        response_text = message.content[0].text
         
         # Parse JSON response
         result = parse_ai_response(response_text)
@@ -507,11 +831,12 @@ Respond with JSON:
             'feedback': f'Error generating feedback: {str(e)}'
         }
 
-def get_quick_feedback(answer: str, question: str, model_answer: str = None, teacher: dict = None) -> str:
+def get_quick_feedback(answer: str, question: str, model_answer: str = None, teacher: dict = None, assignment: dict = None) -> str:
     """Get quick feedback on a single text answer"""
-    client = get_teacher_ai_service(teacher)
+    model_type = (assignment.get('ai_model') if assignment else None) or (teacher.get('default_ai_model') if teacher else None) or 'anthropic'
+    client, model_name, provider = get_teacher_ai_service(teacher, model_type)
     if not client:
-        return "AI feedback not available"
+        return f"AI feedback not available for {model_type}"
     
     try:
         prompt = f"""Provide brief, constructive feedback (2-3 sentences) on this student answer.
@@ -522,13 +847,16 @@ Student Answer: {answer}
 
 Give specific, helpful feedback focusing on what's good and what could be improved."""
 
-        message = client.messages.create(
-            model="claude-sonnet-4-5-20250929",
+        content = [{"type": "text", "text": prompt}]
+        return make_ai_api_call(
+            client=client,
+            model_name=model_name,
+            provider=provider,
+            system_prompt="",
+            messages_content=content,
             max_tokens=300,
-            messages=[{"role": "user", "content": prompt}]
+            assignment=assignment
         )
-        
-        return message.content[0].text
         
     except Exception as e:
         logger.error(f"Error getting quick feedback: {e}")
@@ -811,11 +1139,12 @@ def get_question_help(question: str, student_answer: str, help_type: str, assign
     Returns:
         Dictionary with help response
     """
-    client = get_teacher_ai_service(teacher)
+    model_type = assignment.get('ai_model') or (teacher.get('default_ai_model') if teacher else None) or 'anthropic'
+    client, model_name, provider = get_teacher_ai_service(teacher, model_type)
     if not client:
         return {
-            'error': 'AI service not available',
-            'response': 'AI help unavailable - no API key configured'
+            'error': f'AI service not available for {model_type}',
+            'response': f'AI help unavailable - no {model_type} API key configured'
         }
     
     try:
@@ -909,14 +1238,15 @@ def get_question_help(question: str, student_answer: str, help_type: str, assign
         })
         
         # Make API call with vision support
-        message = client.messages.create(
-            model="claude-sonnet-4-5-20250929",
+        response_text = make_ai_api_call(
+            client=client,
+            model_name=model_name,
+            provider=provider,
+            system_prompt=system_prompt,
+            messages_content=content_parts,
             max_tokens=1000,
-            messages=[{"role": "user", "content": content_parts}],
-            system=system_prompt
+            assignment=assignment
         )
-        
-        response_text = message.content[0].text
         
         # Parse JSON response
         result = parse_ai_response(response_text)
@@ -937,7 +1267,7 @@ def get_question_help(question: str, student_answer: str, help_type: str, assign
             'response': f'Error generating help: {str(e)}'
         }
 
-def extract_answers_from_key(file_content: bytes, file_type: str, question_count: int, teacher: dict = None) -> dict:
+def extract_answers_from_key(file_content: bytes, file_type: str, question_count: int, teacher: dict = None, assignment: dict = None) -> dict:
     """
     Extract answers from an uploaded answer key file (PDF or image).
     
@@ -946,14 +1276,16 @@ def extract_answers_from_key(file_content: bytes, file_type: str, question_count
         file_type: 'pdf' or 'image'
         question_count: Number of questions to extract answers for
         teacher: Teacher document for API key
+        assignment: Assignment document (optional, for model selection)
     
     Returns:
         Dictionary with extracted answers for each question
     """
-    client = get_teacher_ai_service(teacher)
+    model_type = (assignment.get('ai_model') if assignment else None) or (teacher.get('default_ai_model') if teacher else None) or 'anthropic'
+    client, model_name, provider = get_teacher_ai_service(teacher, model_type)
     if not client:
         return {
-            'error': 'AI service not available',
+            'error': f'AI service not available for {model_type}',
             'answers': {}
         }
     
@@ -1009,13 +1341,15 @@ Respond ONLY with valid JSON in this exact format:
         })
         
         # Make API call
-        message = client.messages.create(
-            model="claude-sonnet-4-5-20250929",
+        response_text = make_ai_api_call(
+            client=client,
+            model_name=model_name,
+            provider=provider,
+            system_prompt="",
+            messages_content=content,
             max_tokens=4000,
-            messages=[{"role": "user", "content": content}]
+            assignment=assignment
         )
-        
-        response_text = message.content[0].text
         
         # Parse JSON response
         result = parse_ai_response(response_text)
@@ -1103,13 +1437,14 @@ def analyze_essay_with_rubrics(pages: list, assignment: dict, rubrics_content: b
         - total_marks: Sum of marks awarded
         - submission_quality: 'acceptable', 'poor', 'wrong_submission' for rejection logic
     """
-    client = get_teacher_ai_service(teacher)
+    model_type = assignment.get('ai_model') or (teacher.get('default_ai_model') if teacher else None) or 'anthropic'
+    client, model_name, provider = get_teacher_ai_service(teacher, model_type)
     if not client:
         return {
-            'error': 'AI service not available',
+            'error': f'AI service not available for {model_type}',
             'criteria': [],
             'errors': [],
-            'overall_feedback': 'AI feedback unavailable - no API key configured',
+            'overall_feedback': f'AI feedback unavailable - no {model_type} API key configured',
             'submission_quality': 'unknown'
         }
     
@@ -1276,19 +1611,15 @@ Respond with JSON:"""
         })
         
         # Make API call
-        message = client.messages.create(
-            model="claude-sonnet-4-5-20250929",
+        response_text = make_ai_api_call(
+            client=client,
+            model_name=model_name,
+            provider=provider,
+            system_prompt=system_prompt,
+            messages_content=content,
             max_tokens=6000,
-            messages=[
-                {
-                    "role": "user",
-                    "content": content
-                }
-            ],
-            system=system_prompt
+            assignment=assignment
         )
-        
-        response_text = message.content[0].text
         
         # Parse JSON response
         result = parse_ai_response(response_text)

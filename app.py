@@ -2887,7 +2887,7 @@ def extract_answer_key(submission_id):
         teacher = Teacher.find_one({'teacher_id': session['teacher_id']})
         
         # Extract answers using AI
-        result = extract_answers_from_key(file_content, file_type, question_count, teacher)
+        result = extract_answers_from_key(file_content, file_type, question_count, teacher, assignment)
         
         if 'error' in result and not result.get('answers'):
             return jsonify({'error': result['error']}), 500
