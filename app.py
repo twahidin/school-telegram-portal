@@ -928,28 +928,46 @@ def view_submission(submission_id):
 @login_required
 def download_submission_pdf(submission_id):
     """Download submission as PDF"""
-    student = Student.find_one({'student_id': session['student_id']})
-    submission = Submission.find_one({
-        'submission_id': submission_id,
-        'student_id': session['student_id']
-    })
-    
-    if not submission:
-        return redirect(url_for('student_submissions'))
-    
-    assignment = Assignment.find_one({'assignment_id': submission['assignment_id']})
-    
-    pdf_content = generate_feedback_pdf(submission, assignment, student)
-    
-    if not pdf_content:
+    try:
+        student = Student.find_one({'student_id': session['student_id']})
+        if not student:
+            logger.warning(f"Student not found: {session.get('student_id')}")
+            return redirect(url_for('student_submissions'))
+        
+        submission = Submission.find_one({
+            'submission_id': submission_id,
+            'student_id': session['student_id']
+        })
+        
+        if not submission:
+            logger.warning(f"Submission not found: {submission_id} for student {session.get('student_id')}")
+            return redirect(url_for('student_submissions'))
+        
+        assignment_id = submission.get('assignment_id')
+        if not assignment_id:
+            logger.error(f"Submission {submission_id} has no assignment_id")
+            return redirect(url_for('student_submissions'))
+        
+        assignment = Assignment.find_one({'assignment_id': assignment_id})
+        if not assignment:
+            logger.error(f"Assignment not found for submission {submission_id}, assignment_id: {assignment_id}")
+            return redirect(url_for('student_submissions'))
+        
+        pdf_content = generate_feedback_pdf(submission, assignment, student)
+        
+        if not pdf_content:
+            logger.warning(f"Failed to generate PDF for submission {submission_id}")
+            return redirect(url_for('view_submission', submission_id=submission_id))
+        
+        return send_file(
+            io.BytesIO(pdf_content),
+            mimetype='application/pdf',
+            as_attachment=True,
+            download_name=f"feedback_{submission_id}.pdf"
+        )
+    except Exception as e:
+        logger.error(f"Error downloading PDF for submission {submission_id}: {e}", exc_info=True)
         return redirect(url_for('view_submission', submission_id=submission_id))
-    
-    return send_file(
-        io.BytesIO(pdf_content),
-        mimetype='application/pdf',
-        as_attachment=True,
-        download_name=f"feedback_{submission_id}.pdf"
-    )
 
 @app.route('/student/submit', methods=['POST'])
 @login_required
