@@ -187,7 +187,7 @@ Respond ONLY with valid JSON in this exact format:
         
         # Make API call
         message = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-5-20250929",
             max_tokens=4000,
             messages=[
                 {
@@ -270,7 +270,7 @@ Format: Brief table of questions found with status (correct/incorrect/unclear)""
         })
         
         message = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-5-20250929",
             max_tokens=1000,
             messages=[{"role": "user", "content": content}]
         )
@@ -328,7 +328,7 @@ Then provide an overall summary.
 Format your response as structured feedback."""
 
         message = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-5-20250929",
             max_tokens=2000,
             messages=[{"role": "user", "content": prompt}]
         )
@@ -483,7 +483,7 @@ Respond with JSON:
         
         # Make API call
         message = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-5-20250929",
             max_tokens=1500,
             messages=[
                 {
@@ -523,7 +523,7 @@ Student Answer: {answer}
 Give specific, helpful feedback focusing on what's good and what could be improved."""
 
         message = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-5-20250929",
             max_tokens=300,
             messages=[{"role": "user", "content": prompt}]
         )
@@ -910,7 +910,7 @@ def get_question_help(question: str, student_answer: str, help_type: str, assign
         
         # Make API call with vision support
         message = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-5-20250929",
             max_tokens=1000,
             messages=[{"role": "user", "content": content_parts}],
             system=system_prompt
@@ -1010,7 +1010,7 @@ Respond ONLY with valid JSON in this exact format:
         
         # Make API call
         message = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-5-20250929",
             max_tokens=4000,
             messages=[{"role": "user", "content": content}]
         )
@@ -1078,3 +1078,242 @@ def generate_feedback_summary(submission: dict, assignment: dict, ai_feedback: d
         'overall_feedback': teacher_edits.get('overall_feedback') if teacher_edits else ai_feedback.get('overall_feedback', ''),
         'generated_at': datetime.utcnow().isoformat()
     }
+
+
+def analyze_essay_with_rubrics(pages: list, assignment: dict, rubrics_content: bytes = None, teacher: dict = None) -> dict:
+    """
+    Analyze student essay submission using rubrics for criteria-based marking.
+    
+    This is specifically designed for essays/compositions where:
+    - Marking is based on rubric criteria (e.g., Content, Language, Organisation)
+    - Detailed sentence-level corrections are needed
+    - The AI evaluates writing quality, not correct/incorrect answers
+    
+    Args:
+        pages: List of page dictionaries with 'type' and 'data' keys (student's essay)
+        assignment: Assignment document with details (including rubrics_text)
+        rubrics_content: Optional bytes of rubrics PDF for vision analysis
+        teacher: Teacher document for API key
+    
+    Returns:
+        Dictionary with:
+        - criteria: List of {name, reasoning, afi, marks_awarded, max_marks}
+        - errors: List of {location, error, correction, feedback}
+        - overall_feedback: General assessment
+        - total_marks: Sum of marks awarded
+        - submission_quality: 'acceptable', 'poor', 'wrong_submission' for rejection logic
+    """
+    client = get_teacher_ai_service(teacher)
+    if not client:
+        return {
+            'error': 'AI service not available',
+            'criteria': [],
+            'errors': [],
+            'overall_feedback': 'AI feedback unavailable - no API key configured',
+            'submission_quality': 'unknown'
+        }
+    
+    try:
+        content = []
+        
+        # Get rubrics text from assignment
+        rubrics_text = assignment.get('rubrics_text', '')
+        
+        # Build system prompt for essay analysis
+        system_prompt = f"""You are an experienced English/Language teacher marking student essays.
+
+Assignment: {assignment.get('title', 'Essay')}
+Subject: {assignment.get('subject', 'English')}
+Total Marks: {assignment.get('total_marks', 30)}
+
+{"GRADING RUBRICS:" if rubrics_text else "Use standard essay rubrics:"}
+{rubrics_text if rubrics_text else '''
+Default criteria:
+- Content (10 marks): Relevance, ideas, engagement with topic
+- Language (10 marks): Grammar, vocabulary, sentence structure
+- Organisation (10 marks): Paragraphing, coherence, flow
+'''}
+
+IMPORTANT INSTRUCTIONS:
+1. First, check if this is actually an essay/composition submission. If the student submitted:
+   - A blank/mostly blank page
+   - Wrong assignment (e.g., math homework instead of essay)
+   - Illegible/unreadable content
+   - Off-topic content unrelated to the assignment
+   Mark submission_quality as "wrong_submission" or "poor" accordingly.
+
+2. For valid essays, evaluate EACH rubric criterion separately with:
+   - A mark out of the maximum
+   - Clear reasoning for the mark
+   - Specific areas for improvement (AFI)
+
+3. CRITICAL: Extract SPECIFIC sentences from the essay that need improvement. For each error:
+   - Quote the exact sentence or phrase from the essay
+   - Identify what type of error it is (grammar, spelling, vocabulary, clarity, etc.)
+   - Provide the corrected version
+   - Give brief feedback on why it's wrong
+
+4. Look for these common issues:
+   - Subject-verb agreement errors
+   - Tense inconsistencies
+   - Run-on sentences or fragments
+   - Spelling mistakes
+   - Unclear or awkward phrasing
+   - Punctuation errors
+   - Vocabulary misuse
+
+Respond ONLY with valid JSON in this exact format:
+{{
+    "submission_quality": "acceptable" or "poor" or "wrong_submission",
+    "rejection_reason": "only if wrong_submission - explain why (e.g., 'This appears to be a math worksheet, not an essay')",
+    "criteria": [
+        {{
+            "name": "Content",
+            "max_marks": 10,
+            "marks_awarded": 7,
+            "reasoning": "Clear explanation of why this mark was given...",
+            "afi": "Specific suggestions for improvement in this area..."
+        }},
+        {{
+            "name": "Language",
+            "max_marks": 10,
+            "marks_awarded": 6,
+            "reasoning": "Assessment of grammar, vocabulary, sentence structure...",
+            "afi": "Areas to work on for language improvement..."
+        }},
+        {{
+            "name": "Organisation",
+            "max_marks": 10,
+            "marks_awarded": 7,
+            "reasoning": "Evaluation of structure, paragraphing, flow...",
+            "afi": "Suggestions for better organization..."
+        }}
+    ],
+    "errors": [
+        {{
+            "location": "Paragraph 1, Line 2",
+            "error": "The exact sentence with the error quoted from essay",
+            "correction": "The corrected version of the sentence",
+            "feedback": "Brief explanation (e.g., 'Subject-verb agreement: use 'was' not 'were' for singular subject')"
+        }},
+        {{
+            "location": "Paragraph 2, Line 1",
+            "error": "Another problematic sentence...",
+            "correction": "Corrected version...",
+            "feedback": "Explanation of the error..."
+        }}
+    ],
+    "overall_feedback": "2-3 paragraphs of constructive overall feedback about the essay",
+    "total_marks": 20,
+    "strengths": ["What the student did well", "Another strength"],
+    "priority_improvements": ["Most important thing to work on", "Second priority"]
+}}"""
+
+        # Add rubrics PDF with vision if available
+        if rubrics_content:
+            content.append({
+                "type": "text",
+                "text": "GRADING RUBRICS (reference document):"
+            })
+            rubrics_b64 = base64.standard_b64encode(rubrics_content).decode('utf-8')
+            content.append({
+                "type": "document",
+                "source": {
+                    "type": "base64",
+                    "media_type": "application/pdf",
+                    "data": rubrics_b64
+                }
+            })
+        
+        content.append({
+            "type": "text",
+            "text": "\nSTUDENT'S ESSAY SUBMISSION:"
+        })
+        
+        # Add student submission pages
+        for i, page in enumerate(pages):
+            if page['type'] == 'image':
+                image_b64 = base64.standard_b64encode(page['data']).decode('utf-8')
+                content.append({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/jpeg",
+                        "data": image_b64
+                    }
+                })
+                content.append({
+                    "type": "text",
+                    "text": f"(Page {i+1})"
+                })
+            elif page['type'] == 'pdf':
+                pdf_b64 = base64.standard_b64encode(page['data']).decode('utf-8')
+                content.append({
+                    "type": "document",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "application/pdf",
+                        "data": pdf_b64
+                    }
+                })
+        
+        # Add teacher's custom instructions if available
+        custom_instructions = ""
+        feedback_instructions = assignment.get('feedback_instructions', '')
+        grading_instructions = assignment.get('grading_instructions', '')
+        if feedback_instructions:
+            custom_instructions += f"\n\nTEACHER'S FEEDBACK STYLE INSTRUCTIONS: {feedback_instructions}"
+        if grading_instructions:
+            custom_instructions += f"\n\nTEACHER'S GRADING INSTRUCTIONS: {grading_instructions}"
+        
+        content.append({
+            "type": "text",
+            "text": f"""
+{custom_instructions}
+
+Analyze this essay submission and provide detailed rubric-based feedback with specific sentence corrections.
+Respond with JSON:"""
+        })
+        
+        # Make API call
+        message = client.messages.create(
+            model="claude-sonnet-4-5-20250929",
+            max_tokens=6000,
+            messages=[
+                {
+                    "role": "user",
+                    "content": content
+                }
+            ],
+            system=system_prompt
+        )
+        
+        response_text = message.content[0].text
+        
+        # Parse JSON response
+        result = parse_ai_response(response_text)
+        result['generated_at'] = datetime.utcnow().isoformat()
+        result['raw_response'] = response_text
+        
+        # Ensure required fields exist with defaults
+        if 'criteria' not in result:
+            result['criteria'] = []
+        if 'errors' not in result:
+            result['errors'] = []
+        if 'submission_quality' not in result:
+            result['submission_quality'] = 'acceptable'
+        if 'total_marks' not in result:
+            # Calculate from criteria if not provided
+            result['total_marks'] = sum(c.get('marks_awarded', 0) for c in result.get('criteria', []))
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error analyzing essay with rubrics: {e}")
+        return {
+            'error': str(e),
+            'criteria': [],
+            'errors': [],
+            'overall_feedback': f'Error generating feedback: {str(e)}',
+            'submission_quality': 'unknown'
+        }

@@ -986,7 +986,7 @@ def download_submission_pdf(submission_id):
 def student_submit_files():
     """Submit assignment with photo/PDF upload"""
     from gridfs import GridFS
-    from utils.ai_marking import analyze_submission_images
+    from utils.ai_marking import analyze_submission_images, analyze_essay_with_rubrics
     
     try:
         assignment_id = request.form.get('assignment_id')
@@ -1066,16 +1066,30 @@ def student_submit_files():
         
         # Generate AI feedback
         try:
-            # Get answer key
-            answer_key_content = None
-            if assignment.get('answer_key_id'):
-                try:
-                    answer_file = fs.get(assignment['answer_key_id'])
-                    answer_key_content = answer_file.read()
-                except:
-                    pass
+            marking_type = assignment.get('marking_type', 'standard')
             
-            ai_result = analyze_submission_images(pages, assignment, answer_key_content, teacher)
+            if marking_type == 'rubric':
+                # For rubric-based essays, use the essay analysis function
+                rubrics_content = None
+                if assignment.get('rubrics_id'):
+                    try:
+                        rubrics_file = fs.get(assignment['rubrics_id'])
+                        rubrics_content = rubrics_file.read()
+                    except:
+                        pass
+                
+                ai_result = analyze_essay_with_rubrics(pages, assignment, rubrics_content, teacher)
+            else:
+                # For standard marking, use the question-based analysis
+                answer_key_content = None
+                if assignment.get('answer_key_id'):
+                    try:
+                        answer_file = fs.get(assignment['answer_key_id'])
+                        answer_key_content = answer_file.read()
+                    except:
+                        pass
+                
+                ai_result = analyze_submission_images(pages, assignment, answer_key_content, teacher)
             
             Submission.update_one(
                 {'submission_id': submission_id},
@@ -2874,6 +2888,75 @@ def send_rubric_feedback_to_student(submission_id):
         
     except Exception as e:
         logger.error(f"Error sending rubric feedback: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/teacher/review/<submission_id>/reject', methods=['POST'])
+@teacher_required
+def reject_submission(submission_id):
+    """Reject a submission and notify the student to resubmit"""
+    try:
+        data = request.get_json()
+        rejection_reason = data.get('reason', 'Your submission has been rejected. Please resubmit.')
+        
+        submission = Submission.find_one({'submission_id': submission_id})
+        if not submission:
+            return jsonify({'error': 'Submission not found'}), 404
+        
+        assignment = Assignment.find_one({'assignment_id': submission['assignment_id']})
+        if not assignment or assignment['teacher_id'] != session['teacher_id']:
+            return jsonify({'error': 'Unauthorized'}), 403
+        
+        student = Student.find_one({'student_id': submission['student_id']})
+        teacher = Teacher.find_one({'teacher_id': session['teacher_id']})
+        
+        # Update submission status to rejected
+        Submission.update_one(
+            {'submission_id': submission_id},
+            {'$set': {
+                'status': 'rejected',
+                'rejection_reason': rejection_reason,
+                'rejected_at': datetime.utcnow(),
+                'rejected_by': session['teacher_id']
+            }}
+        )
+        
+        # Send Telegram notification to student
+        if student and student.get('telegram_id'):
+            try:
+                from telegram import Bot
+                import asyncio
+                
+                bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
+                if bot_token:
+                    async def send_rejection_notification():
+                        bot = Bot(token=bot_token)
+                        
+                        message = (
+                            f"⚠️ *Submission Rejected*\n\n"
+                            f"📝 {assignment.get('title')}\n\n"
+                            f"*Reason:*\n{rejection_reason}\n\n"
+                            f"Please review the feedback and resubmit your work.\n"
+                            f"👨‍🏫 {teacher.get('name', 'Teacher')}"
+                        )
+                        
+                        await bot.send_message(
+                            chat_id=student['telegram_id'],
+                            text=message,
+                            parse_mode='Markdown'
+                        )
+                    
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    loop.run_until_complete(send_rejection_notification())
+                    loop.close()
+                    
+            except Exception as e:
+                logger.error(f"Failed to send rejection notification: {e}")
+        
+        return jsonify({'success': True, 'message': 'Submission rejected and student notified'})
+        
+    except Exception as e:
+        logger.error(f"Error rejecting submission: {e}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/teacher/review/<submission_id>/pdf-rubric')
