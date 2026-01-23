@@ -3067,40 +3067,9 @@ def reject_submission(submission_id):
             }}
         )
         
-        # Send Telegram notification to student
-        if student and student.get('telegram_id'):
-            try:
-                from telegram import Bot
-                import asyncio
-                
-                bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
-                if bot_token:
-                    async def send_rejection_notification():
-                        bot = Bot(token=bot_token)
-                        
-                        message = (
-                            f"⚠️ *Submission Rejected*\n\n"
-                            f"📝 {assignment.get('title')}\n\n"
-                            f"*Reason:*\n{rejection_reason}\n\n"
-                            f"Please review the feedback and resubmit your work.\n"
-                            f"👨‍🏫 {teacher.get('name', 'Teacher')}"
-                        )
-                        
-                        await bot.send_message(
-                            chat_id=student['telegram_id'],
-                            text=message,
-                            parse_mode='Markdown'
-                        )
-                    
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    loop.run_until_complete(send_rejection_notification())
-                    loop.close()
-                    
-            except Exception as e:
-                logger.error(f"Failed to send rejection notification: {e}")
+        # Student will see the rejection on their dashboard when they next log in
         
-        return jsonify({'success': True, 'message': 'Submission rejected and student notified'})
+        return jsonify({'success': True, 'message': 'Submission rejected'})
         
     except Exception as e:
         logger.error(f"Error rejecting submission: {e}")
