@@ -39,6 +39,27 @@
         </ol>
     </nav>
     
+    <!-- AI Help Usage Alert -->
+    <div id="ai-usage-alert" class="alert alert-info alert-dismissible fade show mb-3" style="display: none;">
+        <div class="d-flex align-items-center">
+            <i class="bi bi-info-circle me-2"></i>
+            <div class="flex-grow-1">
+                <strong>AI Help Limits for this Assignment</strong>
+                <div class="mt-1 small">
+                    <span id="question-help-status" class="me-3"></span>
+                    <span id="overall-review-status"></span>
+                </div>
+            </div>
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+    
+    <!-- AI Help Disabled Alert -->
+    <div id="ai-disabled-alert" class="alert alert-warning mb-3" style="display: none;">
+        <i class="bi bi-exclamation-triangle me-2"></i>
+        <span id="ai-disabled-message"></span>
+    </div>
+    
     <div class="row">
         <!-- Left: Assignment Details -->
         <div class="col-lg-6 mb-4">
@@ -101,12 +122,17 @@
             </div>
             
             <!-- Ask for Help Section -->
-            <div class="card mt-4">
-                <div class="card-header bg-warning text-dark">
+            <div class="card mt-4" id="question-help-card">
+                <div class="card-header bg-warning text-dark d-flex justify-content-between align-items-center">
                     <h5 class="mb-0"><i class="bi bi-question-circle me-2"></i>Need Help with a Question?</h5>
+                    <span id="question-help-badge" class="badge bg-dark" style="display: none;"></span>
                 </div>
                 <div class="card-body">
                     <p class="text-muted small mb-3">Get AI assistance for one question at a time. Type or upload a photo of your question and answer.</p>
+                    <div id="question-help-limit-warning" class="alert alert-warning py-2 small" style="display: none;">
+                        <i class="bi bi-exclamation-triangle me-1"></i>
+                        <span id="question-help-limit-text"></span>
+                    </div>
                     
                     <!-- Question Input -->
                     <div class="mb-3">
@@ -237,12 +263,17 @@
             </div>
             {% else %}
             <!-- Review My Work Section -->
-            <div class="card mb-4">
-                <div class="card-header bg-info text-white">
+            <div class="card mb-4" id="overall-review-card">
+                <div class="card-header bg-info text-white d-flex justify-content-between align-items-center">
                     <h5 class="mb-0"><i class="bi bi-search me-2"></i>Review My Work</h5>
+                    <span id="overall-review-badge" class="badge bg-light text-dark" style="display: none;"></span>
                 </div>
                 <div class="card-body">
                     <p class="text-muted small mb-3">Upload your work to get AI feedback <strong>before</strong> final submission. This won't count as your submission.</p>
+                    <div id="overall-review-limit-warning" class="alert alert-warning py-2 small" style="display: none;">
+                        <i class="bi bi-exclamation-triangle me-1"></i>
+                        <span id="overall-review-limit-text"></span>
+                    </div>
                     
                     <!-- Upload Method Tabs for Review -->
                     <ul class="nav nav-pills nav-fill mb-3" role="tablist">
@@ -641,6 +672,120 @@
 
 {% block scripts %}
 <script>
+    // === AI USAGE TRACKING ===
+    const assignmentId = "{{ assignment.assignment_id }}";
+    let aiUsage = {
+        question_help: { enabled: true, used: 0, limit: 5, remaining: 5 },
+        overall_review: { enabled: true, used: 0, limit: 1, remaining: 1 }
+    };
+    
+    // Fetch AI usage on page load
+    async function loadAiUsage() {
+        try {
+            const response = await fetch(`/api/student/ai-usage/${assignmentId}`);
+            const data = await response.json();
+            
+            if (data.success) {
+                aiUsage = data;
+                updateAiUsageUI();
+            }
+        } catch (e) {
+            console.log('Could not load AI usage:', e);
+        }
+    }
+    
+    function updateAiUsageUI() {
+        const questionHelp = aiUsage.question_help;
+        const overallReview = aiUsage.overall_review;
+        
+        // Update question help section
+        const questionHelpCard = document.getElementById('question-help-card');
+        const questionHelpBadge = document.getElementById('question-help-badge');
+        const questionHelpWarning = document.getElementById('question-help-limit-warning');
+        const questionHelpLimitText = document.getElementById('question-help-limit-text');
+        const questionHelpStatus = document.getElementById('question-help-status');
+        
+        if (!questionHelp.enabled) {
+            // Question help is disabled
+            questionHelpCard.style.opacity = '0.6';
+            questionHelpBadge.textContent = 'Disabled';
+            questionHelpBadge.className = 'badge bg-secondary';
+            questionHelpBadge.style.display = 'inline';
+            questionHelpWarning.style.display = 'block';
+            questionHelpLimitText.textContent = 'Question help is not available for this assignment.';
+            document.querySelectorAll('.help-btn').forEach(btn => btn.disabled = true);
+            if (questionHelpStatus) questionHelpStatus.innerHTML = '<i class="bi bi-x-circle text-danger me-1"></i>Question Help: Disabled';
+        } else if (questionHelp.remaining <= 0) {
+            // Limit reached
+            questionHelpBadge.textContent = 'Limit Reached';
+            questionHelpBadge.className = 'badge bg-danger';
+            questionHelpBadge.style.display = 'inline';
+            questionHelpWarning.style.display = 'block';
+            questionHelpLimitText.textContent = `You have used all ${questionHelp.limit} question help requests for this assignment.`;
+            document.querySelectorAll('.help-btn').forEach(btn => btn.disabled = true);
+            if (questionHelpStatus) questionHelpStatus.innerHTML = `<i class="bi bi-x-circle text-danger me-1"></i>Question Help: 0/${questionHelp.limit} remaining`;
+        } else {
+            // Has remaining uses
+            questionHelpBadge.textContent = `${questionHelp.remaining}/${questionHelp.limit} remaining`;
+            questionHelpBadge.className = questionHelp.remaining <= 1 ? 'badge bg-warning text-dark' : 'badge bg-dark';
+            questionHelpBadge.style.display = 'inline';
+            if (questionHelp.remaining <= 2) {
+                questionHelpWarning.style.display = 'block';
+                questionHelpLimitText.textContent = `You have ${questionHelp.remaining} question help request(s) remaining.`;
+            }
+            if (questionHelpStatus) questionHelpStatus.innerHTML = `<i class="bi bi-check-circle text-success me-1"></i>Question Help: ${questionHelp.remaining}/${questionHelp.limit} remaining`;
+        }
+        
+        // Update overall review section
+        const overallReviewCard = document.getElementById('overall-review-card');
+        const overallReviewBadge = document.getElementById('overall-review-badge');
+        const overallReviewWarning = document.getElementById('overall-review-limit-warning');
+        const overallReviewLimitText = document.getElementById('overall-review-limit-text');
+        const overallReviewStatus = document.getElementById('overall-review-status');
+        
+        if (overallReviewCard) {
+            if (!overallReview.enabled) {
+                // Overall review is disabled
+                overallReviewCard.style.opacity = '0.6';
+                overallReviewBadge.textContent = 'Disabled';
+                overallReviewBadge.className = 'badge bg-secondary';
+                overallReviewBadge.style.display = 'inline';
+                overallReviewWarning.style.display = 'block';
+                overallReviewLimitText.textContent = 'Overall review is not available for this assignment.';
+                document.querySelectorAll('.feedback-btn').forEach(btn => btn.disabled = true);
+                if (overallReviewStatus) overallReviewStatus.innerHTML = '<i class="bi bi-x-circle text-danger me-1"></i>Overall Review: Disabled';
+            } else if (overallReview.remaining <= 0) {
+                // Limit reached
+                overallReviewBadge.textContent = 'Limit Reached';
+                overallReviewBadge.className = 'badge bg-danger text-white';
+                overallReviewBadge.style.display = 'inline';
+                overallReviewWarning.style.display = 'block';
+                overallReviewLimitText.textContent = `You have used all ${overallReview.limit} overall review(s) for this assignment.`;
+                document.querySelectorAll('.feedback-btn').forEach(btn => btn.disabled = true);
+                if (overallReviewStatus) overallReviewStatus.innerHTML = `<i class="bi bi-x-circle text-danger me-1"></i>Overall Review: 0/${overallReview.limit} remaining`;
+            } else {
+                // Has remaining uses
+                overallReviewBadge.textContent = `${overallReview.remaining}/${overallReview.limit} remaining`;
+                overallReviewBadge.className = overallReview.remaining <= 1 ? 'badge bg-warning text-dark' : 'badge bg-light text-dark';
+                overallReviewBadge.style.display = 'inline';
+                if (overallReview.remaining <= 1 && overallReview.limit > 1) {
+                    overallReviewWarning.style.display = 'block';
+                    overallReviewLimitText.textContent = `You have ${overallReview.remaining} overall review(s) remaining.`;
+                }
+                if (overallReviewStatus) overallReviewStatus.innerHTML = `<i class="bi bi-check-circle text-success me-1"></i>Overall Review: ${overallReview.remaining}/${overallReview.limit} remaining`;
+            }
+        }
+        
+        // Show the usage alert banner if there are any limits
+        const usageAlert = document.getElementById('ai-usage-alert');
+        if (usageAlert && (questionHelp.limit < 99 || overallReview.limit < 99)) {
+            usageAlert.style.display = 'block';
+        }
+    }
+    
+    // Load usage on page load
+    document.addEventListener('DOMContentLoaded', loadAiUsage);
+    
     // === FINAL SUBMISSION UPLOADS ===
     let uploadedPhotos = [];
     let uploadedPdf = null;
@@ -916,7 +1061,19 @@
                 currentFeedbackType = feedbackType;
                 
                 feedbackContent.innerHTML = formatFeedback(result.feedback, feedbackType);
+                
+                // Update usage if returned in response
+                if (result.usage) {
+                    aiUsage.overall_review.used = result.usage.used;
+                    aiUsage.overall_review.remaining = result.usage.remaining;
+                    updateAiUsageUI();
+                }
             } else {
+                // Check if limit was reached
+                if (result.limit_reached) {
+                    aiUsage.overall_review.remaining = 0;
+                    updateAiUsageUI();
+                }
                 feedbackContent.innerHTML = `
                     <div class="alert alert-danger mb-0">
                         <i class="bi bi-exclamation-circle me-1"></i>
@@ -934,8 +1091,10 @@
             console.error(error);
         }
         
-        // Re-enable buttons
-        updateFeedbackButtons();
+        // Re-enable buttons (but check limits)
+        if (aiUsage.overall_review.enabled && aiUsage.overall_review.remaining > 0) {
+            updateFeedbackButtons();
+        }
     }
     
     function formatFeedback(feedback, feedbackType) {
@@ -1379,7 +1538,19 @@
             
             if (result.success) {
                 helpContent.innerHTML = formatHelpResponse(result.help, helpType);
+                
+                // Update usage if returned in response
+                if (result.usage) {
+                    aiUsage.question_help.used = result.usage.used;
+                    aiUsage.question_help.remaining = result.usage.remaining;
+                    updateAiUsageUI();
+                }
             } else {
+                // Check if limit was reached
+                if (result.limit_reached) {
+                    aiUsage.question_help.remaining = 0;
+                    updateAiUsageUI();
+                }
                 helpContent.innerHTML = `
                     <div class="alert alert-danger mb-0">
                         <i class="bi bi-exclamation-circle me-1"></i>
@@ -1397,8 +1568,10 @@
             console.error(error);
         }
         
-        // Re-enable buttons
-        document.querySelectorAll('.help-btn').forEach(btn => btn.disabled = false);
+        // Re-enable buttons (but check limits)
+        if (aiUsage.question_help.enabled && aiUsage.question_help.remaining > 0) {
+            document.querySelectorAll('.help-btn').forEach(btn => btn.disabled = false);
+        }
     }
     
     function formatHelpResponse(help, helpType) {

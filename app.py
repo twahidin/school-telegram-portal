@@ -728,6 +728,34 @@ def get_question_help_api():
         if not assignment:
             return jsonify({'error': 'Assignment not found'}), 404
         
+        # Check if question help is enabled for this assignment
+        if not assignment.get('enable_question_help', True):
+            return jsonify({
+                'error': 'Question help is not available for this assignment.',
+                'limit_reached': True
+            }), 403
+        
+        # Check usage limit
+        student_id = session['student_id']
+        question_help_limit = assignment.get('question_help_limit', 5)
+        
+        # Get or create usage tracking document
+        AIUsage = db.db.ai_usage
+        usage = AIUsage.find_one({
+            'student_id': student_id,
+            'assignment_id': assignment_id
+        })
+        
+        current_question_help_count = usage.get('question_help_count', 0) if usage else 0
+        
+        if current_question_help_count >= question_help_limit:
+            return jsonify({
+                'error': f'You have reached the maximum of {question_help_limit} question help requests for this assignment.',
+                'limit_reached': True,
+                'used': current_question_help_count,
+                'limit': question_help_limit
+            }), 403
+        
         teacher = Teacher.find_one({'teacher_id': assignment['teacher_id']})
         
         # Get AI help (pass db instance for custom prompts)
@@ -742,14 +770,77 @@ def get_question_help_api():
             answer_image=answer_image
         )
         
+        # Increment usage count on success
+        AIUsage.update_one(
+            {'student_id': student_id, 'assignment_id': assignment_id},
+            {
+                '$inc': {'question_help_count': 1},
+                '$set': {'updated_at': datetime.utcnow()},
+                '$setOnInsert': {'created_at': datetime.utcnow(), 'overall_review_count': 0}
+            },
+            upsert=True
+        )
+        
         return jsonify({
             'success': True,
-            'help': help_response
+            'help': help_response,
+            'usage': {
+                'used': current_question_help_count + 1,
+                'limit': question_help_limit,
+                'remaining': question_help_limit - current_question_help_count - 1
+            }
         })
         
     except Exception as e:
         logger.error(f"Error getting question help: {e}")
         return jsonify({'error': 'Failed to get help. Please try again.'}), 500
+
+@app.route('/api/student/ai-usage/<assignment_id>')
+@login_required
+def get_student_ai_usage(assignment_id):
+    """Get student's AI help usage and limits for an assignment"""
+    try:
+        assignment = Assignment.find_one({'assignment_id': assignment_id})
+        if not assignment:
+            return jsonify({'error': 'Assignment not found'}), 404
+        
+        student_id = session['student_id']
+        
+        # Get usage tracking
+        AIUsage = db.db.ai_usage
+        usage = AIUsage.find_one({
+            'student_id': student_id,
+            'assignment_id': assignment_id
+        })
+        
+        question_help_count = usage.get('question_help_count', 0) if usage else 0
+        overall_review_count = usage.get('overall_review_count', 0) if usage else 0
+        
+        # Get limits from assignment (with defaults)
+        enable_question_help = assignment.get('enable_question_help', True)
+        question_help_limit = assignment.get('question_help_limit', 5)
+        enable_overall_review = assignment.get('enable_overall_review', True)
+        overall_review_limit = assignment.get('overall_review_limit', 1)
+        
+        return jsonify({
+            'success': True,
+            'question_help': {
+                'enabled': enable_question_help,
+                'used': question_help_count,
+                'limit': question_help_limit,
+                'remaining': max(0, question_help_limit - question_help_count) if enable_question_help else 0
+            },
+            'overall_review': {
+                'enabled': enable_overall_review,
+                'used': overall_review_count,
+                'limit': overall_review_limit,
+                'remaining': max(0, overall_review_limit - overall_review_count) if enable_overall_review else 0
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting AI usage: {e}")
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/teacher/<teacher_id>/availability')
 @login_required
@@ -1166,6 +1257,34 @@ def student_preview_feedback():
         if not assignment:
             return jsonify({'error': 'Assignment not found'}), 404
         
+        # Check if overall review is enabled for this assignment
+        if not assignment.get('enable_overall_review', True):
+            return jsonify({
+                'error': 'Overall review is not available for this assignment.',
+                'limit_reached': True
+            }), 403
+        
+        # Check usage limit
+        student_id = session['student_id']
+        overall_review_limit = assignment.get('overall_review_limit', 1)
+        
+        # Get or create usage tracking document
+        AIUsage = db.db.ai_usage
+        usage = AIUsage.find_one({
+            'student_id': student_id,
+            'assignment_id': assignment_id
+        })
+        
+        current_overall_review_count = usage.get('overall_review_count', 0) if usage else 0
+        
+        if current_overall_review_count >= overall_review_limit:
+            return jsonify({
+                'error': f'You have reached the maximum of {overall_review_limit} overall review(s) for this assignment.',
+                'limit_reached': True,
+                'used': current_overall_review_count,
+                'limit': overall_review_limit
+            }), 403
+        
         teacher = Teacher.find_one({'teacher_id': assignment['teacher_id']})
         
         # Build pages list
@@ -1185,9 +1304,25 @@ def student_preview_feedback():
         # Get preview feedback
         feedback = get_preview_feedback(pages, assignment, feedback_type, teacher)
         
+        # Increment usage count on success
+        AIUsage.update_one(
+            {'student_id': student_id, 'assignment_id': assignment_id},
+            {
+                '$inc': {'overall_review_count': 1},
+                '$set': {'updated_at': datetime.utcnow()},
+                '$setOnInsert': {'created_at': datetime.utcnow(), 'question_help_count': 0}
+            },
+            upsert=True
+        )
+        
         return jsonify({
             'success': True,
-            'feedback': feedback
+            'feedback': feedback,
+            'usage': {
+                'used': current_overall_review_count + 1,
+                'limit': overall_review_limit,
+                'remaining': overall_review_limit - current_overall_review_count - 1
+            }
         })
         
     except Exception as e:
@@ -2147,6 +2282,12 @@ def create_assignment():
                 'target_type': target_type,
                 'target_class_id': target_class_id if target_type == 'class' else None,
                 'target_group_id': target_group_id if target_type == 'teaching_group' else None,
+                # Student AI help limits
+                'enable_overall_review': data.get('enable_overall_review') == 'on',
+                'overall_review_limit': int(data.get('overall_review_limit', 1)),
+                'enable_question_help': data.get('enable_question_help') == 'on',
+                'question_help_limit': int(data.get('question_help_limit', 5)),
+                'notify_student_telegram': data.get('notify_student_telegram') == 'on',
                 'created_at': datetime.utcnow(),
                 'updated_at': datetime.utcnow()
             }
@@ -2253,6 +2394,12 @@ def edit_assignment(assignment_id):
                 'target_type': target_type,
                 'target_class_id': target_class_id if target_type == 'class' else None,
                 'target_group_id': target_group_id if target_type == 'teaching_group' else None,
+                # Student AI help limits
+                'enable_overall_review': data.get('enable_overall_review') == 'on',
+                'overall_review_limit': int(data.get('overall_review_limit', 1)),
+                'enable_question_help': data.get('enable_question_help') == 'on',
+                'question_help_limit': int(data.get('question_help_limit', 5)),
+                'notify_student_telegram': data.get('notify_student_telegram') == 'on',
                 'updated_at': datetime.utcnow()
             }
             

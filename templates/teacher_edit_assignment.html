@@ -302,6 +302,76 @@
                         </div>
                     </div>
                 </div>
+                
+                <!-- Student AI Help Limits -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-sliders me-2"></i>Student AI Help Limits</h5>
+                    </div>
+                    <div class="card-body">
+                        <p class="text-muted small mb-3">Control how many times students can request AI help for this assignment. This helps manage API costs.</p>
+                        
+                        <div class="alert alert-info mb-3">
+                            <i class="bi bi-info-circle me-2"></i>
+                            <strong>Note:</strong> Students will see alerts on their dashboard about remaining help requests. Telegram notifications are disabled for help limits.
+                        </div>
+                        
+                        <div class="row">
+                            <!-- Overall Review Settings -->
+                            <div class="col-md-6 mb-3">
+                                <div class="card h-100">
+                                    <div class="card-body">
+                                        <div class="form-check mb-2">
+                                            <input class="form-check-input" type="checkbox" id="enable_overall_review" name="enable_overall_review" 
+                                                   {% if assignment.get('enable_overall_review', True) %}checked{% endif %}>
+                                            <label class="form-check-label fw-bold" for="enable_overall_review">
+                                                <i class="bi bi-eye me-1"></i>Enable Overall Review
+                                            </label>
+                                        </div>
+                                        <p class="text-muted small mb-2">Students can request AI to review their entire submission before final submit.</p>
+                                        <div class="input-group input-group-sm">
+                                            <span class="input-group-text">Max reviews</span>
+                                            <input type="number" class="form-control" id="overall_review_limit" name="overall_review_limit" 
+                                                   value="{{ assignment.get('overall_review_limit', 1) }}" min="0" max="10">
+                                            <span class="input-group-text">times</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Question Help Settings -->
+                            <div class="col-md-6 mb-3">
+                                <div class="card h-100">
+                                    <div class="card-body">
+                                        <div class="form-check mb-2">
+                                            <input class="form-check-input" type="checkbox" id="enable_question_help" name="enable_question_help"
+                                                   {% if assignment.get('enable_question_help', True) %}checked{% endif %}>
+                                            <label class="form-check-label fw-bold" for="enable_question_help">
+                                                <i class="bi bi-question-circle me-1"></i>Enable Question Help
+                                            </label>
+                                        </div>
+                                        <p class="text-muted small mb-2">Students can ask AI for hints and guidance on specific questions.</p>
+                                        <div class="input-group input-group-sm">
+                                            <span class="input-group-text">Max questions</span>
+                                            <input type="number" class="form-control" id="question_help_limit" name="question_help_limit" 
+                                                   value="{{ assignment.get('question_help_limit', 5) }}" min="0" max="50">
+                                            <span class="input-group-text">times</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="notify_student_telegram" name="notify_student_telegram"
+                                   {% if assignment.get('notify_student_telegram', False) %}checked{% endif %}>
+                            <label class="form-check-label" for="notify_student_telegram">
+                                <i class="bi bi-telegram me-1"></i>Notify students via Telegram when assignment is published
+                            </label>
+                            <small class="d-block text-muted ms-4">If unchecked, students will only see the assignment on their dashboard</small>
+                        </div>
+                    </div>
+                </div>
             </div>
             
             <div class="col-lg-4">
