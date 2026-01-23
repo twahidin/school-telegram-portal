@@ -879,23 +879,50 @@ def student_submissions():
 @login_required
 def view_submission(submission_id):
     """View a specific submission"""
-    student = Student.find_one({'student_id': session['student_id']})
-    submission = Submission.find_one({
-        'submission_id': submission_id,
-        'student_id': session['student_id']
-    })
-    
-    if not submission:
+    try:
+        student = Student.find_one({'student_id': session['student_id']})
+        if not student:
+            logger.warning(f"Student not found: {session.get('student_id')}")
+            return redirect(url_for('student_submissions'))
+        
+        submission = Submission.find_one({
+            'submission_id': submission_id,
+            'student_id': session['student_id']
+        })
+        
+        if not submission:
+            logger.warning(f"Submission not found: {submission_id} for student {session.get('student_id')}")
+            return redirect(url_for('student_submissions'))
+        
+        assignment_id = submission.get('assignment_id')
+        if not assignment_id:
+            logger.error(f"Submission {submission_id} has no assignment_id")
+            return redirect(url_for('student_submissions'))
+        
+        assignment = Assignment.find_one({'assignment_id': assignment_id})
+        if not assignment:
+            logger.error(f"Assignment not found for submission {submission_id}, assignment_id: {assignment_id}")
+            return redirect(url_for('student_submissions'))
+        
+        teacher_id = assignment.get('teacher_id')
+        teacher = Teacher.find_one({'teacher_id': teacher_id}) if teacher_id else None
+        
+        # Ensure submission has required fields with defaults
+        if 'feedback_sent' not in submission:
+            submission['feedback_sent'] = False
+        if 'ai_feedback' not in submission:
+            submission['ai_feedback'] = {}
+        if 'teacher_feedback' not in submission:
+            submission['teacher_feedback'] = {}
+        
+        return render_template('submission_view.html',
+                             student=student,
+                             submission=submission,
+                             assignment=assignment,
+                             teacher=teacher)
+    except Exception as e:
+        logger.error(f"Error viewing submission {submission_id}: {e}", exc_info=True)
         return redirect(url_for('student_submissions'))
-    
-    assignment = Assignment.find_one({'assignment_id': submission['assignment_id']})
-    teacher = Teacher.find_one({'teacher_id': assignment['teacher_id']}) if assignment else None
-    
-    return render_template('submission_view.html',
-                         student=student,
-                         submission=submission,
-                         assignment=assignment,
-                         teacher=teacher)
 
 @app.route('/submissions/<submission_id>/pdf')
 @login_required
