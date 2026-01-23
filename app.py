@@ -621,7 +621,7 @@ def assignments_by_subject(subject):
         
         # Determine status for display
         if not submission:
-            a['status_display'] = 'Un-Submitted'
+            a['status_display'] = 'Not Submitted'
             a['status_class'] = 'secondary'
         elif submission.get('status') == 'rejected':
             a['status_display'] = 'Rejected'
@@ -636,7 +636,7 @@ def assignments_by_subject(subject):
             a['status_class'] = 'success'
             submitted_count += 1
         else:
-            a['status_display'] = 'Un-Submitted'
+            a['status_display'] = 'Not Submitted'
             a['status_class'] = 'secondary'
         
         # Add teacher info
