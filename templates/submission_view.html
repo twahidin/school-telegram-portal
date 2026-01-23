@@ -208,7 +208,9 @@
                                         <td class="text-center">
                                             {% set marks = teacher_q.get('marks') if teacher_q.get('marks') is not none else q.get('marks_awarded') %}
                                             {% if marks is not none %}
-                                            <span class="badge {% if marks == q.marks_total %}bg-success{% elif marks > 0 %}bg-warning text-dark{% else %}bg-danger{% endif %}">
+                                            {% set marks_num = marks|float if marks is not none else 0 %}
+                                            {% set marks_total_num = q.marks_total|float if q.marks_total else 0 %}
+                                            <span class="badge {% if marks_num == marks_total_num %}bg-success{% elif marks_num > 0 %}bg-warning text-dark{% else %}bg-danger{% endif %}">
                                                 {{ marks }}/{{ q.marks_total or '?' }}
                                             </span>
                                             {% else %}
