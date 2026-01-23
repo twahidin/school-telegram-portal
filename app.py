@@ -1129,10 +1129,16 @@ def download_student_assignment_file(assignment_id, file_type):
         logger.error(f"Assignment not found: {assignment_id}")
         return 'Assignment not found', 404
     
-    # Verify student has access (teacher is assigned to student)
+    # Verify student has access (teacher is assigned to student directly or via teaching group)
     student = Student.find_one({'student_id': session['student_id']})
-    if assignment['teacher_id'] not in student.get('teachers', []):
+    teacher_ids = get_student_teacher_ids(session['student_id'])
+    if assignment['teacher_id'] not in teacher_ids:
         logger.error(f"Unauthorized access attempt by {session['student_id']} to {assignment_id}")
+        return 'Unauthorized', 403
+    
+    # Also verify student can access this specific assignment based on target class/teaching group
+    if not can_student_access_assignment(student, assignment):
+        logger.error(f"Student {session['student_id']} cannot access assignment {assignment_id} due to target restrictions")
         return 'Unauthorized', 403
     
     file_id_field = f"{file_type}_id"
