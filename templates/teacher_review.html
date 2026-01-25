@@ -42,6 +42,9 @@
                         </label>
                     </div>
                     <div class="btn-group">
+                        <button class="btn btn-primary" onclick="saveFeedback()" title="Save feedback without sending to student">
+                            <i class="bi bi-save me-1"></i>Save Feedback
+                        </button>
                         <button class="btn btn-success" onclick="sendFeedback()">
                             <i class="bi bi-send me-1"></i>Send Feedback
                         </button>
@@ -187,7 +190,7 @@
                                             <small class="text-muted d-block mt-1">💡 {{ q.improvement }}</small>
                                             {% endif %}
                                         </td>
-                                        <td>
+                                        <td class="marks-cell">
                                             <div class="input-group input-group-sm">
                                                 <input type="number" class="form-control marks-input" 
                                                        name="marks_{{ q.question_num }}" 
@@ -332,6 +335,23 @@
 
 .table-danger {
     background-color: #f8d7da !important;
+}
+
+/* Mark box coloring */
+.marks-cell {
+    transition: background-color 0.3s ease;
+}
+
+.marks-cell.marks-zero {
+    background-color: #f8d7da !important; /* Red */
+}
+
+.marks-cell.marks-partial {
+    background-color: #fff3cd !important; /* Yellow */
+}
+
+.marks-cell.marks-full {
+    background-color: #d1e7dd !important; /* Green */
 }
 
 #feedback-table textarea {
@@ -530,9 +550,40 @@
         }
     });
     
+    // Update mark box colors based on marks
+    function updateMarkBoxColors() {
+        document.querySelectorAll('.marks-cell').forEach(cell => {
+            const marksInput = cell.querySelector('.marks-input');
+            const marksTotalInput = cell.querySelector('.marks-total-input');
+            
+            if (!marksInput || !marksTotalInput) return;
+            
+            const marks = parseFloat(marksInput.value) || 0;
+            const marksTotal = parseFloat(marksTotalInput.value) || 0;
+            
+            // Remove all color classes
+            cell.classList.remove('marks-zero', 'marks-partial', 'marks-full');
+            
+            // Apply appropriate color class
+            if (marksTotal === 0) {
+                // No total marks set, no color
+                return;
+            } else if (marks === 0) {
+                cell.classList.add('marks-zero'); // Red
+            } else if (marks === marksTotal) {
+                cell.classList.add('marks-full'); // Green
+            } else {
+                cell.classList.add('marks-partial'); // Yellow
+            }
+        });
+    }
+    
     // Calculate total marks
     document.querySelectorAll('.marks-input').forEach(input => {
-        input.addEventListener('input', calculateTotal);
+        input.addEventListener('input', function() {
+            calculateTotal();
+            updateMarkBoxColors();
+        });
     });
     
     // Update max values when marks_total changes
@@ -543,8 +594,12 @@
             if (marksInput && this.value) {
                 marksInput.max = this.value;
             }
+            updateMarkBoxColors();
         });
     });
+    
+    // Initial color update
+    updateMarkBoxColors();
     
     function calculateTotal() {
         let total = 0;
@@ -587,6 +642,8 @@
     
     // Save feedback
     async function saveFeedback() {
+        // Update colors before saving
+        updateMarkBoxColors();
         const formData = new FormData(document.getElementById('feedback-form'));
         const data = {
             overall_feedback: document.getElementById('overall-feedback').value,

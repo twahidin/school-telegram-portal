@@ -43,6 +43,9 @@
                     </span>
                     {% endif %}
                     <div class="btn-group">
+                        <button class="btn btn-primary" onclick="saveFeedback()" title="Save feedback without sending to student">
+                            <i class="bi bi-save me-1"></i>Save Feedback
+                        </button>
                         <button class="btn btn-success" onclick="sendFeedback()">
                             <i class="bi bi-send me-1"></i>Send Feedback
                         </button>
@@ -138,7 +141,7 @@
                                                       name="afi_{{ loop.index }}" rows="3"
                                                       placeholder="Areas for improvement...">{{ teacher_c.get('afi') or criterion.afi or '' }}</textarea>
                                         </td>
-                                        <td>
+                                        <td class="criterion-marks-cell">
                                             <div class="input-group input-group-sm">
                                                 <input type="number" class="form-control criterion-marks-input" 
                                                        name="criterion_marks_{{ loop.index }}" 
@@ -172,7 +175,7 @@
                                                   name="overall_feedback" rows="3"
                                                   placeholder="Overall assessment of the essay...">{{ submission.get('teacher_feedback', {}).get('overall_feedback') or (ai_feedback.overall_feedback if ai_feedback else '') }}</textarea>
                                     </td>
-                                    <td>
+                                    <td class="total-marks-cell">
                                         <div class="input-group input-group-sm">
                                             <input type="number" class="form-control fw-bold" id="total-marks" 
                                                    name="total_marks"
@@ -451,6 +454,23 @@
 .card-header.bg-warning {
     background: linear-gradient(135deg, #ffc107, #e0a800) !important;
 }
+
+/* Mark box coloring */
+.criterion-marks-cell, .total-marks-cell {
+    transition: background-color 0.3s ease;
+}
+
+.criterion-marks-cell.marks-zero, .total-marks-cell.marks-zero {
+    background-color: #f8d7da !important; /* Red */
+}
+
+.criterion-marks-cell.marks-partial, .total-marks-cell.marks-partial {
+    background-color: #fff3cd !important; /* Yellow */
+}
+
+.criterion-marks-cell.marks-full, .total-marks-cell.marks-full {
+    background-color: #d1e7dd !important; /* Green */
+}
 </style>
 {% endblock %}
 
@@ -572,6 +592,62 @@
         }
     });
     
+    // Update mark box colors based on marks
+    function updateMarkBoxColors() {
+        // Update criterion marks
+        document.querySelectorAll('.criterion-marks-cell').forEach(cell => {
+            const marksInput = cell.querySelector('.criterion-marks-input');
+            const maxInput = cell.querySelector('.criterion-max-input');
+            
+            if (!marksInput || !maxInput) return;
+            
+            const marks = parseFloat(marksInput.value) || 0;
+            const maxMarks = parseFloat(maxInput.value) || 0;
+            
+            // Remove all color classes
+            cell.classList.remove('marks-zero', 'marks-partial', 'marks-full');
+            
+            // Apply appropriate color class
+            if (maxMarks === 0) {
+                // No max marks set, no color
+                return;
+            } else if (marks === 0) {
+                cell.classList.add('marks-zero'); // Red
+            } else if (marks === maxMarks) {
+                cell.classList.add('marks-full'); // Green
+            } else {
+                cell.classList.add('marks-partial'); // Yellow
+            }
+        });
+        
+        // Update total marks
+        const totalMarksCell = document.querySelector('.total-marks-cell');
+        if (totalMarksCell) {
+            const totalMarksInput = document.getElementById('total-marks');
+            const totalMarksMaxInput = document.getElementById('total-marks-max');
+            
+            if (totalMarksInput && totalMarksMaxInput) {
+                const totalMarks = parseFloat(totalMarksInput.value) || 0;
+                const totalMarksMax = parseFloat(totalMarksMaxInput.value) || 0;
+                
+                // Remove all color classes
+                totalMarksCell.classList.remove('marks-zero', 'marks-partial', 'marks-full');
+                
+                // Apply appropriate color class
+                if (totalMarksMax === 0) {
+                    // No max marks set, no color
+                    return;
+                } else if (totalMarks === 0) {
+                    totalMarksCell.classList.add('marks-zero'); // Red
+                } else if (totalMarks === totalMarksMax) {
+                    totalMarksCell.classList.add('marks-full'); // Green
+                } else {
+                    totalMarksCell.classList.add('marks-partial'); // Yellow
+                }
+            }
+        }
+    }
+    
     // Calculate total marks from criteria
     function calculateTotal() {
         let total = 0;
@@ -583,12 +659,37 @@
         if (totalMarksInput) {
             totalMarksInput.value = total;
         }
+        updateMarkBoxColors();
     }
     
     // Add listeners for auto-calculate
     document.querySelectorAll('.criterion-marks-input').forEach(input => {
         input.addEventListener('input', calculateTotal);
     });
+    
+    // Add listeners for max marks changes
+    document.querySelectorAll('.criterion-max-input').forEach(input => {
+        input.addEventListener('input', function() {
+            const marksInput = this.closest('.criterion-marks-cell').querySelector('.criterion-marks-input');
+            if (marksInput && this.value) {
+                marksInput.max = this.value;
+            }
+            updateMarkBoxColors();
+        });
+    });
+    
+    // Add listener for total marks changes
+    const totalMarksInput = document.getElementById('total-marks');
+    const totalMarksMaxInput = document.getElementById('total-marks-max');
+    if (totalMarksInput) {
+        totalMarksInput.addEventListener('input', updateMarkBoxColors);
+    }
+    if (totalMarksMaxInput) {
+        totalMarksMaxInput.addEventListener('input', updateMarkBoxColors);
+    }
+    
+    // Initial color update
+    updateMarkBoxColors();
     
     // Open Add Error Modal
     function openAddErrorModal() {
@@ -695,6 +796,8 @@
     
     // Save feedback
     async function saveFeedback() {
+        // Update colors before saving
+        updateMarkBoxColors();
         const data = {
             overall_feedback: document.getElementById('overall-feedback').value,
             total_marks: document.getElementById('total-marks').value,
