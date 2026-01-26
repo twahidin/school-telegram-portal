@@ -3986,29 +3986,45 @@ def test_folder_access():
         if has_access:
             # Try to list files to see if we can actually read them
             try:
-                files = manager.list_files(folder_id=source_folder_id, mime_types=['application/pdf'])
+                # First try without mime filter to see all files
+                all_files = manager.list_files(folder_id=source_folder_id, mime_types=None)
+                pdf_files = manager.list_files(folder_id=source_folder_id, mime_types=['application/pdf'])
+                
                 return jsonify({
                     'success': True,
                     'message': 'Folder access verified successfully',
                     'folder_id': source_folder_id,
                     'service_account': service_account_email,
-                    'file_count': len(files),
-                    'details': f'Found {len(files)} PDF files (testing with PDFs only)'
+                    'total_files': len(all_files),
+                    'pdf_files': len(pdf_files),
+                    'details': f'Found {len(all_files)} total files, {len(pdf_files)} PDF files',
+                    'file_names': [f.get('name', 'Unknown') for f in all_files[:10]]  # First 10 files
                 })
             except Exception as list_error:
+                error_str = str(list_error)
+                logger.error(f"Error listing files: {error_str}", exc_info=True)
                 return jsonify({
                     'success': False,
-                    'error': 'Can access folder but cannot list files',
-                    'details': str(list_error),
+                    'error': 'Can access folder metadata but cannot list files',
+                    'details': error_str,
                     'folder_id': source_folder_id,
-                    'service_account': service_account_email
+                    'service_account': service_account_email,
+                    'troubleshooting': [
+                        'The service account can see the folder exists but cannot read its contents.',
+                        'This usually means the service account needs "Editor" permission (not just "Viewer").',
+                        'Try removing and re-adding the service account with Editor permission.',
+                        'Wait 1-2 minutes after sharing before testing again.'
+                    ]
                 }), 500
         else:
+                # Check server logs for the actual error - might be more specific
+                logger.error(f"Folder access failed: {error_msg}")
+                
                 return jsonify({
                     'success': False,
                     'error': error_msg,
                     'folder_id': source_folder_id,
-                    'folder_id_from_url': 'Copy from: drive.google.com/drive/folders/[FOLDER_ID]',
+                    'folder_id_from_url': f'Verify URL: drive.google.com/drive/folders/{source_folder_id}',
                     'service_account': service_account_email,
                     'troubleshooting': [
                         '1. Right-click the folder in Google Drive',
@@ -4017,12 +4033,21 @@ def test_folder_access():
                         '4. Set permission to "Editor" (NOT Viewer or Commenter)',
                         '5. UNCHECK "Notify people" checkbox',
                         '6. Click "Share"',
-                        '7. Wait 10-30 seconds for permissions to propagate',
-                        '8. Click "Test Folder Access" again'
+                        '7. Wait 1-2 MINUTES (not seconds) for permissions to propagate',
+                        '8. Verify the service account appears in the sharing list',
+                        '9. Click "Test Folder Access" again'
                     ],
                     'verification_steps': [
                         'To verify sharing: Right-click folder > Share > Check if the service account email appears in the list',
-                        'If it does not appear, add it following the steps above'
+                        'If it does not appear, add it following the steps above',
+                        'If it appears but still fails, try removing it and re-adding it',
+                        'Check server logs for the actual Google API error message'
+                    ],
+                    'common_issues': [
+                        'Google Workspace: Admin may need to enable API access',
+                        'Shared Drives: Service account needs to be added to the Shared Drive, not just the folder',
+                        'Permissions delay: Can take 1-2 minutes to propagate',
+                        'Service account: Verify the credentials file is correct'
                     ]
                 }), 403
         
