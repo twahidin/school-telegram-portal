@@ -3482,11 +3482,7 @@ def teacher_settings():
             if data.get('default_ai_model'):
                 update_data['default_ai_model'] = data['default_ai_model']
             
-            # Update Google Drive folder
-            if data.get('google_drive_folder_id'):
-                update_data['google_drive_folder_id'] = data['google_drive_folder_id']
-            
-            # Update Google Drive source files folder
+            # Update Google Drive source files folder (removed submissions folder - not saving student files)
             if data.get('google_drive_source_folder_id'):
                 update_data['google_drive_source_folder_id'] = data['google_drive_source_folder_id']
             elif 'google_drive_source_folder_id' in data:

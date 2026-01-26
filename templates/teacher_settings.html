@@ -285,7 +285,7 @@
                     </div>
                     <div class="card-body">
                         <p class="text-muted">
-                            Configure a Google Drive folder to automatically save student submission PDFs.
+                            Configure a Google Drive folder to browse and select files when creating assignments.
                         </p>
                         
                         <!-- Service Account Info -->
@@ -298,53 +298,22 @@
                             </div>
                         </div>
                         
-                        <div class="alert alert-info mb-3">
-                            <i class="bi bi-info-circle me-2"></i>
-                            <strong>Sharing Requirements:</strong>
-                            <ul class="mb-0 mt-2">
-                                <li><strong>Submissions Folder:</strong> Must be shared with <strong>Editor</strong> permission (needs to upload files)</li>
-                                <li><strong>Source Files Folder:</strong> Can be shared with <strong>Viewer</strong> permission (only reads files, doesn't modify)</li>
-                            </ul>
-                        </div>
-                        
                         <div class="mb-3">
-                            <label class="form-label">Google Drive Folder ID (for Submissions)</label>
-                            <input type="text" class="form-control" name="google_drive_folder_id" 
-                                   value="{{ teacher.google_drive_folder_id or '' }}"
-                                   placeholder="e.g., 1aBcDeFgHiJkLmNoPqRsTuVwXyZ">
-                            <small class="text-muted">
-                                Folder where student submissions and feedback will be saved. Find this in the URL when viewing the folder: drive.google.com/drive/folders/<strong>[FOLDER_ID]</strong>
-                                <br><strong class="text-danger">⚠️ Must be shared with service account email above with Editor access.</strong>
-                            </small>
-                        </div>
-                        
-                        {% if teacher.google_drive_folder_id %}
-                        <div class="alert alert-success">
-                            <i class="bi bi-check-circle me-1"></i>Submissions folder configured
-                        </div>
-                        {% endif %}
-                        
-                        <div class="mb-3">
-                            <label class="form-label">Google Drive Source Files Folder ID (for Assignment Files)</label>
+                            <label class="form-label">Google Drive Source Files Folder ID</label>
                             <input type="text" class="form-control" name="google_drive_source_folder_id" 
                                    value="{{ teacher.google_drive_source_folder_id or '' }}"
                                    placeholder="e.g., 1aBcDeFgHiJkLmNoPqRsTuVwXyZ">
                             <small class="text-muted">
-                                Folder containing your question papers, answer keys, and reference materials. You can browse and select files from this folder when creating assignments instead of uploading from your computer.
-                                <br>Find this in the URL when viewing the folder: drive.google.com/drive/folders/<strong>[FOLDER_ID]</strong>
-                                <br><strong class="text-info">ℹ️ Files are referenced directly from your Drive (not copied). Viewer permission is sufficient for reading files.</strong>
+                                Folder containing your question papers, answer keys, and reference materials. 
+                                You can browse and select files from this folder when creating assignments instead of uploading from your computer.
+                                <br>Find this in the URL when viewing the folder: <code>drive.google.com/drive/folders/[FOLDER_ID]</code>
+                                <br><strong class="text-info">ℹ️ Files are referenced directly from your Drive (not copied). Viewer permission is sufficient.</strong>
                             </small>
                         </div>
                         
                         {% if teacher.google_drive_source_folder_id %}
                         <div class="alert alert-success">
                             <i class="bi bi-check-circle me-1"></i>Source files folder configured
-                        </div>
-                        <div class="mb-2">
-                            <button type="button" class="btn btn-sm btn-outline-primary" onclick="testFolderAccess()">
-                                <i class="bi bi-check-circle me-1"></i>Test Folder Access
-                            </button>
-                            <div id="folder-test-result" class="mt-2"></div>
                         </div>
                         {% endif %}
                         
@@ -556,7 +525,7 @@
                     
                     <h6>Google Drive</h6>
                     <p class="small text-muted">
-                        Automatically archive student submissions as PDFs in your Drive for record keeping.
+                        Browse and select files from your Google Drive folder when creating assignments. Files are referenced directly from your Drive (not copied).
                     </p>
                 </div>
             </div>
@@ -689,64 +658,6 @@
     
     // Load on page load
     loadServiceAccountInfo();
-    
-    // Test folder access
-    async function testFolderAccess() {
-        const resultDiv = document.getElementById('folder-test-result');
-        if (!resultDiv) return;
-        
-        resultDiv.innerHTML = '<div class="alert alert-info"><i class="bi bi-hourglass-split me-1"></i>Testing folder access...</div>';
-        
-        try {
-            const response = await fetch('/api/teacher/drive/test-folder-access');
-            const data = await response.json();
-            
-            if (data.success) {
-                const fileCount = data.count || data.pdf_files || data.file_count || 0;
-                const totalFiles = data.total_files || 0;
-                const fileList = data.file_names && data.file_names.length > 0 
-                    ? '<div class="mt-2"><small><strong>Files found:</strong><ul class="mb-0"><li>' + data.file_names.slice(0, 5).join('</li><li>') + '</li></ul></small></div>'
-                    : '';
-                
-                resultDiv.innerHTML = `
-                    <div class="alert alert-success">
-                        <i class="bi bi-check-circle me-1"></i><strong>Success!</strong><br>
-                        ${data.message}<br>
-                        <small>Found ${totalFiles} total file(s), ${fileCount} PDF file(s) in folder</small>
-                        ${fileList}
-                    </div>
-                `;
-            } else {
-                let troubleshooting = '';
-                if (data.troubleshooting) {
-                    troubleshooting = '<ol class="mb-0 mt-2"><li>' + data.troubleshooting.join('</li><li>') + '</li></ol>';
-                }
-                
-                let verificationSteps = '';
-                if (data.verification_steps) {
-                    verificationSteps = '<div class="mt-2"><strong>Verification:</strong><ul class="mb-0"><li>' + data.verification_steps.join('</li><li>') + '</li></ul></div>';
-                }
-                
-                resultDiv.innerHTML = `
-                    <div class="alert alert-danger">
-                        <i class="bi bi-exclamation-triangle me-1"></i><strong>Access Failed</strong><br>
-                        ${data.error || 'Unknown error'}<br>
-                        ${data.details ? '<small class="d-block mt-1">' + data.details + '</small>' : ''}
-                        ${data.folder_id ? `<small class="d-block mt-1"><strong>Folder ID being tested:</strong> <code>${data.folder_id}</code></small>` : ''}
-                        ${data.service_account ? `<div class="mt-2 p-2 bg-light rounded"><strong>Service Account Email:</strong><br><code class="d-block mt-1">${data.service_account}</code><button class="btn btn-sm btn-outline-primary mt-2" onclick="copyToClipboard('${data.service_account}')"><i class="bi bi-clipboard me-1"></i>Copy Email</button></div>` : ''}
-                        ${troubleshooting}
-                        ${verificationSteps}
-                    </div>
-                `;
-            }
-        } catch (error) {
-            resultDiv.innerHTML = `
-                <div class="alert alert-danger">
-                    <i class="bi bi-x-circle me-1"></i>Error testing access: ${error.message}
-                </div>
-            `;
-        }
-    }
 
     // Change Password
     document.getElementById('change-password-btn').addEventListener('click', async () => {
