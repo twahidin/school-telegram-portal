@@ -11,8 +11,10 @@ import logging
 import re
 from telegram import Update, Bot, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
+from telegram.error import Conflict
 from datetime import datetime
 from pymongo import MongoClient
+import sys
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -1445,7 +1447,32 @@ def main():
     application.add_handler(MessageHandler(filters.COMMAND, handle_unknown))
     
     logger.info("Starting bot...")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    try:
+        application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+    except Conflict as e:
+        logger.error("=" * 60)
+        logger.error("ERROR: Multiple bot instances detected!")
+        logger.error("=" * 60)
+        logger.error("Another instance of the bot is already running.")
+        logger.error("Telegram only allows ONE bot instance to poll for updates.")
+        logger.error("")
+        logger.error("To fix this:")
+        logger.error("1. Find and kill all running bot processes:")
+        logger.error("   - On Linux/Mac: ps aux | grep bot.py")
+        logger.error("   - Kill processes: kill <PID>")
+        logger.error("   - Or: pkill -f bot.py")
+        logger.error("2. Check for multiple instances in:")
+        logger.error("   - Systemd services: systemctl status telegram-bot")
+        logger.error("   - Supervisor: supervisorctl status")
+        logger.error("   - Screen/tmux sessions: screen -ls or tmux ls")
+        logger.error("   - Docker containers: docker ps")
+        logger.error("   - PM2: pm2 list")
+        logger.error("3. Wait 10 seconds, then restart only ONE instance")
+        logger.error("=" * 60)
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}", exc_info=True)
+        raise
 
 if __name__ == '__main__':
     main()
