@@ -7,7 +7,10 @@ import io
 
 logger = logging.getLogger(__name__)
 
-SCOPES = ['https://www.googleapis.com/auth/drive.file']
+SCOPES = [
+    'https://www.googleapis.com/auth/drive.file',
+    'https://www.googleapis.com/auth/drive.readonly'
+]
 
 
 def get_service_account_email() -> str:
@@ -192,6 +195,17 @@ class DriveManager:
                 logger.error("No folder ID provided for list_files")
                 return []
             
+            # First verify the folder exists and we can access it
+            try:
+                folder_info = self.service.files().get(
+                    fileId=target_folder_id,
+                    fields="id, name, mimeType"
+                ).execute()
+                logger.info(f"Accessing folder: {folder_info.get('name')} (ID: {target_folder_id})")
+            except Exception as folder_error:
+                logger.error(f"Cannot access folder {target_folder_id}: {folder_error}")
+                raise
+            
             query = f"'{target_folder_id}' in parents and trashed=false"
             
             # Filter by mime types if provided
@@ -201,15 +215,18 @@ class DriveManager:
             
             logger.debug(f"Querying Google Drive with: {query}")
             
+            # Use supportsAllDrives and includeItemsFromAllDrives for Shared Drives compatibility
             results = self.service.files().list(
                 q=query,
                 fields="files(id, name, mimeType, size, modifiedTime)",
                 orderBy="name",
-                pageSize=100
+                pageSize=100,
+                supportsAllDrives=True,
+                includeItemsFromAllDrives=True
             ).execute()
             
             files = results.get('files', [])
-            logger.debug(f"Found {len(files)} files matching query")
+            logger.info(f"Found {len(files)} files matching query in folder {target_folder_id}")
             return files
         except Exception as e:
             logger.error(f"Error listing files from folder {folder_id or self.folder_id}: {e}", exc_info=True)
@@ -230,7 +247,8 @@ class DriveManager:
             try:
                 folder = self.service.files().get(
                     fileId=target_folder_id,
-                    fields="id, name, mimeType, permissions"
+                    fields="id, name, mimeType, permissions",
+                    supportsAllDrives=True
                 ).execute()
                 logger.info(f"Successfully accessed folder: {folder.get('name')} (ID: {target_folder_id})")
             except Exception as api_error:
