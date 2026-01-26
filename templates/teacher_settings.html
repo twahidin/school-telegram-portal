@@ -298,19 +298,44 @@
                             </div>
                         </div>
                         
+                        <div class="alert alert-warning mb-3">
+                            <i class="bi bi-exclamation-triangle me-2"></i>
+                            <strong>Important:</strong> You must share <strong>both folders</strong> with the service account email shown above. 
+                            Set permission to <strong>Editor</strong> for both folders.
+                        </div>
+                        
                         <div class="mb-3">
-                            <label class="form-label">Google Drive Folder ID</label>
+                            <label class="form-label">Google Drive Folder ID (for Submissions)</label>
                             <input type="text" class="form-control" name="google_drive_folder_id" 
                                    value="{{ teacher.google_drive_folder_id or '' }}"
                                    placeholder="e.g., 1aBcDeFgHiJkLmNoPqRsTuVwXyZ">
                             <small class="text-muted">
-                                Find this in the URL when viewing the folder: drive.google.com/drive/folders/<strong>[FOLDER_ID]</strong>
+                                Folder where student submissions and feedback will be saved. Find this in the URL when viewing the folder: drive.google.com/drive/folders/<strong>[FOLDER_ID]</strong>
+                                <br><strong class="text-danger">⚠️ Must be shared with service account email above with Editor access.</strong>
                             </small>
                         </div>
                         
                         {% if teacher.google_drive_folder_id %}
                         <div class="alert alert-success">
-                            <i class="bi bi-check-circle me-1"></i>Folder configured
+                            <i class="bi bi-check-circle me-1"></i>Submissions folder configured
+                        </div>
+                        {% endif %}
+                        
+                        <div class="mb-3">
+                            <label class="form-label">Google Drive Source Files Folder ID (for Assignment Files)</label>
+                            <input type="text" class="form-control" name="google_drive_source_folder_id" 
+                                   value="{{ teacher.google_drive_source_folder_id or '' }}"
+                                   placeholder="e.g., 1aBcDeFgHiJkLmNoPqRsTuVwXyZ">
+                            <small class="text-muted">
+                                Folder containing your question papers, answer keys, and reference materials. You can browse and select files from this folder when creating assignments instead of uploading from your computer.
+                                <br>Find this in the URL when viewing the folder: drive.google.com/drive/folders/<strong>[FOLDER_ID]</strong>
+                                <br><strong class="text-danger">⚠️ Must be shared with service account email above with Editor access.</strong>
+                            </small>
+                        </div>
+                        
+                        {% if teacher.google_drive_source_folder_id %}
+                        <div class="alert alert-success">
+                            <i class="bi bi-check-circle me-1"></i>Source files folder configured
                         </div>
                         {% endif %}
                         
@@ -321,14 +346,31 @@
                             </button>
                             <div class="collapse mt-2" id="driveSetupHelp">
                                 <div class="card card-body bg-light small">
-                                    <ol class="mb-0">
+                                    <h6 class="fw-bold">For Submissions Folder:</h6>
+                                    <ol class="mb-3">
                                         <li>Create a folder in your Google Drive where you want submissions saved</li>
                                         <li>Right-click the folder and select <strong>Share</strong></li>
                                         <li>Paste the service account email shown above</li>
                                         <li>Set permission to <strong>Editor</strong></li>
                                         <li>Uncheck "Notify people" and click <strong>Share</strong></li>
-                                        <li>Copy the Folder ID from the URL and paste it above</li>
+                                        <li>Copy the Folder ID from the URL (drive.google.com/drive/folders/<strong>[FOLDER_ID]</strong>)</li>
+                                        <li>Paste it in the "Google Drive Folder ID (for Submissions)" field above</li>
                                     </ol>
+                                    
+                                    <h6 class="fw-bold">For Source Files Folder:</h6>
+                                    <ol class="mb-0">
+                                        <li>Create a folder in your Google Drive where you store your question papers, answer keys, etc.</li>
+                                        <li>Upload your PDFs, Google Docs, or Google Sheets to this folder</li>
+                                        <li>Right-click the folder and select <strong>Share</strong></li>
+                                        <li>Paste the <strong>same service account email</strong> shown above</li>
+                                        <li>Set permission to <strong>Editor</strong></li>
+                                        <li>Uncheck "Notify people" and click <strong>Share</strong></li>
+                                        <li>Copy the Folder ID from the URL</li>
+                                        <li>Paste it in the "Google Drive Source Files Folder ID" field above</li>
+                                    </ol>
+                                    <div class="alert alert-info mt-3 mb-0">
+                                        <small><i class="bi bi-info-circle me-1"></i><strong>Note:</strong> You can use the same folder for both, but it's recommended to keep them separate for better organization.</small>
+                                    </div>
                                 </div>
                             </div>
                         </div>

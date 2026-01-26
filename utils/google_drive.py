@@ -2,7 +2,7 @@ import os
 import logging
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload, MediaIoBaseUpload
+from googleapiclient.http import MediaFileUpload, MediaIoBaseUpload, MediaIoBaseDownload
 import io
 
 logger = logging.getLogger(__name__)
@@ -183,6 +183,62 @@ class DriveManager:
         except Exception as e:
             logger.error(f"Error deleting file: {e}")
             return False
+    
+    def list_files(self, folder_id: str = None, mime_types: list = None) -> list:
+        """List files in a folder"""
+        try:
+            query = f"'{folder_id or self.folder_id}' in parents and trashed=false"
+            
+            # Filter by mime types if provided
+            if mime_types:
+                mime_query = ' or '.join([f"mimeType='{mt}'" for mt in mime_types])
+                query += f" and ({mime_query})"
+            
+            results = self.service.files().list(
+                q=query,
+                fields="files(id, name, mimeType, size, modifiedTime)",
+                orderBy="name"
+            ).execute()
+            
+            files = results.get('files', [])
+            return files
+        except Exception as e:
+            logger.error(f"Error listing files: {e}")
+            return []
+    
+    def get_file_content(self, file_id: str, export_as_pdf: bool = False) -> bytes:
+        """Get file content, optionally exporting Google Docs/Sheets as PDF"""
+        try:
+            file_metadata = self.service.files().get(fileId=file_id).execute()
+            mime_type = file_metadata.get('mimeType', '')
+            
+            # If it's a Google Doc/Sheet and we want PDF, export it
+            if export_as_pdf:
+                if mime_type == 'application/vnd.google-apps.document':
+                    request = self.service.files().export_media(fileId=file_id, mimeType='application/pdf')
+                elif mime_type == 'application/vnd.google-apps.spreadsheet':
+                    request = self.service.files().export_media(fileId=file_id, mimeType='application/pdf')
+                elif mime_type == 'application/vnd.google-apps.presentation':
+                    request = self.service.files().export_media(fileId=file_id, mimeType='application/pdf')
+                else:
+                    # Regular file download
+                    request = self.service.files().get_media(fileId=file_id)
+            else:
+                # Regular file download
+                request = self.service.files().get_media(fileId=file_id)
+            
+            import io
+            file_content = io.BytesIO()
+            downloader = MediaIoBaseDownload(file_content, request)
+            done = False
+            while not done:
+                status, done = downloader.next_chunk()
+            
+            file_content.seek(0)
+            return file_content.read()
+        except Exception as e:
+            logger.error(f"Error getting file content: {e}")
+            return None
 
 def upload_assignment_file(file_path: str, assignment: dict, teacher: dict) -> dict:
     """

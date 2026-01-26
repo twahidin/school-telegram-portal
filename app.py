@@ -2146,21 +2146,51 @@ def create_assignment():
             # Get marking type (standard or rubric)
             marking_type = data.get('marking_type', 'standard')
             
-            # Get uploaded files
+            # Get uploaded files or Google Drive file IDs
             question_paper = request.files.get('question_paper')
             answer_key = request.files.get('answer_key')
             rubrics = request.files.get('rubrics')
+            question_paper_drive_id = data.get('question_paper_drive_id')
+            answer_key_drive_id = data.get('answer_key_drive_id')
+            rubrics_drive_id = data.get('rubrics_drive_id')
+            reference_materials_drive_id = data.get('reference_materials_drive_id')
+            
+            # Helper function to get file content from Drive or upload
+            def get_file_content(file_obj, drive_id, file_type_name):
+                if drive_id:
+                    # Download from Google Drive
+                    try:
+                        from utils.google_drive import get_drive_service, DriveManager
+                        service = get_drive_service()
+                        if service:
+                            manager = DriveManager(service)
+                            content = manager.get_file_content(drive_id, export_as_pdf=True)
+                            if content:
+                                return content, None
+                            else:
+                                raise Exception(f"Failed to download {file_type_name} from Google Drive")
+                        else:
+                            raise Exception("Google Drive not configured")
+                    except Exception as e:
+                        logger.error(f"Error downloading {file_type_name} from Drive: {e}")
+                        raise Exception(f"Failed to download {file_type_name} from Google Drive: {str(e)}")
+                elif file_obj and file_obj.filename:
+                    # Use uploaded file
+                    content = file_obj.read()
+                    file_obj.seek(0)
+                    return content, file_obj.filename
+                return None, None
             
             # Validate required files based on marking type
             if marking_type == 'rubric':
                 # For rubric-based: question paper and rubrics are required
-                if not question_paper:
+                if not question_paper_drive_id and (not question_paper or not question_paper.filename):
                     return render_template('teacher_create_assignment.html',
                                          teacher=teacher,
                                          classes=classes,
                                          teaching_groups=teaching_groups,
                                          error='Question paper PDF is required')
-                if not rubrics or not rubrics.filename:
+                if not rubrics_drive_id and (not rubrics or not rubrics.filename):
                     return render_template('teacher_create_assignment.html',
                                          teacher=teacher,
                                          classes=classes,
@@ -2168,56 +2198,36 @@ def create_assignment():
                                          error='Rubrics PDF is required for rubric-based marking')
             else:
                 # For standard: question paper and answer key are required
-                if not question_paper or not answer_key:
+                if not question_paper_drive_id and (not question_paper or not question_paper.filename):
                     return render_template('teacher_create_assignment.html',
                                          teacher=teacher,
                                          classes=classes,
                                          teaching_groups=teaching_groups,
-                                         error='Both question paper and answer key PDFs are required')
-            
-            # Validate file types
-            if not question_paper.filename.lower().endswith('.pdf'):
-                return render_template('teacher_create_assignment.html',
-                                     teacher=teacher,
-                                     classes=classes,
-                                     teaching_groups=teaching_groups,
-                                     error='Question paper must be a PDF file')
-            
-            if answer_key and answer_key.filename and not answer_key.filename.lower().endswith('.pdf'):
-                return render_template('teacher_create_assignment.html',
-                                     teacher=teacher,
-                                     classes=classes,
-                                     teaching_groups=teaching_groups,
-                                     error='Answer key must be a PDF file')
+                                         error='Question paper PDF is required')
+                if not answer_key_drive_id and (not answer_key or not answer_key.filename):
+                    return render_template('teacher_create_assignment.html',
+                                         teacher=teacher,
+                                         classes=classes,
+                                         teaching_groups=teaching_groups,
+                                         error='Answer key PDF is required')
             
             assignment_id = generate_assignment_id()
             total_marks = int(data.get('total_marks', 100))
             assignment_title = data.get('title', 'Untitled')
             
-            # Get optional files
-            reference_materials = request.files.get('reference_materials')
-            # Note: rubrics was already fetched above during validation
-            
-            # Read file contents (need to read before storing in GridFS since we also upload to Drive)
-            question_paper_content = question_paper.read()
-            question_paper.seek(0)  # Reset for GridFS
-            
-            # Answer key may be optional for rubric-based marking
-            answer_key_content = None
-            if answer_key and answer_key.filename:
-                answer_key_content = answer_key.read()
-                answer_key.seek(0)  # Reset for GridFS
-            
-            # Read optional file contents
-            reference_materials_content = None
-            if reference_materials and reference_materials.filename and reference_materials.filename.lower().endswith('.pdf'):
-                reference_materials_content = reference_materials.read()
-                reference_materials.seek(0)
-            
-            rubrics_content = None
-            if rubrics and rubrics.filename and rubrics.filename.lower().endswith('.pdf'):
-                rubrics_content = rubrics.read()
-                rubrics.seek(0)
+            # Get file contents from Drive or uploads
+            try:
+                question_paper_content, question_paper_name = get_file_content(question_paper, question_paper_drive_id, 'question paper')
+                answer_key_content, answer_key_name = get_file_content(answer_key, answer_key_drive_id, 'answer key')
+                reference_materials = request.files.get('reference_materials')
+                reference_materials_content, _ = get_file_content(reference_materials, reference_materials_drive_id, 'reference materials')
+                rubrics_content, _ = get_file_content(rubrics, rubrics_drive_id, 'rubrics')
+            except Exception as e:
+                return render_template('teacher_create_assignment.html',
+                                     teacher=teacher,
+                                     classes=classes,
+                                     teaching_groups=teaching_groups,
+                                     error=str(e))
             
             # Extract text from PDFs for cost-effective AI processing
             question_paper_text = extract_text_from_pdf(question_paper_content)
@@ -2863,6 +2873,36 @@ def save_review_feedback(submission_id):
             {'$set': update_data}
         )
         
+        # Upload feedback PDF to Google Drive if configured
+        teacher = Teacher.find_one({'teacher_id': session['teacher_id']})
+        student = Student.find_one({'student_id': submission['student_id']})
+        
+        if teacher and teacher.get('google_drive_folder_id') and assignment.get('drive_folders', {}).get('submissions_folder_id'):
+            try:
+                from utils.pdf_generator import generate_review_pdf
+                from utils.google_drive import upload_student_submission
+                
+                # Generate PDF with student work and feedback
+                pdf_content = generate_review_pdf(submission, assignment, student, teacher)
+                if pdf_content:
+                    # Upload to submissions folder
+                    drive_result = upload_student_submission(
+                        teacher=teacher,
+                        submissions_folder_id=assignment['drive_folders']['submissions_folder_id'],
+                        submission_content=pdf_content,
+                        filename=f"feedback_{submission_id}.pdf",
+                        student_name=student.get('name'),
+                        student_id=student.get('student_id')
+                    )
+                    if drive_result:
+                        Submission.update_one(
+                            {'submission_id': submission_id},
+                            {'$set': {'feedback_drive_file': drive_result}}
+                        )
+                        logger.info(f"Uploaded feedback PDF for {submission_id} to Google Drive")
+            except Exception as drive_error:
+                logger.warning(f"Could not upload feedback PDF to Drive: {drive_error}")
+        
         return jsonify({'success': True, 'message': 'Feedback saved'})
         
     except Exception as e:
@@ -3051,6 +3091,36 @@ def save_rubric_feedback(submission_id):
             {'submission_id': submission_id},
             {'$set': update_data}
         )
+        
+        # Upload feedback PDF to Google Drive if configured
+        teacher = Teacher.find_one({'teacher_id': session['teacher_id']})
+        student = Student.find_one({'student_id': submission['student_id']})
+        
+        if teacher and teacher.get('google_drive_folder_id') and assignment.get('drive_folders', {}).get('submissions_folder_id'):
+            try:
+                from utils.pdf_generator import generate_rubric_review_pdf
+                from utils.google_drive import upload_student_submission
+                
+                # Generate PDF with student work and feedback
+                pdf_content = generate_rubric_review_pdf(submission, assignment, student, teacher)
+                if pdf_content:
+                    # Upload to submissions folder
+                    drive_result = upload_student_submission(
+                        teacher=teacher,
+                        submissions_folder_id=assignment['drive_folders']['submissions_folder_id'],
+                        submission_content=pdf_content,
+                        filename=f"feedback_{submission_id}.pdf",
+                        student_name=student.get('name'),
+                        student_id=student.get('student_id')
+                    )
+                    if drive_result:
+                        Submission.update_one(
+                            {'submission_id': submission_id},
+                            {'$set': {'feedback_drive_file': drive_result}}
+                        )
+                        logger.info(f"Uploaded rubric feedback PDF for {submission_id} to Google Drive")
+            except Exception as drive_error:
+                logger.warning(f"Could not upload feedback PDF to Drive: {drive_error}")
         
         return jsonify({'success': True, 'message': 'Rubric feedback saved'})
         
@@ -3343,6 +3413,12 @@ def teacher_settings():
             # Update Google Drive folder
             if data.get('google_drive_folder_id'):
                 update_data['google_drive_folder_id'] = data['google_drive_folder_id']
+            
+            # Update Google Drive source files folder
+            if data.get('google_drive_source_folder_id'):
+                update_data['google_drive_source_folder_id'] = data['google_drive_source_folder_id']
+            elif 'google_drive_source_folder_id' in data:
+                update_data['google_drive_source_folder_id'] = None
             
             # Update subjects
             if data.get('subjects'):
@@ -3786,6 +3862,113 @@ def teacher_send_message():
     except Exception as e:
         logger.error(f"Error sending message: {e}")
         return jsonify({'error': 'Failed to send'}), 500
+
+@app.route('/api/teacher/drive/files', methods=['GET'])
+@teacher_required
+def list_drive_files():
+    """List files from teacher's Google Drive source folder"""
+    try:
+        teacher = Teacher.find_one({'teacher_id': session['teacher_id']})
+        if not teacher:
+            return jsonify({'error': 'Teacher not found'}), 404
+        
+        source_folder_id = teacher.get('google_drive_source_folder_id')
+        if not source_folder_id:
+            return jsonify({'error': 'Source folder not configured'}), 400
+        
+        from utils.google_drive import get_drive_service, DriveManager
+        service = get_drive_service()
+        if not service:
+            return jsonify({'error': 'Google Drive not configured'}), 500
+        
+        manager = DriveManager(service)
+        
+        # List PDFs, Google Docs, and Google Sheets
+        mime_types = [
+            'application/pdf',
+            'application/vnd.google-apps.document',
+            'application/vnd.google-apps.spreadsheet'
+        ]
+        
+        files = manager.list_files(folder_id=source_folder_id, mime_types=mime_types)
+        
+        # Format files for frontend
+        formatted_files = []
+        for file in files:
+            mime_type = file.get('mimeType', '')
+            file_type = 'pdf'
+            if mime_type == 'application/vnd.google-apps.document':
+                file_type = 'doc'
+            elif mime_type == 'application/vnd.google-apps.spreadsheet':
+                file_type = 'sheet'
+            
+            formatted_files.append({
+                'id': file.get('id'),
+                'name': file.get('name'),
+                'type': file_type,
+                'mimeType': mime_type,
+                'size': file.get('size'),
+                'modifiedTime': file.get('modifiedTime')
+            })
+        
+        return jsonify({
+            'success': True,
+            'files': formatted_files
+        })
+        
+    except Exception as e:
+        logger.error(f"Error listing Drive files: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/teacher/drive/files/<file_id>/download', methods=['GET'])
+@teacher_required
+def download_drive_file(file_id):
+    """Download or export a file from Google Drive"""
+    try:
+        teacher = Teacher.find_one({'teacher_id': session['teacher_id']})
+        if not teacher:
+            return jsonify({'error': 'Teacher not found'}), 404
+        
+        source_folder_id = teacher.get('google_drive_source_folder_id')
+        if not source_folder_id:
+            return jsonify({'error': 'Source folder not configured'}), 400
+        
+        from utils.google_drive import get_drive_service, DriveManager
+        service = get_drive_service()
+        if not service:
+            return jsonify({'error': 'Google Drive not configured'}), 500
+        
+        manager = DriveManager(service)
+        
+        # Get file content (will export Google Docs/Sheets as PDF)
+        file_content = manager.get_file_content(file_id, export_as_pdf=True)
+        
+        if not file_content:
+            return jsonify({'error': 'Failed to download file'}), 500
+        
+        # Get file metadata for filename
+        file_metadata = service.files().get(fileId=file_id).execute()
+        file_name = file_metadata.get('name', 'file')
+        mime_type = file_metadata.get('mimeType', '')
+        
+        # If it's a Google Doc/Sheet, add .pdf extension
+        if mime_type in ['application/vnd.google-apps.document', 
+                        'application/vnd.google-apps.spreadsheet',
+                        'application/vnd.google-apps.presentation']:
+            if not file_name.endswith('.pdf'):
+                file_name += '.pdf'
+        
+        return Response(
+            file_content,
+            mimetype='application/pdf',
+            headers={
+                'Content-Disposition': f'attachment; filename="{file_name}"'
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"Error downloading Drive file: {e}")
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/teacher/get_students', methods=['GET'])
 @teacher_required

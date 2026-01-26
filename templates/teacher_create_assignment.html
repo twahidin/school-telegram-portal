@@ -112,16 +112,56 @@
                 
                 <!-- Upload Documents - Moved here between Basic Info and Assign To -->
                 <div class="card mb-4">
-                    <div class="card-header">
+                    <div class="card-header d-flex justify-content-between align-items-center">
                         <h5 class="mb-0"><i class="bi bi-file-pdf me-2"></i>Upload Documents</h5>
+                        {% if teacher.google_drive_source_folder_id %}
+                        <button type="button" class="btn btn-sm btn-outline-primary" onclick="toggleDriveBrowser()">
+                            <i class="bi bi-google-drive me-1"></i>Browse Google Drive
+                        </button>
+                        {% endif %}
                     </div>
                     <div class="card-body">
+                        {% if teacher.google_drive_source_folder_id %}
+                        <div id="drive-browser" style="display: none;" class="mb-4">
+                            <div class="card bg-light">
+                                <div class="card-body">
+                                    <h6><i class="bi bi-google-drive me-2"></i>Select from Google Drive</h6>
+                                    <div class="mb-3">
+                                        <label class="form-label">Select File Type First:</label>
+                                        <select class="form-select mb-2" id="drive-file-type-select" onchange="setDriveFileType(this.value)">
+                                            <option value="">-- Choose which file to select --</option>
+                                            <option value="question">Question Paper</option>
+                                            <option value="answer">Answer Key</option>
+                                            <option value="reference">Reference Materials</option>
+                                            <option value="rubrics">Rubrics</option>
+                                        </select>
+                                        <label class="form-label">Then Select File:</label>
+                                        <select class="form-select" id="drive-file-select" onchange="selectDriveFile(this.value, this)" disabled>
+                                            <option value="">-- Select file type first --</option>
+                                        </select>
+                                    </div>
+                                    <div class="d-flex gap-2">
+                                        <button type="button" class="btn btn-sm btn-primary" onclick="loadDriveFiles()">
+                                            <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+                                        </button>
+                                        <button type="button" class="btn btn-sm btn-secondary" onclick="toggleDriveBrowser()">
+                                            Cancel
+                                        </button>
+                                    </div>
+                                    <small class="text-muted d-block mt-2">
+                                        <i class="bi bi-info-circle me-1"></i>You can select PDFs, Google Docs, or Google Sheets. They will be converted to PDF automatically.
+                                    </small>
+                                </div>
+                            </div>
+                        </div>
+                        {% endif %}
                         <div class="row">
                             <!-- Question Paper -->
                             <div class="col-md-6 mb-3">
                                 <div class="upload-zone" id="question-zone">
                                     <input type="file" class="form-control d-none" id="question_paper" name="question_paper" 
                                            accept=".pdf" onchange="handleFileSelect(this, 'question')">
+                                    <input type="hidden" id="question_paper_drive_id" name="question_paper_drive_id">
                                     <label for="question_paper" class="upload-label">
                                         <div class="upload-icon">
                                             <i class="bi bi-file-earmark-text"></i>
@@ -138,6 +178,7 @@
                                 <div class="upload-zone" id="answer-zone">
                                     <input type="file" class="form-control d-none" id="answer_key" name="answer_key" 
                                            accept=".pdf" onchange="handleFileSelect(this, 'answer')">
+                                    <input type="hidden" id="answer_key_drive_id" name="answer_key_drive_id">
                                     <label for="answer_key" class="upload-label">
                                         <div class="upload-icon answer">
                                             <i class="bi bi-file-earmark-check"></i>
@@ -156,6 +197,7 @@
                                 <div class="upload-zone" id="reference-zone">
                                     <input type="file" class="form-control d-none" id="reference_materials" name="reference_materials" 
                                            accept=".pdf" onchange="handleFileSelect(this, 'reference')">
+                                    <input type="hidden" id="reference_materials_drive_id" name="reference_materials_drive_id">
                                     <label for="reference_materials" class="upload-label">
                                         <div class="upload-icon reference">
                                             <i class="bi bi-book"></i>
@@ -173,6 +215,7 @@
                                 <div class="upload-zone" id="rubrics-zone">
                                     <input type="file" class="form-control d-none" id="rubrics" name="rubrics" 
                                            accept=".pdf" onchange="handleFileSelect(this, 'rubrics')">
+                                    <input type="hidden" id="rubrics_drive_id" name="rubrics_drive_id">
                                     <label for="rubrics" class="upload-label">
                                         <div class="upload-icon rubrics">
                                             <i class="bi bi-list-check"></i>
@@ -533,9 +576,12 @@
     });
     
     function validateForm() {
-        const questionPaper = document.getElementById('question_paper').files.length > 0;
-        const answerKey = document.getElementById('answer_key').files.length > 0;
-        const rubrics = document.getElementById('rubrics').files.length > 0;
+        const questionPaper = document.getElementById('question_paper').files.length > 0 || 
+                             document.getElementById('question_paper_drive_id').value;
+        const answerKey = document.getElementById('answer_key').files.length > 0 || 
+                         document.getElementById('answer_key_drive_id').value;
+        const rubrics = document.getElementById('rubrics').files.length > 0 || 
+                       document.getElementById('rubrics_drive_id').value;
         const markingType = document.querySelector('input[name="marking_type"]:checked').value;
         const submitBtn = document.getElementById('submit-btn');
         
@@ -550,21 +596,24 @@
     
     // Form validation
     document.getElementById('create-assignment-form').addEventListener('submit', function(e) {
-        const questionPaper = document.getElementById('question_paper').files.length;
-        const answerKey = document.getElementById('answer_key').files.length;
-        const rubrics = document.getElementById('rubrics').files.length;
+        const questionPaper = document.getElementById('question_paper').files.length > 0 || 
+                             document.getElementById('question_paper_drive_id').value;
+        const answerKey = document.getElementById('answer_key').files.length > 0 || 
+                         document.getElementById('answer_key_drive_id').value;
+        const rubrics = document.getElementById('rubrics').files.length > 0 || 
+                       document.getElementById('rubrics_drive_id').value;
         const markingType = document.querySelector('input[name="marking_type"]:checked').value;
         
         if (markingType === 'rubric') {
             if (!questionPaper || !rubrics) {
                 e.preventDefault();
-                alert('Please upload both the question paper and rubrics PDFs for rubric-based marking.');
+                alert('Please upload or select from Google Drive both the question paper and rubrics PDFs for rubric-based marking.');
                 return false;
             }
         } else {
             if (!questionPaper || !answerKey) {
                 e.preventDefault();
-                alert('Please upload both the question paper and answer key PDFs.');
+                alert('Please upload or select from Google Drive both the question paper and answer key PDFs.');
                 return false;
             }
         }
@@ -637,6 +686,115 @@
     
     // Initial validation
     validateForm();
+    
+    // Google Drive file browser
+    let currentFileType = null;
+    
+    function toggleDriveBrowser() {
+        const browser = document.getElementById('drive-browser');
+        if (browser) {
+            browser.style.display = browser.style.display === 'none' ? 'block' : 'none';
+            if (browser.style.display === 'block') {
+                loadDriveFiles();
+                // Reset selections
+                document.getElementById('drive-file-type-select').value = '';
+                document.getElementById('drive-file-select').value = '';
+                document.getElementById('drive-file-select').disabled = true;
+                currentFileType = null;
+            }
+        }
+    }
+    
+    function setDriveFileType(fileType) {
+        currentFileType = fileType;
+        const fileSelect = document.getElementById('drive-file-select');
+        if (fileType) {
+            fileSelect.disabled = false;
+        } else {
+            fileSelect.disabled = true;
+            fileSelect.value = '';
+        }
+    }
+    
+    async function loadDriveFiles() {
+        const select = document.getElementById('drive-file-select');
+        if (!select) return;
+        
+        select.innerHTML = '<option value="">Loading files...</option>';
+        select.disabled = true;
+        
+        try {
+            const response = await fetch('/api/teacher/drive/files');
+            const data = await response.json();
+            
+            if (data.success && data.files) {
+                select.innerHTML = '<option value="">-- Select a file from Google Drive --</option>';
+                data.files.forEach(file => {
+                    const option = document.createElement('option');
+                    option.value = file.id;
+                    option.textContent = `${file.name} (${file.type.toUpperCase()})`;
+                    option.dataset.name = file.name;
+                    option.dataset.type = file.type;
+                    select.appendChild(option);
+                });
+                select.disabled = false;
+            } else {
+                select.innerHTML = '<option value="">No files found or error loading</option>';
+            }
+        } catch (error) {
+            console.error('Error loading Drive files:', error);
+            select.innerHTML = '<option value="">Error loading files</option>';
+        }
+    }
+    
+    function selectDriveFile(fileId, selectElement) {
+        if (!fileId || !currentFileType) {
+            alert('Please select a file type first');
+            return;
+        }
+        
+        const select = document.getElementById('drive-file-select');
+        const selectedOption = select.options[select.selectedIndex];
+        if (!selectedOption || !selectedOption.value) return;
+        
+        const name = selectedOption.dataset.name || selectedOption.textContent.split(' (')[0];
+        const type = selectedOption.dataset.type || 'pdf';
+        
+        // Set the hidden drive ID field
+        const driveIdField = document.getElementById(`${currentFileType}_drive_id`);
+        if (driveIdField) {
+            driveIdField.value = fileId;
+        }
+        
+        // Clear any uploaded file for this field
+        const fileInput = document.getElementById(currentFileType === 'answer' ? 'answer_key' : 
+                                                 currentFileType === 'reference' ? 'reference_materials' : 
+                                                 currentFileType);
+        if (fileInput) {
+            fileInput.value = '';
+        }
+        
+        // Update UI
+        const zone = document.getElementById(`${currentFileType}-zone`);
+        const filename = document.getElementById(`${currentFileType}-filename`);
+        const summary = document.getElementById(`summary-${currentFileType}`);
+        
+        if (zone && filename) {
+            zone.classList.add('has-file');
+            filename.textContent = `${name} (from Drive)`;
+            if (summary) {
+                summary.innerHTML = '<span class="text-success"><i class="bi bi-check-circle me-1"></i>Selected from Drive</span>';
+            }
+        }
+        
+        // Reset and hide browser
+        document.getElementById('drive-file-type-select').value = '';
+        document.getElementById('drive-file-select').value = '';
+        document.getElementById('drive-file-select').disabled = true;
+        currentFileType = null;
+        toggleDriveBrowser();
+        validateForm();
+    }
     
     // Toggle between class and teaching group selection
     document.querySelectorAll('input[name="target_type"]').forEach(radio => {
