@@ -387,50 +387,8 @@ def create_assignment_folder_structure(teacher: dict, assignment_title: str, ass
         return None
 
 
-def upload_question_papers(teacher: dict, question_papers_folder_id: str, 
-                           question_paper_content: bytes, question_paper_name: str,
-                           answer_key_content: bytes, answer_key_name: str) -> dict:
-    """
-    Upload question paper and answer key to the Question Papers folder.
-    
-    Returns:
-        dict with file info or None if failed
-    """
-    manager = get_teacher_drive_manager(teacher)
-    if not manager:
-        logger.warning("Drive manager not available")
-        return None
-    
-    try:
-        result = {}
-        
-        # Upload question paper
-        if question_paper_content:
-            qp_result = manager.upload_content(
-                question_paper_content,
-                question_paper_name or "Question_Paper.pdf",
-                mime_type='application/pdf',
-                folder_id=question_papers_folder_id
-            )
-            if qp_result:
-                result['question_paper'] = qp_result
-        
-        # Upload answer key
-        if answer_key_content:
-            ak_result = manager.upload_content(
-                answer_key_content,
-                answer_key_name or "Answer_Key.pdf",
-                mime_type='application/pdf',
-                folder_id=question_papers_folder_id
-            )
-            if ak_result:
-                result['answer_key'] = ak_result
-        
-        return result if result else None
-        
-    except Exception as e:
-        logger.error(f"Error uploading question papers: {e}")
-        return None
+# Removed upload_question_papers function - we no longer copy files to Drive
+# Files from the source folder are referenced directly, not copied
 
 
 def upload_student_submission(teacher: dict, submissions_folder_id: str,
