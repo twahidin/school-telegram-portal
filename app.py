@@ -3990,15 +3990,19 @@ def test_folder_access():
                 all_files = manager.list_files(folder_id=source_folder_id, mime_types=None)
                 pdf_files = manager.list_files(folder_id=source_folder_id, mime_types=['application/pdf'])
                 
+                total_count = len(all_files) if all_files else 0
+                pdf_count = len(pdf_files) if pdf_files else 0
+                
                 return jsonify({
                     'success': True,
                     'message': 'Folder access verified successfully',
                     'folder_id': source_folder_id,
                     'service_account': service_account_email,
-                    'total_files': len(all_files),
-                    'pdf_files': len(pdf_files),
-                    'details': f'Found {len(all_files)} total files, {len(pdf_files)} PDF files',
-                    'file_names': [f.get('name', 'Unknown') for f in all_files[:10]]  # First 10 files
+                    'total_files': total_count,
+                    'pdf_files': pdf_count,
+                    'count': pdf_count,  # For backward compatibility
+                    'details': f'Found {total_count} total files, {pdf_count} PDF files',
+                    'file_names': [f.get('name', 'Unknown') for f in (all_files[:10] if all_files else [])]  # First 10 files
                 })
             except Exception as list_error:
                 error_str = str(list_error)
