@@ -3621,9 +3621,50 @@ def teacher_messages():
     # Sort by unread count, then by last message time
     students.sort(key=lambda x: (-x['unread_count'], -(x['last_message']['timestamp'].timestamp() if x.get('last_message') else 0)))
     
+    # Get teacher's classes for initiating new conversations
+    teacher_classes = set(teacher.get('classes', []))
+    teacher_student_ids = set()
+    
+    # Find students who have this teacher assigned
+    students_with_teacher = list(Student.find({'teachers': session['teacher_id']}))
+    for student in students_with_teacher:
+        teacher_student_ids.add(student.get('student_id'))
+        if student.get('class'):
+            teacher_classes.add(student.get('class'))
+    
+    # Also find students who have submissions to this teacher's assignments
+    assignments = list(Assignment.find({'teacher_id': session['teacher_id']}))
+    assignment_ids = [a['assignment_id'] for a in assignments]
+    if assignment_ids:
+        submission_student_ids = Submission.find({
+            'assignment_id': {'$in': assignment_ids}
+        }).distinct('student_id')
+        
+        for student_id in submission_student_ids:
+            teacher_student_ids.add(student_id)
+            student = Student.find_one({'student_id': student_id})
+            if student and student.get('class'):
+                teacher_classes.add(student.get('class'))
+    
+    # Get classes data
+    classes_data = []
+    for class_id in sorted(teacher_classes):
+        class_info = Class.find_one({'class_id': class_id}) or {'class_id': class_id}
+        classes_data.append({
+            'class_id': class_id,
+            'name': class_info.get('name', class_id)
+        })
+    
+    # Get teaching groups
+    teaching_groups = list(TeachingGroup.find({'teacher_id': session['teacher_id']}))
+    for group in teaching_groups:
+        group['name'] = group.get('name', group.get('group_id', 'Unknown'))
+    
     return render_template('teacher_messages.html',
                          teacher=teacher,
-                         students=students)
+                         students=students,
+                         classes=classes_data,
+                         teaching_groups=teaching_groups)
 
 @app.route('/teacher/messages/<student_id>')
 @teacher_required
@@ -3633,6 +3674,30 @@ def teacher_chat(student_id):
     student = Student.find_one({'student_id': student_id})
     
     if not student:
+        return redirect(url_for('teacher_messages'))
+    
+    # Verify teacher can message this student
+    # Check if student is assigned to teacher or has submissions to teacher's assignments
+    can_message = False
+    
+    # Check if student is assigned to teacher
+    if session['teacher_id'] in student.get('teachers', []):
+        can_message = True
+    
+    # Check if student has submissions to teacher's assignments
+    if not can_message:
+        assignments = list(Assignment.find({'teacher_id': session['teacher_id']}))
+        assignment_ids = [a['assignment_id'] for a in assignments]
+        if assignment_ids:
+            has_submission = Submission.count({
+                'student_id': student_id,
+                'assignment_id': {'$in': assignment_ids}
+            }) > 0
+            if has_submission:
+                can_message = True
+    
+    if not can_message:
+        # Redirect with error message
         return redirect(url_for('teacher_messages'))
     
     # Get messages
@@ -3721,6 +3786,76 @@ def teacher_send_message():
     except Exception as e:
         logger.error(f"Error sending message: {e}")
         return jsonify({'error': 'Failed to send'}), 500
+
+@app.route('/api/teacher/get_students', methods=['GET'])
+@teacher_required
+def teacher_get_students():
+    """Get students by class or teaching group for a teacher"""
+    try:
+        class_id = request.args.get('class_id')
+        group_id = request.args.get('group_id')
+        
+        teacher = Teacher.find_one({'teacher_id': session['teacher_id']})
+        if not teacher:
+            return jsonify({'error': 'Teacher not found'}), 404
+        
+        teacher_student_ids = set()
+        
+        # Find students who have this teacher assigned
+        students_with_teacher = list(Student.find({'teachers': session['teacher_id']}))
+        for student in students_with_teacher:
+            teacher_student_ids.add(student.get('student_id'))
+        
+        # Also find students who have submissions to this teacher's assignments
+        assignments = list(Assignment.find({'teacher_id': session['teacher_id']}))
+        assignment_ids = [a['assignment_id'] for a in assignments]
+        if assignment_ids:
+            submission_student_ids = Submission.find({
+                'assignment_id': {'$in': assignment_ids}
+            }).distinct('student_id')
+            for student_id in submission_student_ids:
+                teacher_student_ids.add(student_id)
+        
+        # Filter by class or teaching group
+        if group_id:
+            # Get students from teaching group
+            teaching_group = TeachingGroup.find_one({
+                'group_id': group_id,
+                'teacher_id': session['teacher_id']
+            })
+            if not teaching_group:
+                return jsonify({'error': 'Teaching group not found'}), 404
+            
+            group_student_ids = set(teaching_group.get('student_ids', []))
+            student_ids = list(teacher_student_ids & group_student_ids)
+            
+            students = list(Student.find({
+                'student_id': {'$in': student_ids}
+            }).sort('name', 1))
+        elif class_id:
+            # Get students from class
+            students = list(Student.find({
+                'class': class_id,
+                'student_id': {'$in': list(teacher_student_ids)}
+            }).sort('name', 1))
+        else:
+            # Get all students for this teacher
+            students = list(Student.find({
+                'student_id': {'$in': list(teacher_student_ids)}
+            }).sort('name', 1))
+        
+        return jsonify({
+            'success': True,
+            'students': [{
+                'student_id': s.get('student_id'),
+                'name': s.get('name'),
+                'class': s.get('class') or (s.get('classes', [None])[0] if s.get('classes') else '')
+            } for s in students]
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting students: {e}")
+        return jsonify({'error': 'Failed to get students'}), 500
 
 # ============================================================================
 # ADMIN ROUTES
