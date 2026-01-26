@@ -26,6 +26,11 @@
                 <div>
                     <h4 class="mb-1">
                         <i class="bi bi-clipboard-check me-2"></i>Review: {{ assignment.title }}
+                        {% if submission.get('feedback_sent', False) or submission.get('status') == 'reviewed' %}
+                        <span class="badge bg-success ms-2">
+                            <i class="bi bi-check-circle me-1"></i>Feedback Sent
+                        </span>
+                        {% endif %}
                     </h4>
                     <p class="text-muted mb-0">
                         <strong>{{ student.name }}</strong> ({{ student.student_id }}) 
@@ -708,8 +713,18 @@
             const result = await response.json();
             if (result.success) {
                 showToast('Success', 'Feedback sent to student!');
-                // Update UI to show reviewed status
-                setTimeout(() => location.reload(), 1500);
+                
+                // Redirect to next pending submission if available
+                if (result.next_submission_url) {
+                    setTimeout(() => {
+                        window.location.href = result.next_submission_url;
+                    }, 1000);
+                } else {
+                    // No more pending submissions, go back to submissions list
+                    setTimeout(() => {
+                        window.location.href = "{{ url_for('teacher_submissions') }}";
+                    }, 1000);
+                }
             } else {
                 showToast('Error', result.error || 'Failed to send');
             }

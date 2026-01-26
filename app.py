@@ -2679,6 +2679,33 @@ def delete_assignment(assignment_id):
         logger.error(f"Error deleting assignment: {e}")
         return jsonify({'error': 'Failed to delete'}), 500
 
+def get_next_pending_submission(teacher_id, current_submission_id=None):
+    """Get the next pending submission for a teacher"""
+    # Get teacher's assignments
+    assignments = list(Assignment.find({'teacher_id': teacher_id}))
+    assignment_ids = [a['assignment_id'] for a in assignments]
+    
+    if not assignment_ids:
+        return None
+    
+    # Build query for pending submissions
+    query = {
+        'assignment_id': {'$in': assignment_ids},
+        'status': {'$in': ['submitted', 'ai_reviewed']}
+    }
+    
+    # If we have a current submission, exclude it and get the next oldest one
+    if current_submission_id:
+        query['submission_id'] = {'$ne': current_submission_id}
+    
+    # Get the next pending submission (oldest first)
+    next_submission = Submission.find_one(
+        query,
+        sort=[('submitted_at', 1)]  # Oldest first
+    )
+    
+    return next_submission
+
 @app.route('/teacher/submissions')
 @teacher_required
 def teacher_submissions():
@@ -2976,7 +3003,15 @@ def send_feedback_to_student(submission_id):
             except Exception as e:
                 logger.error(f"Failed to send Telegram notification: {e}")
         
-        return jsonify({'success': True, 'message': 'Feedback sent to student'})
+        # Get next pending submission
+        next_submission = get_next_pending_submission(session['teacher_id'], submission_id)
+        
+        return jsonify({
+            'success': True, 
+            'message': 'Feedback sent to student',
+            'next_submission_id': next_submission['submission_id'] if next_submission else None,
+            'next_submission_url': f"/teacher/review/{next_submission['submission_id']}" if next_submission else None
+        })
         
     except Exception as e:
         logger.error(f"Error sending feedback: {e}")
@@ -3093,7 +3128,15 @@ def send_rubric_feedback_to_student(submission_id):
             except Exception as e:
                 logger.error(f"Failed to send Telegram notification: {e}")
         
-        return jsonify({'success': True, 'message': 'Essay feedback sent to student'})
+        # Get next pending submission
+        next_submission = get_next_pending_submission(session['teacher_id'], submission_id)
+        
+        return jsonify({
+            'success': True, 
+            'message': 'Essay feedback sent to student',
+            'next_submission_id': next_submission['submission_id'] if next_submission else None,
+            'next_submission_url': f"/teacher/review/{next_submission['submission_id']}" if next_submission else None
+        })
         
     except Exception as e:
         logger.error(f"Error sending rubric feedback: {e}")
