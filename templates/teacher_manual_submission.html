@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+
+{% block title %}Manual Submission - Teacher Portal{% endblock %}
+
+{% block navbar %}
+<nav class="navbar navbar-expand-lg navbar-dark teacher-nav">
+    <div class="container">
+        <a class="navbar-brand" href="{{ url_for('teacher_dashboard') }}">
+            <i class="bi bi-mortarboard-fill me-2"></i>Teacher Portal
+        </a>
+        <div class="navbar-nav ms-auto">
+            <a class="nav-link" href="{{ url_for('teacher_assignments') }}">Assignments</a>
+            <a class="nav-link" href="{{ url_for('teacher_logout') }}">Logout</a>
+        </div>
+    </div>
+</nav>
+{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <nav aria-label="breadcrumb" class="mb-3">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="{{ url_for('teacher_assignments') }}">Assignments</a></li>
+            <li class="breadcrumb-item"><a href="{{ url_for('assignment_summary', assignment_id=assignment.assignment_id) }}">{{ assignment.title }}</a></li>
+            <li class="breadcrumb-item active">Manual Submission</li>
+        </ol>
+    </nav>
+
+    <div class="row justify-content-center">
+        <div class="col-lg-8">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0"><i class="bi bi-file-earmark-plus me-2"></i>Record manual (hard copy) submission</h5>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted mb-4">
+                        Use this when a student handed in their work on paper. Select the student and upload a PDF or photos of their assignment. The submission will appear in your inbox for marking.
+                    </p>
+
+                    {% if error %}
+                    <div class="alert alert-danger mb-4">
+                        <i class="bi bi-exclamation-triangle me-2"></i>{{ error }}
+                    </div>
+                    {% endif %}
+
+                    <form method="post" enctype="multipart/form-data" id="manual-submission-form">
+                        <div class="mb-4">
+                            <label for="student_id" class="form-label fw-bold">Student *</label>
+                            <select class="form-select" id="student_id" name="student_id" required>
+                                <option value="">— Select student —</option>
+                                {% for s in students %}
+                                <option value="{{ s.student_id }}" {% if s.student_id in submitted_student_ids %}disabled{% endif %}>
+                                    {{ s.name }} ({{ s.student_id }}){% if s.student_id in submitted_student_ids %} — already submitted{% endif %}
+                                </option>
+                                {% endfor %}
+                            </select>
+                            <small class="text-muted">Students who already have a submission are disabled.</small>
+                        </div>
+
+                        <div class="mb-4">
+                            <label for="files" class="form-label fw-bold">Upload PDF or photos *</label>
+                            <input type="file" class="form-control" id="files" name="files" accept=".pdf,image/*" multiple required>
+                            <small class="text-muted">You can upload one PDF or multiple images (e.g. photos of each page).</small>
+                        </div>
+
+                        <div class="d-flex gap-2">
+                            <button type="submit" class="btn btn-primary">
+                                <i class="bi bi-upload me-1"></i>Submit
+                            </button>
+                            <a href="{{ url_for('assignment_summary', assignment_id=assignment.assignment_id) }}" class="btn btn-outline-secondary">Cancel</a>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

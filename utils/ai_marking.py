@@ -72,6 +72,33 @@ def convert_pdf_to_images(pdf_bytes: bytes, max_pages: int = 10) -> list:
         logger.error(f"Error converting PDF to images: {e}")
         return []
 
+def resize_image_for_ai(image_bytes: bytes, max_dimension: int = 1200, quality: int = 85) -> bytes:
+    """
+    Resize and compress an image to reduce payload size for AI APIs (avoids 413 request_too_large).
+    Phone photos are often 3000x4000+ pixels; this reduces them to a manageable size while keeping
+    text/figures readable.
+    """
+    if not PDF2IMAGE_AVAILABLE:
+        return image_bytes
+    try:
+        img = Image.open(io.BytesIO(image_bytes))
+        if img.mode in ('RGBA', 'P'):
+            img = img.convert('RGB')
+        w, h = img.size
+        if w <= max_dimension and h <= max_dimension:
+            out = io.BytesIO()
+            img.save(out, format='JPEG', quality=quality)
+            return out.getvalue()
+        ratio = min(max_dimension / w, max_dimension / h)
+        new_w, new_h = int(w * ratio), int(h * ratio)
+        img = img.resize((new_w, new_h), Image.LANCZOS)
+        out = io.BytesIO()
+        img.save(out, format='JPEG', quality=quality)
+        return out.getvalue()
+    except Exception as e:
+        logger.warning(f"Could not resize image for AI: {e}")
+        return image_bytes
+
 # Model mappings for each provider
 MODEL_MAPPINGS = {
     'anthropic': 'claude-sonnet-4-5-20250929',
@@ -532,11 +559,12 @@ Respond ONLY with valid JSON in this exact format:
             "text": "\nSTUDENT SUBMISSION:"
         })
         
-        # Add student submission pages
+        # Add student submission pages (resize images to reduce payload and avoid 413)
         for i, page in enumerate(pages):
             if page['type'] == 'image':
-                # Image submission
-                image_b64 = base64.standard_b64encode(page['data']).decode('utf-8')
+                # Image submission - resize/compress to avoid request_too_large (413)
+                image_data = resize_image_for_ai(page['data'])
+                image_b64 = base64.standard_b64encode(image_data).decode('utf-8')
                 content.append({
                     "type": "image",
                     "source": {
@@ -585,11 +613,17 @@ Respond ONLY with valid JSON in this exact format:
         return result
         
     except Exception as e:
+        err_str = str(e)
         logger.error(f"Error analyzing submission: {e}")
+        is_413 = '413' in err_str or 'request_too_large' in err_str.lower()
         return {
-            'error': str(e),
+            'error': err_str,
+            'error_code': 'request_too_large' if is_413 else None,
             'questions': [],
-            'overall_feedback': f'Error generating feedback: {str(e)}'
+            'overall_feedback': (
+                'Submission too large for AI (413). Please ask the student to resubmit with fewer or smaller images (e.g. one photo per page, lower resolution), or use Remark to try again.'
+                if is_413 else f'Error generating feedback: {err_str}'
+            )
         }
 
 def parse_ai_response(response_text: str) -> dict:
@@ -1630,10 +1664,11 @@ Respond ONLY with valid JSON in this exact format:
             "text": "\nSTUDENT'S ESSAY SUBMISSION:"
         })
         
-        # Add student submission pages
+        # Add student submission pages (resize images to reduce payload and avoid 413)
         for i, page in enumerate(pages):
             if page['type'] == 'image':
-                image_b64 = base64.standard_b64encode(page['data']).decode('utf-8')
+                image_data = resize_image_for_ai(page['data'])
+                image_b64 = base64.standard_b64encode(image_data).decode('utf-8')
                 content.append({
                     "type": "image",
                     "source": {
@@ -1705,11 +1740,17 @@ Respond with JSON:"""
         return result
         
     except Exception as e:
+        err_str = str(e)
         logger.error(f"Error analyzing essay with rubrics: {e}")
+        is_413 = '413' in err_str or 'request_too_large' in err_str.lower()
         return {
-            'error': str(e),
+            'error': err_str,
+            'error_code': 'request_too_large' if is_413 else None,
             'criteria': [],
             'errors': [],
-            'overall_feedback': f'Error generating feedback: {str(e)}',
+            'overall_feedback': (
+                'Submission too large for AI (413). Please ask the student to resubmit with fewer or smaller images (e.g. one photo per page, lower resolution), or use Remark to try again.'
+                if is_413 else f'Error generating feedback: {err_str}'
+            ),
             'submission_quality': 'unknown'
         }

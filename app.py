@@ -669,12 +669,22 @@ def view_assignment(assignment_id):
     if not can_student_access_assignment(student, assignment):
         return redirect(url_for('assignments_list'))
     
-    # Get existing submission
+    # Get existing submission (submitted, ai_reviewed, or reviewed)
     existing_submission = Submission.find_one({
         'assignment_id': assignment_id,
         'student_id': session['student_id'],
         'status': {'$in': ['submitted', 'ai_reviewed', 'reviewed']}
     })
+    
+    # If no active submission, check for a rejected one so we can show the reason (e.g. 413 - resubmit with smaller images)
+    rejected_submission = None
+    if not existing_submission:
+        rejected_list = list(Submission.find({
+            'assignment_id': assignment_id,
+            'student_id': session['student_id'],
+            'status': 'rejected'
+        }).sort('rejected_at', -1).limit(1))
+        rejected_submission = rejected_list[0] if rejected_list else None
     
     teacher = Teacher.find_one({'teacher_id': assignment['teacher_id']})
     
@@ -682,6 +692,7 @@ def view_assignment(assignment_id):
                          student=student,
                          assignment=assignment,
                          existing_submission=existing_submission,
+                         rejected_submission=rejected_submission,
                          teacher=teacher)
 
 @app.route('/assignments/<assignment_id>/save', methods=['POST'])
@@ -1242,13 +1253,34 @@ def student_submit_files():
                 
                 ai_result = analyze_submission_images(pages, assignment, answer_key_content, teacher)
             
-            Submission.update_one(
-                {'submission_id': submission_id},
-                {'$set': {
-                    'ai_feedback': ai_result,
-                    'status': 'ai_reviewed'
-                }}
+            # If AI returned 413 (request too large), auto-reject so student can resubmit with smaller/fewer images
+            is_413 = ai_result.get('error_code') == 'request_too_large' or (
+                ai_result.get('error') and ('413' in str(ai_result.get('error')) or 'request_too_large' in str(ai_result.get('error')).lower())
             )
+            if is_413:
+                rejection_reason = (
+                    "Your submission was too large to process. Please resubmit with fewer or smaller images: "
+                    "e.g. one photo per page, lower resolution, or fewer pages. This helps the system process your work."
+                )
+                Submission.update_one(
+                    {'submission_id': submission_id},
+                    {'$set': {
+                        'ai_feedback': ai_result,
+                        'status': 'rejected',
+                        'rejection_reason': rejection_reason,
+                        'rejected_at': datetime.utcnow(),
+                        'rejected_by': 'system_413'
+                    }}
+                )
+                logger.info(f"Auto-rejected submission {submission_id} due to 413 request_too_large; student can resubmit.")
+            else:
+                Submission.update_one(
+                    {'submission_id': submission_id},
+                    {'$set': {
+                        'ai_feedback': ai_result,
+                        'status': 'ai_reviewed'
+                    }}
+                )
         except Exception as e:
             logger.error(f"AI feedback error: {e}")
         
@@ -1969,6 +2001,184 @@ def assignment_summary(assignment_id):
                          score_distribution=score_distribution,
                          insights=insights,
                          student_submissions=student_submissions)
+
+def _get_students_for_assignment(assignment, teacher_id):
+    """Get list of students for an assignment (class or teaching group)."""
+    target_type = assignment.get('target_type', 'class')
+    target_class_id = assignment.get('target_class_id')
+    target_group_id = assignment.get('target_group_id')
+    if target_type == 'teaching_group' and target_group_id:
+        teaching_group = TeachingGroup.find_one({'group_id': target_group_id})
+        if teaching_group:
+            student_ids = teaching_group.get('student_ids', [])
+            return list(Student.find({'student_id': {'$in': student_ids}}))
+        return []
+    if target_type == 'class' and target_class_id:
+        return list(Student.find({
+            'class': target_class_id,
+            'teachers': teacher_id
+        }))
+    return list(Student.find({'teachers': teacher_id}))
+
+@app.route('/teacher/assignment/<assignment_id>/manual-submission', methods=['GET', 'POST'])
+@teacher_required
+def manual_submission(assignment_id):
+    """Record a manual (hard copy) submission: teacher selects student and uploads PDF or photos."""
+    from gridfs import GridFS
+    from utils.ai_marking import analyze_submission_images, analyze_essay_with_rubrics
+    
+    teacher = Teacher.find_one({'teacher_id': session['teacher_id']})
+    assignment = Assignment.find_one({
+        'assignment_id': assignment_id,
+        'teacher_id': session['teacher_id']
+    })
+    if not assignment:
+        return redirect(url_for('teacher_assignments'))
+    
+    all_students = _get_students_for_assignment(assignment, session['teacher_id'])
+    
+    if request.method == 'GET':
+        # Get existing submissions so we can show which students already have one
+        submissions = list(Submission.find({
+            'assignment_id': assignment_id,
+            'status': {'$in': ['submitted', 'ai_reviewed', 'reviewed']}
+        }))
+        submitted_student_ids = {s['student_id'] for s in submissions}
+        return render_template('teacher_manual_submission.html',
+                             teacher=teacher,
+                             assignment=assignment,
+                             students=all_students,
+                             submitted_student_ids=submitted_student_ids)
+    
+    # POST: create submission
+    student_id = request.form.get('student_id')
+    files = request.files.getlist('files')
+    if not student_id or not files or not any(f.filename for f in files):
+        return render_template('teacher_manual_submission.html',
+                             teacher=teacher,
+                             assignment=assignment,
+                             students=all_students,
+                             submitted_student_ids=set(),
+                             error='Please select a student and upload at least one file (PDF or images).')
+    
+    student_ids = [s['student_id'] for s in all_students]
+    if student_id not in student_ids:
+        return render_template('teacher_manual_submission.html',
+                             teacher=teacher,
+                             assignment=assignment,
+                             students=all_students,
+                             submitted_student_ids=set(),
+                             error='Invalid student.')
+    
+    existing = Submission.find_one({
+        'assignment_id': assignment_id,
+        'student_id': student_id,
+        'status': {'$in': ['submitted', 'ai_reviewed', 'reviewed']}
+    })
+    if existing:
+        existing_subs = list(Submission.find({'assignment_id': assignment_id, 'status': {'$in': ['submitted', 'ai_reviewed', 'reviewed']}}))
+        return render_template('teacher_manual_submission.html',
+                             teacher=teacher,
+                             assignment=assignment,
+                             students=all_students,
+                             submitted_student_ids={s['student_id'] for s in existing_subs},
+                             error='This student already has a submission for this assignment.')
+    
+    submission_id = generate_submission_id()
+    fs = GridFS(db.db)
+    file_ids = []
+    pages = []
+    
+    for i, file in enumerate(files):
+        if not file.filename:
+            continue
+        file_data = file.read()
+        if not file_data:
+            continue
+        ext = file.filename.lower().split('.')[-1]
+        if ext == 'pdf':
+            content_type = 'application/pdf'
+            page_type = 'pdf'
+        else:
+            content_type = 'image/jpeg'
+            page_type = 'image'
+        file_id = fs.put(
+            file_data,
+            filename=f"{submission_id}_page_{i+1}.{ext}",
+            content_type=content_type,
+            submission_id=submission_id,
+            page_num=i + 1
+        )
+        file_ids.append(str(file_id))
+        pages.append({'type': page_type, 'data': file_data, 'page_num': len(pages) + 1})
+    
+    if not file_ids:
+        return render_template('teacher_manual_submission.html',
+                             teacher=teacher,
+                             assignment=assignment,
+                             students=all_students,
+                             submitted_student_ids=set(),
+                             error='No valid files could be read. Please upload PDF or image files.')
+    
+    submission = {
+        'submission_id': submission_id,
+        'assignment_id': assignment_id,
+        'student_id': student_id,
+        'teacher_id': assignment['teacher_id'],
+        'file_ids': file_ids,
+        'file_type': 'pdf' if any(p['type'] == 'pdf' for p in pages) else 'image',
+        'page_count': len(pages),
+        'status': 'submitted',
+        'submitted_at': datetime.utcnow(),
+        'submitted_via': 'manual',
+        'submitted_by_teacher': session['teacher_id'],
+        'created_at': datetime.utcnow()
+    }
+    Submission.insert_one(submission)
+    
+    # Generate AI feedback (same as student submit)
+    try:
+        marking_type = assignment.get('marking_type', 'standard')
+        if marking_type == 'rubric':
+            rubrics_content = None
+            if assignment.get('rubrics_id'):
+                try:
+                    rubrics_file = fs.get(assignment['rubrics_id'])
+                    rubrics_content = rubrics_file.read()
+                except Exception:
+                    pass
+            ai_result = analyze_essay_with_rubrics(pages, assignment, rubrics_content, teacher)
+        else:
+            answer_key_content = None
+            if assignment.get('answer_key_id'):
+                try:
+                    answer_file = fs.get(assignment['answer_key_id'])
+                    answer_key_content = answer_file.read()
+                except Exception:
+                    pass
+            ai_result = analyze_submission_images(pages, assignment, answer_key_content, teacher)
+        
+        is_413 = ai_result.get('error_code') == 'request_too_large' or (
+            ai_result.get('error') and ('413' in str(ai_result.get('error')) or 'request_too_large' in str(ai_result.get('error')).lower())
+        )
+        if is_413:
+            Submission.update_one(
+                {'submission_id': submission_id},
+                {'$set': {'ai_feedback': ai_result, 'status': 'rejected', 'rejection_reason': 'Submission too large for AI. You can still review manually.', 'rejected_at': datetime.utcnow(), 'rejected_by': 'system_413'}}
+            )
+        else:
+            Submission.update_one(
+                {'submission_id': submission_id},
+                {'$set': {'ai_feedback': ai_result, 'status': 'ai_reviewed'}}
+            )
+    except Exception as e:
+        logger.error(f"AI feedback error on manual submission: {e}")
+        Submission.update_one(
+            {'submission_id': submission_id},
+            {'$set': {'ai_feedback': {'error': str(e), 'questions': [], 'overall_feedback': f'Error: {e}'}}}
+        )
+    
+    return redirect(url_for('review_submission', submission_id=submission_id))
 
 def analyze_class_insights(submissions: list) -> dict:
     """Analyze AI feedback to identify class-wide patterns, misconceptions, and topics to review"""

@@ -964,11 +964,10 @@
     // Generate or regenerate AI feedback (e.g. after an error)
     async function regenerateAIFeedback() {
         const btn = document.getElementById('btn-regenerate-ai');
-        const label = document.getElementById('regenerate-ai-label');
-        if (!btn || !label) return;
-        const originalHtml = label.textContent;
+        if (!btn) return;
+        const originalHtml = btn.innerHTML;
         btn.disabled = true;
-        label.textContent = 'Generating...';
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span> Generating AI feedback...';
         try {
             const response = await fetch(`/teacher/review/${submissionId}/regenerate-ai-feedback`, {
                 method: 'POST',
@@ -982,12 +981,12 @@
             } else {
                 showToast('Error', result.error || result.message || 'Failed to generate AI feedback');
                 btn.disabled = false;
-                label.textContent = originalHtml;
+                btn.innerHTML = originalHtml;
             }
         } catch (e) {
             showToast('Error', 'Failed to generate AI feedback');
             btn.disabled = false;
-            label.textContent = originalHtml;
+            btn.innerHTML = originalHtml;
         }
     }
     
