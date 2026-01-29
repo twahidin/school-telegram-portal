@@ -63,11 +63,33 @@
         {% endif %}
     </div>
     
-    <!-- Filters: Assignment (same class/group only) and Status -->
+    <!-- Filters: Teaching Group, Class, Assignment, Status -->
     <div class="card mb-4">
         <div class="card-body">
-            <form method="GET" class="row g-3 align-items-end">
-                <div class="col-md-4">
+            <form method="GET" class="row g-3 align-items-end" id="submissions-filter-form">
+                <div class="col-md-2">
+                    <label class="form-label">Teaching Group</label>
+                    <select name="teaching_group" class="form-select" onchange="document.getElementById('submissions-filter-form').submit()">
+                        <option value="">All</option>
+                        {% for g in teaching_groups %}
+                        <option value="{{ g.group_id }}" {% if teaching_group_filter == g.group_id %}selected{% endif %}>
+                            {{ g.name or g.group_id }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Class</label>
+                    <select name="class_id" class="form-select" onchange="document.getElementById('submissions-filter-form').submit()">
+                        <option value="">All</option>
+                        {% for c in classes_for_dropdown %}
+                        <option value="{{ c.class_id }}" {% if class_filter == c.class_id %}selected{% endif %}>
+                            {{ c.name or c.class_id }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3">
                     <label class="form-label">Assignment</label>
                     <select name="assignment" class="form-select" onchange="this.form.submit()">
                         <option value="">Select an assignment</option>
@@ -79,7 +101,7 @@
                     </select>
                 </div>
                 {% if selected_assignment %}
-                <div class="col-md-4">
+                <div class="col-md-2">
                     <label class="form-label">Status</label>
                     <select name="status" class="form-select" onchange="this.form.submit()">
                         <option value="all" {% if status_filter == 'all' %}selected{% endif %}>All</option>
@@ -89,9 +111,9 @@
                         <option value="rejected" {% if status_filter == 'rejected' %}selected{% endif %}>Rejected</option>
                     </select>
                 </div>
-                <div class="col-md-4">
+                <div class="col-md-2">
                     <button type="submit" class="btn btn-primary">
-                        <i class="bi bi-funnel me-1"></i>Apply Filters
+                        <i class="bi bi-funnel me-1"></i>Apply
                     </button>
                 </div>
                 {% endif %}

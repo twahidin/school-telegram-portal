@@ -978,11 +978,15 @@ def submit_assignment(assignment_id):
         student = Student.find_one({'student_id': session['student_id']})
         teacher = Teacher.find_one({'teacher_id': assignment['teacher_id']})
         
-        # Check for existing submission
+        # Check for existing submission (cannot resubmit unless rejected)
         existing = Submission.find_one({
             'assignment_id': assignment_id,
             'student_id': session['student_id']
         })
+        if existing and existing.get('status') in ['submitted', 'ai_reviewed', 'reviewed']:
+            if existing.get('submitted_via') == 'manual':
+                return jsonify({'error': 'This assignment was submitted by your teacher. You cannot resubmit unless the teacher rejects it.'}), 400
+            return jsonify({'error': 'Already submitted'}), 400
         
         submission_id = existing['submission_id'] if existing else generate_submission_id()
         
@@ -1165,7 +1169,7 @@ def student_submit_files():
         student = Student.find_one({'student_id': session['student_id']})
         teacher = Teacher.find_one({'teacher_id': assignment['teacher_id']})
         
-        # Check for existing submission
+        # Check for existing submission (student cannot resubmit unless teacher rejected)
         existing = Submission.find_one({
             'assignment_id': assignment_id,
             'student_id': session['student_id'],
@@ -1173,6 +1177,8 @@ def student_submit_files():
         })
         
         if existing:
+            if existing.get('submitted_via') == 'manual':
+                return jsonify({'error': 'This assignment was submitted by your teacher. You cannot resubmit unless the teacher rejects it.'}), 400
             return jsonify({'error': 'Already submitted'}), 400
         
         submission_id = generate_submission_id()
@@ -3236,12 +3242,30 @@ def get_next_pending_submission(teacher_id, current_submission_id=None, assignme
 @teacher_required
 def teacher_submissions():
     """List all students in the assignment's class/group with submission status.
-    Assignment dropdown is restricted to same teaching group/class only."""
+    Teacher can filter by Teaching Group or Class first, then select an assignment."""
     teacher = Teacher.find_one({'teacher_id': session['teacher_id']})
     status_filter = request.args.get('status', 'all')
     assignment_filter = request.args.get('assignment', '')
+    teaching_group_filter = request.args.get('teaching_group', '')
+    class_filter = request.args.get('class_id', '')  # use class_id to avoid HTML reserved name
     
-    # When an assignment is selected: show only assignments from same class/group
+    # Teaching groups and classes for filter dropdowns
+    teaching_groups = list(TeachingGroup.find({'teacher_id': session['teacher_id']}))
+    all_teacher_assignments = list(Assignment.find({'teacher_id': session['teacher_id']}))
+    class_ids = set()
+    for a in all_teacher_assignments:
+        if a.get('target_type') == 'class' and a.get('target_class_id'):
+            class_ids.add(a['target_class_id'])
+    for c in teacher.get('classes', []):
+        class_ids.add(c)
+    classes_for_dropdown = []
+    for cid in sorted(class_ids):
+        class_info = Class.find_one({'class_id': cid}) or {'class_id': cid}
+        classes_for_dropdown.append({
+            'class_id': cid,
+            'name': class_info.get('name', cid)
+        })
+    
     selected_assignment = None
     assignments_for_dropdown = []
     student_rows = []
@@ -3255,45 +3279,79 @@ def teacher_submissions():
             assignments_for_dropdown = _assignments_same_class_or_group(
                 selected_assignment, session['teacher_id']
             )
-            all_students = _get_students_for_assignment(selected_assignment, session['teacher_id'])
-            submissions_for_assignment = list(Submission.find({
-                'assignment_id': assignment_filter
-            }))
-            sub_by_student = {s['student_id']: s for s in submissions_for_assignment}
-            total_marks = float(selected_assignment.get('total_marks', 100) or 100)
-            for student in sorted(all_students, key=lambda x: x.get('name', '')):
-                sub = sub_by_student.get(student['student_id'])
-                status = (sub.get('status') or 'submitted') if sub else 'not_submitted'
-                percentage = 0
-                final_marks = None
-                if sub and sub.get('final_marks') is not None:
-                    try:
-                        final_marks = float(sub['final_marks'])
-                        percentage = (final_marks / total_marks * 100) if total_marks > 0 else 0
-                    except (ValueError, TypeError):
-                        pass
-                row = {
-                    'student': student,
-                    'submission': sub,
-                    'status': status,
-                    'percentage': percentage,
-                    'final_marks': final_marks,
-                    'total_marks': int(total_marks)
-                }
-                # Apply status filter
-                if status_filter == 'all':
-                    student_rows.append(row)
-                elif status_filter == 'pending' and status in ('submitted', 'ai_reviewed'):
-                    student_rows.append(row)
-                elif status_filter == 'approved' and status in ('reviewed', 'approved'):
-                    student_rows.append(row)
-                elif status_filter == 'rejected' and status == 'rejected':
-                    student_rows.append(row)
-                elif status_filter == 'not_submitted' and status == 'not_submitted':
-                    student_rows.append(row)
+            # If TG or Class filter is set, restrict to that and clear selection if it doesn't match
+            if teaching_group_filter:
+                assignments_for_dropdown = [
+                    a for a in assignments_for_dropdown
+                    if a.get('target_type') == 'teaching_group' and a.get('target_group_id') == teaching_group_filter
+                ]
+            elif class_filter:
+                assignments_for_dropdown = [
+                    a for a in assignments_for_dropdown
+                    if a.get('target_type') == 'class' and a.get('target_class_id') == class_filter
+                ]
+            aid_in_list = {a['assignment_id'] for a in assignments_for_dropdown}
+            if selected_assignment['assignment_id'] not in aid_in_list:
+                selected_assignment = None
+                assignment_filter = ''
+                student_rows = []
+            else:
+                all_students = _get_students_for_assignment(selected_assignment, session['teacher_id'])
+                submissions_for_assignment = list(Submission.find({
+                    'assignment_id': assignment_filter
+                }))
+                sub_by_student = {s['student_id']: s for s in submissions_for_assignment}
+                total_marks = float(selected_assignment.get('total_marks', 100) or 100)
+                for student in sorted(all_students, key=lambda x: x.get('name', '')):
+                    sub = sub_by_student.get(student['student_id'])
+                    status = (sub.get('status') or 'submitted') if sub else 'not_submitted'
+                    percentage = 0
+                    final_marks = None
+                    if sub and sub.get('final_marks') is not None:
+                        try:
+                            final_marks = float(sub['final_marks'])
+                            percentage = (final_marks / total_marks * 100) if total_marks > 0 else 0
+                        except (ValueError, TypeError):
+                            pass
+                    row = {
+                        'student': student,
+                        'submission': sub,
+                        'status': status,
+                        'percentage': percentage,
+                        'final_marks': final_marks,
+                        'total_marks': int(total_marks)
+                    }
+                    if status_filter == 'all':
+                        student_rows.append(row)
+                    elif status_filter == 'pending' and status in ('submitted', 'ai_reviewed'):
+                        student_rows.append(row)
+                    elif status_filter == 'approved' and status in ('reviewed', 'approved'):
+                        student_rows.append(row)
+                    elif status_filter == 'rejected' and status == 'rejected':
+                        student_rows.append(row)
+                    elif status_filter == 'not_submitted' and status == 'not_submitted':
+                        student_rows.append(row)
     else:
-        # No assignment selected: show all teacher assignments in dropdown
-        assignments_for_dropdown = list(Assignment.find({'teacher_id': session['teacher_id']}))
+        # No assignment selected: filter assignments by Teaching Group and/or Class if set
+        if teaching_group_filter:
+            assignments_for_dropdown = [
+                a for a in all_teacher_assignments
+                if a.get('target_type') == 'teaching_group' and a.get('target_group_id') == teaching_group_filter
+            ]
+        elif class_filter:
+            assignments_for_dropdown = [
+                a for a in all_teacher_assignments
+                if a.get('target_type') == 'class' and a.get('target_class_id') == class_filter
+            ]
+        else:
+            assignments_for_dropdown = all_teacher_assignments
+    
+    # When an assignment is selected, pre-fill TG/Class filters from that assignment for display
+    if selected_assignment and not teaching_group_filter and not class_filter:
+        if selected_assignment.get('target_type') == 'teaching_group':
+            teaching_group_filter = selected_assignment.get('target_group_id') or ''
+        elif selected_assignment.get('target_type') == 'class':
+            class_filter = selected_assignment.get('target_class_id') or ''
     
     return render_template('teacher_submissions.html',
                          teacher=teacher,
@@ -3301,7 +3359,11 @@ def teacher_submissions():
                          assignments=assignments_for_dropdown,
                          selected_assignment=selected_assignment,
                          status_filter=status_filter,
-                         assignment_filter=assignment_filter)
+                         assignment_filter=assignment_filter,
+                         teaching_groups=teaching_groups,
+                         classes_for_dropdown=classes_for_dropdown,
+                         teaching_group_filter=teaching_group_filter,
+                         class_filter=class_filter)
 
 @app.route('/teacher/submissions/<submission_id>/review', methods=['GET'])
 @app.route('/teacher/review/<submission_id>', methods=['GET'])
