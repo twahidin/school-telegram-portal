@@ -1,0 +1,396 @@
+{% extends "base.html" %}
+
+{% block title %}{{ module.title }} - Learning{% endblock %}
+
+{% block navbar %}
+<nav class="navbar navbar-expand-lg navbar-dark">
+    <div class="container">
+        <a class="navbar-brand" href="{{ url_for('dashboard') }}">
+            <i class="bi bi-mortarboard-fill me-2"></i>School Portal
+        </a>
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+            <span class="navbar-toggler-icon"></span>
+        </button>
+        <div class="collapse navbar-collapse" id="navbarNav">
+            <ul class="navbar-nav me-auto">
+                <li class="nav-item"><a class="nav-link" href="{{ url_for('dashboard') }}"><i class="bi bi-house me-1"></i>Dashboard</a></li>
+                <li class="nav-item"><a class="nav-link active" href="{{ url_for('student_modules') }}"><i class="bi bi-diagram-3 me-1"></i>My Learning</a></li>
+                <li class="nav-item"><a class="nav-link" href="{{ url_for('assignments_list') }}"><i class="bi bi-journal-text me-1"></i>Assignments</a></li>
+                <li class="nav-item"><a class="nav-link" href="{{ url_for('student_submissions') }}"><i class="bi bi-check2-square me-1"></i>Submissions</a></li>
+            </ul>
+            <span class="navbar-text"><i class="bi bi-person-circle me-1"></i>{{ session.student_name }}</span>
+        </div>
+    </div>
+</nav>
+{% endblock %}
+
+{% block content %}
+<div class="learning-page-wrapper">
+    <div class="module-header-bar mb-3">
+        <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+            <div class="d-flex align-items-center gap-2">
+                <a href="{{ url_for('student_module_view', module_id=root_module.module_id) }}" class="btn btn-outline-secondary btn-sm">
+                    <i class="bi bi-arrow-left me-1"></i>Back
+                </a>
+                <div class="module-icon-sm" style="background: {{ module.color or '#667eea' }}20; color: {{ module.color or '#667eea' }};">
+                    <i class="bi {{ module.icon or 'bi-book' }}"></i>
+                </div>
+                <div>
+                    <span class="text-muted small">{{ root_module.title }}</span>
+                    <h5 class="mb-0">{{ module.title }}</h5>
+                </div>
+            </div>
+            <div class="d-flex align-items-center gap-2">
+                <div class="mastery-badge-small">
+                    <span class="text-muted small me-1">Mastery</span>
+                    <strong id="mastery-value">{{ (mastery.mastery_score if mastery else 0)|round|int }}%</strong>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="learning-page-layout">
+        <div class="learning-main">
+            <div class="learning-chat card shadow-sm">
+                <div class="chat-messages card-body" id="chat-messages">
+                    {% for msg in (session_data.chat_history or []) %}
+                    <div class="chat-message {{ msg.role }}">
+                        <div class="bubble" style="white-space: pre-wrap;">{{ (msg.content or '(image)')|e }}</div>
+                    </div>
+                    {% endfor %}
+                </div>
+                <div class="chat-input-area p-3 border-top bg-light">
+                    <div class="writing-tools mb-2">
+                        <button type="button" class="btn btn-outline-secondary btn-sm" id="toggle-canvas-btn">
+                            <i class="bi bi-pencil-square me-1"></i>Show writing pad
+                        </button>
+                    </div>
+                    <div id="writing-panel" class="writing-panel mb-2 d-none">
+                        <div class="writing-canvas-container mb-2">
+                            <canvas id="writing-canvas" class="writing-canvas" width="400" height="200"></canvas>
+                        </div>
+                        <div class="d-flex gap-2">
+                            <button type="button" class="btn btn-outline-secondary btn-sm" id="clear-canvas">Clear</button>
+                            <button type="button" class="btn btn-primary btn-sm" id="submit-writing">Submit work</button>
+                        </div>
+                    </div>
+                    <div class="d-flex gap-2">
+                        <input type="text" class="form-control" id="chat-input" placeholder="Ask a question or type your answer..." autocomplete="off">
+                        <button type="button" class="btn btn-primary" id="send-chat-btn">
+                            <i class="bi bi-send me-1"></i>Send
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="learning-sidebar">
+            <div class="progress-panel card shadow-sm mb-3">
+                <div class="card-body">
+                    <h6 class="card-title"><i class="bi bi-graph-up me-1"></i>Progress</h6>
+                    <div class="mastery-circle-wrapper text-center mb-2">
+                        <div class="mastery-circle" style="--mastery-percent: {{ (mastery.mastery_score if mastery else 0)|round|int }}%;">
+                            <div class="mastery-circle-inner">
+                                <span class="mastery-score" id="sidebar-mastery">{{ (mastery.mastery_score if mastery else 0)|round|int }}%</span>
+                            </div>
+                        </div>
+                    </div>
+                    <p class="small text-muted mb-0">Overall tree: {{ overall_mastery|round|int }}%</p>
+                </div>
+            </div>
+            <div class="resources-panel card shadow-sm">
+                <div class="card-header py-2">
+                    <h6 class="mb-0"><i class="bi bi-collection-play me-1"></i>Resources</h6>
+                </div>
+                <div class="list-group list-group-flush">
+                    {% for res in resources %}
+                    <a href="{{ res.url or '#' }}" target="_blank" rel="noopener" class="list-group-item list-group-item-action resource-item" data-resource-id="{{ res.resource_id }}">
+                        <div class="d-flex align-items-center">
+                            <span class="resource-icon {{ res.type }} me-2">
+                                {% if res.type == 'youtube' %}<i class="bi bi-youtube"></i>
+                                {% elif res.type == 'pdf' %}<i class="bi bi-file-pdf"></i>
+                                {% else %}<i class="bi bi-link-45deg"></i>{% endif %}
+                            </span>
+                            <span>{{ res.title }}</span>
+                        </div>
+                    </a>
+                    {% else %}
+                    <div class="list-group-item text-muted small">No resources yet.</div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+(function() {
+    function escapeHtml(s) {
+        const div = document.createElement('div');
+        div.textContent = s;
+        return div.innerHTML;
+    }
+    const moduleId = '{{ module.module_id }}';
+    const sessionId = '{{ session_data.session_id }}';
+    const chatMessages = document.getElementById('chat-messages');
+    const chatInput = document.getElementById('chat-input');
+    const sendBtn = document.getElementById('send-chat-btn');
+    const toggleCanvasBtn = document.getElementById('toggle-canvas-btn');
+    const writingPanel = document.getElementById('writing-panel');
+    const clearCanvasBtn = document.getElementById('clear-canvas');
+    const submitWritingBtn = document.getElementById('submit-writing');
+    const canvas = document.getElementById('writing-canvas');
+
+    function scrollChat() {
+        if (chatMessages) chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
+    function addMessage(role, content) {
+        const div = document.createElement('div');
+        div.className = 'chat-message ' + role;
+        const bubble = document.createElement('div');
+        bubble.className = 'bubble';
+        bubble.innerHTML = escapeHtml(content).replace(/\n/g, '<br>');
+        div.appendChild(bubble);
+        chatMessages.appendChild(div);
+        scrollChat();
+    }
+
+    function addResourceCardsFromToolCall(toolCall) {
+        const result = toolCall.result;
+        if (!result || !Array.isArray(result) || result.length === 0) return;
+        const wrap = document.createElement('div');
+        wrap.className = 'chat-message assistant tool-resources';
+        const card = document.createElement('div');
+        card.className = 'bubble border bg-light rounded p-2';
+        card.innerHTML = '<strong class="d-block mb-2"><i class="bi bi-collection-play me-1"></i>Resources for this topic</strong>';
+        const list = document.createElement('div');
+        list.className = 'd-flex flex-column gap-1';
+        result.forEach(function(r) {
+            const a = document.createElement('a');
+            a.href = r.url || '#';
+            a.target = '_blank';
+            a.rel = 'noopener';
+            a.className = 'resource-link small';
+            const icon = r.type === 'youtube' ? 'bi-youtube' : (r.type === 'pdf' ? 'bi-file-pdf' : 'bi-link-45deg');
+            a.innerHTML = '<i class="bi ' + icon + ' me-1"></i>' + escapeHtml(r.title || 'Resource');
+            list.appendChild(a);
+        });
+        card.appendChild(list);
+        wrap.appendChild(card);
+        chatMessages.appendChild(wrap);
+        scrollChat();
+    }
+
+    function addQuizFromToolCall(toolCall) {
+        const result = toolCall.result;
+        if (!result || !result.questions || !Array.isArray(result.questions)) return;
+        const wrap = document.createElement('div');
+        wrap.className = 'chat-message assistant tool-quiz';
+        const card = document.createElement('div');
+        card.className = 'bubble border bg-light rounded p-3';
+        card.innerHTML = '<strong class="d-block mb-2"><i class="bi bi-patch-question me-1"></i>Quick quiz</strong>';
+        const form = document.createElement('form');
+        form.className = 'learning-quiz-form';
+        result.questions.slice(0, 5).forEach(function(q, idx) {
+            const qDiv = document.createElement('div');
+            qDiv.className = 'mb-3';
+            qDiv.innerHTML = '<div class="fw-medium mb-1">' + (idx + 1) + '. ' + escapeHtml(q.question || '') + '</div>';
+            if (q.options && q.options.length) {
+                q.options.forEach(function(opt, i) {
+                    const label = document.createElement('label');
+                    label.className = 'd-block small';
+                    const optId = 'quiz-q' + idx + '-opt' + i;
+                    const letter = String.fromCharCode(65 + i);
+                    label.innerHTML = '<input type="radio" name="quiz-q' + idx + '" value="' + letter + '" id="' + optId + '"> ' + escapeHtml(opt);
+                    label.setAttribute('for', optId);
+                    qDiv.appendChild(label);
+                });
+            } else {
+                const inp = document.createElement('input');
+                inp.type = 'text';
+                inp.className = 'form-control form-control-sm mt-1';
+                inp.name = 'quiz-q' + idx;
+                inp.placeholder = 'Your answer';
+                qDiv.appendChild(inp);
+            }
+            qDiv.dataset.correct = (q.correct_answer || '').toString().trim();
+            form.appendChild(qDiv);
+        });
+        const submitBtn = document.createElement('button');
+        submitBtn.type = 'button';
+        submitBtn.className = 'btn btn-primary btn-sm mt-2';
+        submitBtn.textContent = 'Check answers';
+        submitBtn.addEventListener('click', function() {
+            let right = 0;
+            form.querySelectorAll('[data-correct]').forEach(function(qDiv, idx) {
+                const correct = (qDiv.dataset.correct || '').toUpperCase();
+                const name = 'quiz-q' + idx;
+                const chosen = form.querySelector('input[name="' + name + '"]:checked') || form.querySelector('input[name="' + name + '"]');
+                const val = (chosen && chosen.value || '').toString().trim().toUpperCase();
+                if (val && correct && val === correct) right++;
+            });
+            addMessage('assistant', 'You got ' + right + ' out of ' + result.questions.length + ' correct. Keep going!');
+        });
+        form.appendChild(submitBtn);
+        card.appendChild(form);
+        wrap.appendChild(card);
+        chatMessages.appendChild(wrap);
+        scrollChat();
+    }
+
+    async function sendMessage(text, writingImage) {
+        if (!text && !writingImage) return;
+        addMessage('student', text || '(Submitted work)');
+        chatInput.value = '';
+        sendBtn.disabled = true;
+
+        try {
+            const body = { module_id: moduleId, session_id: sessionId, message: text || '' };
+            if (writingImage) body.writing_image = writingImage;
+            const res = await fetch('{{ url_for("learning_chat") }}', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+            const data = await res.json();
+            if (data.response) addMessage('assistant', data.response);
+
+            if (data.tool_calls && data.tool_calls.length) {
+                data.tool_calls.forEach(function(tc) {
+                    if (tc.name === 'get_module_resources') addResourceCardsFromToolCall(tc);
+                    if (tc.name === 'generate_interactive_quiz') addQuizFromToolCall(tc);
+                });
+            }
+
+            if (data.mastery_updated) {
+                const val = document.getElementById('mastery-value');
+                const side = document.getElementById('sidebar-mastery');
+                if (data.assessment && data.assessment.mastery_change) {
+                    const cur = parseInt(val ? val.textContent : '0', 10) || 0;
+                    const next = Math.max(0, Math.min(100, cur + data.assessment.mastery_change));
+                    if (val) val.textContent = next + '%';
+                    if (side) side.textContent = next + '%';
+                } else if (val && side) {
+                    side.textContent = val.textContent;
+                }
+            }
+        } catch (e) {
+            addMessage('assistant', 'Sorry, something went wrong. Try again.');
+        }
+        sendBtn.disabled = false;
+        scrollChat();
+    }
+
+    sendBtn && sendBtn.addEventListener('click', function() {
+        const text = chatInput.value.trim();
+        sendMessage(text);
+    });
+    chatInput && chatInput.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            sendMessage(chatInput.value.trim());
+        }
+    });
+
+    toggleCanvasBtn && toggleCanvasBtn.addEventListener('click', function() {
+        writingPanel.classList.toggle('d-none');
+        toggleCanvasBtn.innerHTML = writingPanel.classList.contains('d-none') ? '<i class="bi bi-pencil-square me-1"></i>Show writing pad' : '<i class="bi bi-x me-1"></i>Hide writing pad';
+    });
+
+    if (canvas) {
+        const ctx = canvas.getContext('2d');
+        let drawing = false;
+        let last = null;
+
+        function draw(e) {
+            if (!drawing) return;
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX || e.touches?.[0]?.clientX) - rect.left;
+            const y = (e.clientY || e.touches?.[0]?.clientY) - rect.top;
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const sx = x * scaleX, sy = y * scaleY;
+            if (last) {
+                ctx.beginPath();
+                ctx.moveTo(last.x, last.y);
+                ctx.lineTo(sx, sy);
+                ctx.stroke();
+            }
+            last = { x: sx, y: sy };
+        }
+        function stop() { drawing = false; last = null; }
+
+        canvas.addEventListener('mousedown', function(e) { drawing = true; last = null; draw(e); });
+        canvas.addEventListener('mousemove', draw);
+        canvas.addEventListener('mouseup', stop);
+        canvas.addEventListener('mouseout', stop);
+        canvas.addEventListener('touchstart', function(e) { e.preventDefault(); drawing = true; last = null; draw(e); }, { passive: false });
+        canvas.addEventListener('touchmove', function(e) { e.preventDefault(); draw(e); }, { passive: false });
+        canvas.addEventListener('touchend', stop);
+
+        ctx.strokeStyle = '#1e293b';
+        ctx.lineWidth = 3;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        clearCanvasBtn && clearCanvasBtn.addEventListener('click', function() {
+            ctx.fillStyle = '#fff';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+        });
+
+        submitWritingBtn && submitWritingBtn.addEventListener('click', function() {
+            const dataUrl = canvas.toDataURL('image/png');
+            sendMessage('', dataUrl);
+            ctx.fillStyle = '#fff';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            writingPanel.classList.add('d-none');
+            toggleCanvasBtn.innerHTML = '<i class="bi bi-pencil-square me-1"></i>Show writing pad';
+        });
+    }
+
+    document.querySelectorAll('.resource-item[data-resource-id]').forEach(function(el) {
+        el.addEventListener('click', function() {
+            const id = el.getAttribute('data-resource-id');
+            if (id) fetch('{{ url_for("mark_resource_viewed") }}', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ resource_id: id, session_id: sessionId }),
+            }).catch(function() {});
+        });
+    });
+
+    scrollChat();
+})();
+</script>
+{% endblock %}
+
+{% block head %}
+<style>
+.learning-page-wrapper { max-width: 1400px; margin: 0 auto; padding: 1rem; }
+.module-header-bar { background: white; border-radius: var(--border-radius, 12px); padding: 0.75rem 1rem; box-shadow: var(--shadow-sm, 0 1px 2px rgba(0,0,0,0.05)); }
+.module-icon-sm { width: 40px; height: 40px; border-radius: 10px; display: flex; align-items: center; justify-content: center; }
+.mastery-badge-small { padding: 0.25rem 0.75rem; background: var(--bg-light, #f8fafc); border-radius: 20px; }
+.learning-page-layout { display: grid; grid-template-columns: 1fr 320px; gap: 1rem; }
+@media (max-width: 992px) { .learning-page-layout { grid-template-columns: 1fr; } }
+.learning-main { min-width: 0; }
+.learning-chat { display: flex; flex-direction: column; min-height: 450px; }
+.chat-messages { flex: 1; overflow-y: auto; max-height: 400px; }
+.chat-message { max-width: 85%; margin-bottom: 0.75rem; }
+.chat-message.student { margin-left: auto; }
+.chat-message.student .bubble { background: var(--gradient-primary, linear-gradient(135deg,#667eea,#764ba2)); color: white; border-radius: 16px 16px 4px 16px; padding: 0.75rem 1rem; }
+.chat-message.assistant { margin-right: auto; }
+.chat-message.assistant .bubble { background: white; border: 1px solid var(--border-color,#e2e8f0); border-radius: 16px 16px 16px 4px; padding: 0.75rem 1rem; }
+.writing-panel { background: white; border: 1px solid var(--border-color); border-radius: 8px; padding: 0.75rem; }
+.writing-canvas-container { border: 2px solid var(--border-color); border-radius: 8px; background: white; }
+.writing-canvas { width: 100%; max-width: 100%; display: block; cursor: crosshair; touch-action: none; }
+.mastery-circle { width: 80px; height: 80px; border-radius: 50%; background: conic-gradient(var(--primary,#667eea) calc(var(--mastery-percent,0) * 1%), var(--border-color,#e2e8f0) 0); display: inline-flex; align-items: center; justify-content: center; }
+.mastery-circle-inner { width: 64px; height: 64px; border-radius: 50%; background: white; display: flex; align-items: center; justify-content: center; font-weight: 700; color: var(--primary); }
+.resource-icon { width: 36px; height: 36px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; }
+.resource-icon.youtube { background: rgba(255,0,0,0.1); color: #f00; }
+.resource-icon.pdf { background: rgba(239,68,68,0.1); color: #ef4444; }
+.resource-icon.link { background: rgba(6,182,212,0.1); color: #06b6d4; }
+</style>
+{% endblock %}

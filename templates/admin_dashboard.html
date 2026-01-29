@@ -101,6 +101,11 @@
             </button>
         </li>
         <li class="nav-item" role="presentation">
+            <button class="nav-link" id="module-access-tab" data-bs-toggle="tab" data-bs-target="#module-access" type="button">
+                <i class="bi bi-journal-bookmark me-1"></i>Learning Modules
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
             <button class="nav-link" id="reports-tab" data-bs-toggle="tab" data-bs-target="#reports" type="button">
                 <i class="bi bi-file-earmark-pdf me-1"></i>Reports & Tools
             </button>
@@ -594,6 +599,54 @@
                             </div>
                         </div>
                     </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Learning Modules Access Tab -->
+        <div class="tab-pane fade" id="module-access" role="tabpanel">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-journal-bookmark me-2"></i>Learning Module Access</h5>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted mb-4">
+                        Choose which <strong>teachers</strong> can create and manage learning modules, and which <strong>classes</strong> can see and use "My Learning". All other teachers and students will not see the Modules / My Learning features.
+                    </p>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <h6 class="mb-2">Teachers allowed to use Modules</h6>
+                            <div class="border rounded p-3 mb-3" style="max-height: 280px; overflow-y: auto;">
+                                {% for t in teachers %}
+                                <div class="form-check">
+                                    <input class="form-check-input module-access-teacher" type="checkbox" value="{{ t.teacher_id }}" id="ma-t-{{ t.teacher_id }}"
+                                        {% if t.teacher_id in module_access_teacher_ids %}checked{% endif %}>
+                                    <label class="form-check-label" for="ma-t-{{ t.teacher_id }}">{{ t.name }} ({{ t.teacher_id }})</label>
+                                </div>
+                                {% else %}
+                                <p class="text-muted small mb-0">No teachers yet</p>
+                                {% endfor %}
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <h6 class="mb-2">Classes allowed to use My Learning</h6>
+                            <div class="border rounded p-3 mb-3" style="max-height: 280px; overflow-y: auto;">
+                                {% for c in classes %}
+                                <div class="form-check">
+                                    <input class="form-check-input module-access-class" type="checkbox" value="{{ c.class_id }}" id="ma-c-{{ c.class_id }}"
+                                        {% if c.class_id in module_access_class_ids %}checked{% endif %}>
+                                    <label class="form-check-label" for="ma-c-{{ c.class_id }}">{{ c.class_id }}{% if c.name and c.name != c.class_id %} ({{ c.name }}){% endif %} — {{ c.student_count or 0 }} students</label>
+                                </div>
+                                {% else %}
+                                <p class="text-muted small mb-0">No classes yet</p>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
+                    <button type="button" class="btn btn-primary" id="save-module-access-btn">
+                        <i class="bi bi-check2-circle me-1"></i>Save access
+                    </button>
+                    <span id="module-access-status" class="ms-3 text-muted small"></span>
                 </div>
             </div>
         </div>
@@ -2605,6 +2658,37 @@
         }
     });
     
+    // Learning module access - save
+    const saveModuleAccessBtn = document.getElementById('save-module-access-btn');
+    const moduleAccessStatus = document.getElementById('module-access-status');
+    if (saveModuleAccessBtn) {
+        saveModuleAccessBtn.addEventListener('click', async () => {
+            const teacherIds = [...document.querySelectorAll('.module-access-teacher:checked')].map(cb => cb.value);
+            const classIds = [...document.querySelectorAll('.module-access-class:checked')].map(cb => cb.value);
+            saveModuleAccessBtn.disabled = true;
+            moduleAccessStatus.textContent = 'Saving...';
+            try {
+                const response = await fetch('{{ url_for("admin_save_module_access") }}', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ teacher_ids: teacherIds, class_ids: classIds })
+                });
+                const data = await response.json();
+                if (data.success) {
+                    moduleAccessStatus.textContent = 'Saved.';
+                    moduleAccessStatus.className = 'ms-3 text-success small';
+                } else {
+                    moduleAccessStatus.textContent = data.error || 'Failed to save';
+                    moduleAccessStatus.className = 'ms-3 text-danger small';
+                }
+            } catch (e) {
+                moduleAccessStatus.textContent = 'Error saving';
+                moduleAccessStatus.className = 'ms-3 text-danger small';
+            }
+            saveModuleAccessBtn.disabled = false;
+        });
+    }
+
     // Create teaching group form
     document.getElementById('create-teaching-group-form').addEventListener('submit', async (e) => {
         e.preventDefault();

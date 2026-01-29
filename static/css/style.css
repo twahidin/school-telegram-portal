@@ -1484,3 +1484,57 @@ code, .font-monospace {
     border-radius: 4px;
     color: #0088cc;
 }
+
+/* ============================================
+   MY MODULES - Additional Styles
+   ============================================ */
+
+.module-3d-container {
+    width: 100%;
+    height: 500px;
+    border-radius: var(--border-radius);
+    overflow: hidden;
+    background: var(--bg-light);
+}
+
+@media (min-width: 992px) {
+    .module-3d-container {
+        height: 600px;
+    }
+}
+
+.learning-page {
+    display: grid;
+    grid-template-columns: 1fr 350px;
+    gap: 1.5rem;
+    height: calc(100vh - 80px);
+}
+
+@media (max-width: 1200px) {
+    .learning-page {
+        grid-template-columns: 1fr;
+        height: auto;
+    }
+}
+
+.learning-main {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    overflow-y: auto;
+}
+
+.learning-sidebar {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    overflow-y: auto;
+}
+
+.resource-item:hover {
+    background: var(--bg-light);
+}
+
+.resource-icon.youtube { background: rgba(255, 0, 0, 0.1); color: #ff0000; }
+.resource-icon.pdf { background: rgba(239, 68, 68, 0.1); color: #ef4444; }
+.resource-icon.interactive { background: rgba(16, 185, 129, 0.1); color: #10b981; }

@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+
+{% block title %}Class Mastery - {{ module.title }}{% endblock %}
+
+{% block navbar %}
+<nav class="navbar navbar-expand-lg navbar-dark teacher-nav">
+    <div class="container">
+        <a class="navbar-brand" href="{{ url_for('teacher_dashboard') }}">
+            <i class="bi bi-mortarboard-fill me-2"></i>Teacher Portal
+        </a>
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+            <span class="navbar-toggler-icon"></span>
+        </button>
+        <div class="collapse navbar-collapse" id="navbarNav">
+            <ul class="navbar-nav me-auto">
+                <li class="nav-item"><a class="nav-link" href="{{ url_for('teacher_dashboard') }}"><i class="bi bi-speedometer2 me-1"></i>Dashboard</a></li>
+                <li class="nav-item"><a class="nav-link" href="{{ url_for('teacher_assignments') }}"><i class="bi bi-journal-text me-1"></i>Assignments</a></li>
+                <li class="nav-item"><a class="nav-link" href="{{ url_for('teacher_submissions') }}"><i class="bi bi-inbox me-1"></i>Submissions</a></li>
+                <li class="nav-item"><a class="nav-link active" href="{{ url_for('teacher_modules') }}"><i class="bi bi-diagram-3 me-1"></i>Modules</a></li>
+                <li class="nav-item"><a class="nav-link" href="{{ url_for('teacher_messages') }}"><i class="bi bi-chat-dots me-1"></i>Messages</a></li>
+                <li class="nav-item"><a class="nav-link" href="{{ url_for('teacher_settings') }}"><i class="bi bi-gear me-1"></i>Settings</a></li>
+            </ul>
+            <div class="navbar-nav">
+                <span class="navbar-text me-3"><i class="bi bi-person-workspace me-1"></i>{{ session.teacher_name }}</span>
+                <a class="nav-link" href="{{ url_for('teacher_logout') }}"><i class="bi bi-box-arrow-right me-1"></i>Logout</a>
+            </div>
+        </div>
+    </div>
+</nav>
+{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="mb-4">
+        <a href="{{ url_for('view_module', module_id=module.module_id) }}" class="btn btn-outline-secondary btn-sm mb-2">
+            <i class="bi bi-arrow-left me-1"></i>Back to Module
+        </a>
+        <h1><i class="bi bi-graph-up me-2"></i>Class Mastery</h1>
+        <p class="text-muted mb-0">{{ module.title }} — {{ module.subject }} • {{ module.year_level }}</p>
+    </div>
+
+    {% if student_mastery %}
+    <div class="card shadow-sm">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Student</th>
+                        <th>Class</th>
+                        <th>Avg Mastery</th>
+                        <th>Modules Started</th>
+                        <th>Time (min)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for sm in student_mastery %}
+                    <tr>
+                        <td>{{ sm.name or sm._id }}</td>
+                        <td>{{ sm.class or '—' }}</td>
+                        <td>
+                            <div class="d-flex align-items-center">
+                                <div class="progress flex-grow-1" style="height: 8px; width: 60px;">
+                                    <div class="progress-bar bg-success" role="progressbar" style="width: {{ sm.avg_mastery|round|int }}%;"></div>
+                                </div>
+                                <span class="ms-2 small">{{ sm.avg_mastery|round|int }}%</span>
+                            </div>
+                        </td>
+                        <td>{{ sm.modules_started }}</td>
+                        <td>{{ sm.total_time or 0 }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% else %}
+    <div class="alert alert-info">
+        <i class="bi bi-info-circle me-2"></i>No student mastery data yet. Publish this module and have students start learning to see progress here.
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

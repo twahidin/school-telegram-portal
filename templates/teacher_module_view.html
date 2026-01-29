@@ -1,0 +1,162 @@
+{% extends "base.html" %}
+
+{% block title %}{{ module.title }} - Teacher Portal{% endblock %}
+
+{% block navbar %}
+<nav class="navbar navbar-expand-lg navbar-dark teacher-nav">
+    <div class="container">
+        <a class="navbar-brand" href="{{ url_for('teacher_dashboard') }}">
+            <i class="bi bi-mortarboard-fill me-2"></i>Teacher Portal
+        </a>
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+            <span class="navbar-toggler-icon"></span>
+        </button>
+        <div class="collapse navbar-collapse" id="navbarNav">
+            <ul class="navbar-nav me-auto">
+                <li class="nav-item"><a class="nav-link" href="{{ url_for('teacher_dashboard') }}"><i class="bi bi-speedometer2 me-1"></i>Dashboard</a></li>
+                <li class="nav-item"><a class="nav-link" href="{{ url_for('teacher_assignments') }}"><i class="bi bi-journal-text me-1"></i>Assignments</a></li>
+                <li class="nav-item"><a class="nav-link" href="{{ url_for('teacher_submissions') }}"><i class="bi bi-inbox me-1"></i>Submissions</a></li>
+                <li class="nav-item"><a class="nav-link active" href="{{ url_for('teacher_modules') }}"><i class="bi bi-diagram-3 me-1"></i>Modules</a></li>
+                <li class="nav-item"><a class="nav-link" href="{{ url_for('teacher_messages') }}"><i class="bi bi-chat-dots me-1"></i>Messages</a></li>
+                <li class="nav-item"><a class="nav-link" href="{{ url_for('teacher_settings') }}"><i class="bi bi-gear me-1"></i>Settings</a></li>
+            </ul>
+            <div class="navbar-nav">
+                <span class="navbar-text me-3"><i class="bi bi-person-workspace me-1"></i>{{ session.teacher_name }}</span>
+                <a class="nav-link" href="{{ url_for('teacher_logout') }}"><i class="bi bi-box-arrow-right me-1"></i>Logout</a>
+            </div>
+        </div>
+    </div>
+</nav>
+{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <a href="{{ url_for('teacher_modules') }}" class="btn btn-outline-secondary btn-sm mb-2">
+                <i class="bi bi-arrow-left me-1"></i>Back to Modules
+            </a>
+            <h1><i class="bi {{ module.icon or 'bi-diagram-3' }} me-2" style="color: {{ module.color or '#667eea' }};"></i>{{ module.title }}</h1>
+            <p class="text-muted mb-0">{{ module.subject }} • {{ module.year_level }}</p>
+        </div>
+        <div class="d-flex gap-2">
+            <a href="{{ url_for('module_class_mastery', module_id=module.module_id) }}" class="btn btn-outline-success">
+                <i class="bi bi-graph-up me-1"></i>Class Mastery
+            </a>
+            {% if module.status != 'published' %}
+            <button type="button" class="btn btn-primary" id="publish-btn">
+                <i class="bi bi-send me-1"></i>Publish for Students
+            </button>
+            {% else %}
+            <span class="badge bg-success align-self-center">Published</span>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="card shadow-sm">
+        <div class="card-body p-0">
+            <div id="module-3d-container" class="module-3d-container" style="height: 500px;"></div>
+        </div>
+    </div>
+
+    <p class="text-muted small mt-2">Click a node to add resources (leaf modules only). Drag to rotate the view.</p>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.132.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.132.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+(function() {
+    const moduleTree = {{ modules_json|safe }};
+    const container = document.getElementById('module-3d-container');
+    if (!container || !moduleTree) return;
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xf8fafc);
+    const width = container.clientWidth;
+    const height = container.clientHeight;
+    const camera = new THREE.PerspectiveCamera(60, width / height, 0.1, 2000);
+    camera.position.set(0, 200, 400);
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(width, height);
+    renderer.setPixelRatio(window.devicePixelRatio);
+    container.appendChild(renderer.domElement);
+
+    const controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
+    controls.maxDistance = 800;
+    controls.minDistance = 100;
+
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+    scene.add(ambientLight);
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    dirLight.position.set(100, 200, 100);
+    scene.add(dirLight);
+
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2();
+    const meshes = [];
+
+    function addNode(node, parentPos, depth, siblingIndex, siblingCount) {
+        const baseDist = 80 + depth * 30;
+        const angle = (siblingIndex / Math.max(siblingCount, 1)) * Math.PI * 2 + Math.PI / 4;
+        const x = (parentPos ? parentPos.x : 0) + Math.cos(angle) * baseDist;
+        const z = (parentPos ? parentPos.z : 0) + Math.sin(angle) * baseDist;
+        const y = depth * 20;
+        const position = new THREE.Vector3(x, y, z);
+
+        const radius = Math.max(20 - depth * 3, 8);
+        const geometry = new THREE.SphereGeometry(radius, 32, 32);
+        const color = (node.color && node.color.startsWith('#')) ? parseInt(node.color.slice(1), 16) : 0x667eea;
+        const material = new THREE.MeshPhongMaterial({ color: color, shininess: 50 });
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.position.copy(position);
+        mesh.userData = { moduleId: node.module_id, nodeId: node.module_id, title: node.title, isLeaf: node.is_leaf };
+        scene.add(mesh);
+        meshes.push(mesh);
+
+        const children = node.children || [];
+        children.forEach(function(child, i) { addNode(child, position, depth + 1, i, children.length); });
+    }
+    addNode(moduleTree, null, 0, 0, 1);
+
+    function onMouseClick(event) {
+        const rect = container.getBoundingClientRect();
+        mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+        mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+        raycaster.setFromCamera(mouse, camera);
+        const hits = raycaster.intersectObjects(meshes);
+        if (hits.length > 0 && hits[0].object.userData.isLeaf) {
+            // Leaf node clicked – could open resources modal; for now just show title
+            alert('Module: ' + hits[0].object.userData.title + '\nAdd resources via the module list.');
+        }
+    }
+    container.addEventListener('click', onMouseClick);
+
+    function animate() {
+        requestAnimationFrame(animate);
+        controls.update();
+        renderer.render(scene, camera);
+    }
+    animate();
+
+    window.addEventListener('resize', function() {
+        const w = container.clientWidth;
+        const h = container.clientHeight;
+        camera.aspect = w / h;
+        camera.updateProjectionMatrix();
+        renderer.setSize(w, h);
+    });
+
+    document.getElementById('publish-btn') && document.getElementById('publish-btn').addEventListener('click', async function() {
+        const btn = this;
+        btn.disabled = true;
+        try {
+            const res = await fetch('{{ url_for("publish_module", module_id=module.module_id) }}', { method: 'POST' });
+            const data = await res.json();
+            if (data.success) window.location.reload();
+        } finally { btn.disabled = false; }
+    });
+})();
+</script>
+{% endblock %}

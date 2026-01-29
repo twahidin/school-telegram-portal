@@ -5,13 +5,23 @@ from functools import wraps
 import os
 import io
 from datetime import datetime, timedelta, timezone
-from models import db, Student, Teacher, Message, Class, TeachingGroup, Assignment, Submission
+from models import db, Student, Teacher, Message, Class, TeachingGroup, Assignment, Submission, Module, ModuleResource, StudentModuleMastery, StudentLearningProfile, LearningSession
 from utils.auth import hash_password, verify_password, generate_assignment_id, generate_submission_id, encrypt_api_key, decrypt_api_key
 from utils.ai_marking import get_teacher_ai_service, mark_submission
 from utils.google_drive import get_teacher_drive_manager, upload_assignment_file
 from utils.pdf_generator import generate_feedback_pdf
 from utils.notifications import notify_submission_ready
+from utils.module_ai import (
+    generate_modules_from_syllabus,
+    assess_student_understanding,
+    generate_interactive_assessment,
+    analyze_writing_submission,
+)
 import logging
+import math
+import uuid
+import json
+import base64
 import PyPDF2
 
 # Load environment variables
@@ -1577,6 +1587,356 @@ def download_student_feedback_pdf(submission_id):
     except Exception as e:
         logger.error(f"Error generating PDF: {e}")
         return 'Error generating PDF', 500
+
+
+# ============================================================================
+# MY MODULES - STUDENT ROUTES
+# ============================================================================
+
+@app.route('/modules')
+@login_required
+def student_modules():
+    """Student's module space - shows all available module trees."""
+    if not _student_has_module_access(session['student_id']):
+        return redirect(url_for('dashboard'))
+    student = Student.find_one({'student_id': session['student_id']})
+    teacher_ids = get_student_teacher_ids(session['student_id'])
+
+    root_modules = list(
+        Module.find({
+            'teacher_id': {'$in': teacher_ids},
+            'parent_id': None,
+            'status': 'published',
+        })
+    )
+
+    for module in root_modules:
+        module['student_mastery'] = _calculate_tree_mastery(module['module_id'], session['student_id'])
+
+    return render_template('student_modules.html', student=student, modules=root_modules)
+
+@app.route('/modules/<module_id>')
+@login_required
+def student_module_view(module_id):
+    """3D module visualization for student."""
+    if not _student_has_module_access(session['student_id']):
+        return redirect(url_for('dashboard'))
+    root_module = Module.find_one({'module_id': module_id, 'status': 'published'})
+    if not root_module:
+        return redirect(url_for('student_modules'))
+
+    teacher_ids = get_student_teacher_ids(session['student_id'])
+    if root_module.get('teacher_id') not in teacher_ids:
+        return redirect(url_for('student_modules'))
+
+    def build_tree_with_mastery(m):
+        m = dict(m)
+        mastery = StudentModuleMastery.find_one({
+            'student_id': session['student_id'],
+            'module_id': m['module_id'],
+        })
+        m['mastery_score'] = mastery.get('mastery_score', 0) if mastery else 0
+        m['status'] = mastery.get('status', 'not_started') if mastery else 'not_started'
+        m['children'] = []
+        for cid in m.get('children_ids', []):
+            child = Module.find_one({'module_id': cid})
+            if child:
+                m['children'].append(build_tree_with_mastery(child))
+        return m
+
+    module_tree = build_tree_with_mastery(root_module)
+    return render_template(
+        'student_module_view.html',
+        module=root_module,
+        module_tree=module_tree,
+        modules_json=json.dumps(module_tree, default=str),
+    )
+
+@app.route('/modules/<module_id>/learn/<node_id>')
+@login_required
+def learning_page(module_id, node_id):
+    """Main learning page for a specific (leaf) module."""
+    if not _student_has_module_access(session['student_id']):
+        return redirect(url_for('dashboard'))
+    module = Module.find_one({'module_id': node_id})
+    root_module = Module.find_one({'module_id': module_id})
+    if not module or not root_module:
+        return redirect(url_for('student_modules'))
+
+    teacher_ids = get_student_teacher_ids(session['student_id'])
+    if root_module.get('teacher_id') not in teacher_ids:
+        return redirect(url_for('student_modules'))
+
+    if not module.get('is_leaf'):
+        return redirect(url_for('student_module_view', module_id=module_id))
+
+    existing_session = LearningSession.find_one({
+        'student_id': session['student_id'],
+        'module_id': node_id,
+        'ended_at': None,
+    })
+
+    if not existing_session:
+        session_doc = {
+            'session_id': _generate_session_id(),
+            'student_id': session['student_id'],
+            'module_id': node_id,
+            'started_at': datetime.utcnow(),
+            'ended_at': None,
+            'chat_history': [],
+            'assessments': [],
+            'writing_submissions': [],
+            'resources_viewed': [],
+        }
+        LearningSession.insert_one(session_doc)
+        existing_session = session_doc
+
+    resources = list(ModuleResource.find({'module_id': node_id}).sort('order', 1))
+    mastery = StudentModuleMastery.find_one({
+        'student_id': session['student_id'],
+        'module_id': node_id,
+    })
+    profile = StudentLearningProfile.find_one({
+        'student_id': session['student_id'],
+        'subject': root_module.get('subject'),
+    })
+    overall_mastery = _calculate_tree_mastery(module_id, session['student_id'])
+
+    return render_template(
+        'learning_page.html',
+        module=module,
+        root_module=root_module,
+        session_data=existing_session,
+        resources=resources,
+        mastery=mastery,
+        profile=profile,
+        overall_mastery=overall_mastery,
+    )
+
+@app.route('/api/learning/chat', methods=['POST'])
+@login_required
+def learning_chat():
+    """Handle chat messages in learning session."""
+    if not _student_has_module_access(session['student_id']):
+        return jsonify({'error': 'Access denied'}), 403
+    try:
+        data = request.get_json() or {}
+        module_id = data.get('module_id')
+        message = (data.get('message') or '').strip()
+        session_id = data.get('session_id')
+        writing_image = data.get('writing_image')
+
+        if not message and not writing_image:
+            return jsonify({'error': 'No message or image provided'}), 400
+
+        module = Module.find_one({'module_id': module_id})
+        if not module:
+            return jsonify({'error': 'Module not found'}), 404
+
+        root_module = Module.find_one({'module_id': module.get('parent_id') or module_id})
+        if not root_module:
+            root_module = module
+
+        learning_session = LearningSession.find_one({'session_id': session_id})
+        chat_history = learning_session.get('chat_history', []) if learning_session else []
+
+        profile = StudentLearningProfile.find_one({
+            'student_id': session['student_id'],
+            'subject': root_module.get('subject'),
+        })
+
+        writing_bytes = None
+        if writing_image:
+            if ',' in writing_image:
+                writing_image = writing_image.split(',')[1]
+            writing_bytes = base64.b64decode(writing_image)
+
+        # Prefer Agno agent when available (tools: pull resources, generate quiz)
+        try:
+            from utils.agno_learning_agent import get_learning_agent
+            agent = get_learning_agent()
+        except Exception:
+            agent = None
+
+        if agent:
+            result = agent.chat(
+                message=message,
+                student_id=session['student_id'],
+                module=module,
+                subject=root_module.get('subject', ''),
+                student_profile=profile,
+                chat_history=chat_history,
+                image_data=writing_bytes,
+            )
+            if not result.get('success') and 'error' in result and 'response' not in result:
+                return jsonify({'error': result.get('error', 'Agent error')}), 500
+            # Propagate mastery to parent when agent called update_student_mastery
+            for tc in result.get('tool_calls', []):
+                if tc.get('name') == 'update_student_mastery':
+                    args = tc.get('arguments') or {}
+                    mid = args.get('module_id')
+                    if mid and module.get('parent_id'):
+                        _propagate_mastery_to_parent(session['student_id'], module['parent_id'])
+                    break
+            new_messages = [
+                {'role': 'student', 'content': message, 'timestamp': datetime.utcnow().isoformat()},
+            ]
+            if writing_bytes:
+                new_messages[0]['has_image'] = True
+            new_messages.append({
+                'role': 'assistant',
+                'content': result.get('response', ''),
+                'timestamp': datetime.utcnow().isoformat(),
+            })
+            LearningSession.update_one(
+                {'session_id': session_id},
+                {
+                    '$push': {'chat_history': {'$each': new_messages}},
+                    '$set': {'last_activity': datetime.utcnow()},
+                },
+            )
+            return jsonify({
+                'response': result.get('response', ''),
+                'response_type': 'teaching',
+                'tool_calls': result.get('tool_calls', []),
+                'mastery_updated': any(
+                    tc.get('name') == 'update_student_mastery'
+                    for tc in result.get('tool_calls', [])
+                ),
+            })
+
+        # Fallback: raw Claude (no tools)
+        result = assess_student_understanding(
+            student_message=message,
+            module=module,
+            chat_history=chat_history,
+            student_profile=profile,
+            writing_image=writing_bytes,
+        )
+
+        if 'error' in result and 'response' not in result:
+            return jsonify({'error': result['error']}), 500
+
+        new_messages = [
+            {'role': 'student', 'content': message, 'timestamp': datetime.utcnow().isoformat()},
+        ]
+        if writing_bytes:
+            new_messages[0]['has_image'] = True
+        new_messages.append({
+            'role': 'assistant',
+            'content': result.get('response', ''),
+            'timestamp': datetime.utcnow().isoformat(),
+        })
+
+        LearningSession.update_one(
+            {'session_id': session_id},
+            {
+                '$push': {'chat_history': {'$each': new_messages}},
+                '$set': {'last_activity': datetime.utcnow()},
+            },
+        )
+
+        if result.get('assessment') and result['assessment'].get('mastery_change'):
+            _update_student_mastery(
+                session['student_id'],
+                module_id,
+                result['assessment']['mastery_change'],
+            )
+        if result.get('profile_updates'):
+            _update_student_profile(
+                session['student_id'],
+                root_module.get('subject'),
+                result['profile_updates'],
+            )
+
+        return jsonify({
+            'response': result.get('response', ''),
+            'response_type': result.get('response_type', 'teaching'),
+            'assessment': result.get('assessment'),
+            'interactive': result.get('interactive_element'),
+            'tool_calls': [],
+            'mastery_updated': bool(result.get('assessment', {}).get('mastery_change')),
+        })
+    except Exception as e:
+        logger.error("Error in learning chat: %s", e)
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/learning/submit_writing', methods=['POST'])
+@login_required
+def submit_writing():
+    """Submit handwritten work for analysis."""
+    if not _student_has_module_access(session['student_id']):
+        return jsonify({'error': 'Access denied'}), 403
+    try:
+        data = request.get_json() or {}
+        module_id = data.get('module_id')
+        session_id = data.get('session_id')
+        image_data = data.get('image')
+        expected_content = data.get('expected_content', '')
+
+        if not image_data:
+            return jsonify({'error': 'No image provided'}), 400
+
+        module = Module.find_one({'module_id': module_id})
+        if not module:
+            return jsonify({'error': 'Module not found'}), 404
+
+        if ',' in image_data:
+            image_data = image_data.split(',')[1]
+        image_bytes = base64.b64decode(image_data)
+
+        result = analyze_writing_submission(
+            image_data=image_bytes,
+            module=module,
+            expected_content=expected_content,
+        )
+
+        LearningSession.update_one(
+            {'session_id': session_id},
+            {
+                '$push': {
+                    'writing_submissions': {
+                        'image_data': (image_data[:100] + '...') if len(image_data) > 100 else image_data,
+                        'ai_analysis': result,
+                        'timestamp': datetime.utcnow().isoformat(),
+                    }
+                }
+            },
+        )
+
+        if result.get('mastery_indication') is not None:
+            change = (result['mastery_indication'] - 50) / 10
+            _update_student_mastery(session['student_id'], module_id, change)
+
+        return jsonify(result)
+    except Exception as e:
+        logger.error("Error analyzing writing: %s", e)
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/learning/resource_viewed', methods=['POST'])
+@login_required
+def mark_resource_viewed():
+    """Mark a resource as viewed and update progress."""
+    if not _student_has_module_access(session['student_id']):
+        return jsonify({'error': 'Access denied'}), 403
+    try:
+        data = request.get_json() or {}
+        resource_id = data.get('resource_id')
+        session_id = data.get('session_id')
+
+        LearningSession.update_one(
+            {'session_id': session_id},
+            {'$addToSet': {'resources_viewed': resource_id}},
+        )
+
+        resource = ModuleResource.find_one({'resource_id': resource_id})
+        if resource:
+            _update_student_mastery(session['student_id'], resource['module_id'], 2)
+
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 
 # ============================================================================
 # TEACHER ROUTES
@@ -3442,6 +3802,7 @@ def view_submission_file(submission_id, file_index):
         return 'File not found', 404
 
 @app.route('/teacher/review/<submission_id>/save', methods=['POST'])
+@limiter.limit("200 per hour")  # generous limit for marking; auto-save fires often
 @teacher_required
 def save_review_feedback(submission_id):
     """Save teacher feedback edits"""
@@ -3692,6 +4053,7 @@ def extract_answer_key(submission_id):
 
 
 @app.route('/teacher/review/<submission_id>/send', methods=['POST'])
+@limiter.limit("200 per hour")
 @teacher_required
 def send_feedback_to_student(submission_id):
     """Send feedback to student via Telegram"""
@@ -3781,6 +4143,7 @@ def send_feedback_to_student(submission_id):
         return jsonify({'error': str(e)}), 500
 
 @app.route('/teacher/review/<submission_id>/save-rubric', methods=['POST'])
+@limiter.limit("200 per hour")  # generous limit for marking; auto-save fires often
 @teacher_required
 def save_rubric_feedback(submission_id):
     """Save teacher feedback for rubric-based essay marking"""
@@ -3854,6 +4217,7 @@ def save_rubric_feedback(submission_id):
         return jsonify({'error': str(e)}), 500
 
 @app.route('/teacher/review/<submission_id>/send-rubric', methods=['POST'])
+@limiter.limit("200 per hour")
 @teacher_required
 def send_rubric_feedback_to_student(submission_id):
     """Send rubric-based feedback to student via Telegram"""
@@ -4391,6 +4755,433 @@ def teacher_remove_student():
         logger.error(f"Error removing student: {e}")
         return jsonify({'error': str(e)}), 500
 
+
+# ============================================================================
+# MODULE ACCESS - Which teachers/classes can use learning modules (admin-set)
+# ============================================================================
+
+MODULE_ACCESS_CONFIG_ID = 'default'
+
+def _get_module_access_config():
+    """Return { teacher_ids: [], class_ids: [] } from admin allocation."""
+    doc = db.db.module_access.find_one({'config_id': MODULE_ACCESS_CONFIG_ID})
+    if not doc:
+        return {'teacher_ids': [], 'class_ids': []}
+    return {
+        'teacher_ids': list(doc.get('teacher_ids') or []),
+        'class_ids': list(doc.get('class_ids') or []),
+    }
+
+def _save_module_access_config(teacher_ids, class_ids):
+    """Save which teachers and classes have access to learning modules."""
+    db.db.module_access.update_one(
+        {'config_id': MODULE_ACCESS_CONFIG_ID},
+        {'$set': {
+            'config_id': MODULE_ACCESS_CONFIG_ID,
+            'teacher_ids': list(teacher_ids or []),
+            'class_ids': list(class_ids or []),
+            'updated_at': datetime.utcnow(),
+        }},
+        upsert=True,
+    )
+
+def _teacher_has_module_access(teacher_id):
+    """True if this teacher is allocated access to create/manage learning modules."""
+    config = _get_module_access_config()
+    return teacher_id in config['teacher_ids']
+
+def _student_has_module_access(student_id):
+    """True if this student's class(es) are allocated access to learning modules."""
+    student = Student.find_one({'student_id': student_id})
+    if not student:
+        return False
+    config = _get_module_access_config()
+    if not config['class_ids']:
+        return False
+    student_classes = student.get('classes', [])
+    if not student_classes and student.get('class'):
+        student_classes = [student['class']]
+    return bool(set(student_classes) & set(config['class_ids']))
+
+
+@app.context_processor
+def inject_module_access():
+    """Make teacher_has_module_access and student_has_module_access available in all templates."""
+    out = {'teacher_has_module_access': False, 'student_has_module_access': False}
+    if session.get('teacher_id'):
+        out['teacher_has_module_access'] = _teacher_has_module_access(session['teacher_id'])
+    if session.get('student_id'):
+        out['student_has_module_access'] = _student_has_module_access(session['student_id'])
+    return out
+
+
+# ============================================================================
+# MY MODULES - HELPERS
+# ============================================================================
+
+def _generate_module_id():
+    return f"MOD-{uuid.uuid4().hex[:8].upper()}"
+
+def _generate_resource_id():
+    return f"RES-{uuid.uuid4().hex[:8].upper()}"
+
+def _generate_session_id():
+    return f"SES-{uuid.uuid4().hex[:8].upper()}"
+
+def _get_all_module_ids_in_tree(root_module_id):
+    """Collect module_id and all descendant IDs for a root module."""
+    ids = [root_module_id]
+    root = Module.find_one({'module_id': root_module_id})
+    if not root:
+        return ids
+    child_ids = root.get('children_ids', [])
+    for cid in child_ids:
+        ids.extend(_get_all_module_ids_in_tree(cid))
+    return ids
+
+def _save_module_tree(node, teacher_id, subject, year_level, parent_id=None, depth=0):
+    """Recursively save module tree to database. Returns module_id."""
+    module_id = _generate_module_id()
+    children = node.pop('children', [])
+    is_leaf = len(children) == 0
+
+    position = _calculate_module_position(depth, len(children), parent_id)
+
+    module_doc = {
+        'module_id': module_id,
+        'teacher_id': teacher_id,
+        'subject': subject,
+        'year_level': year_level,
+        'title': node.get('title', 'Untitled'),
+        'description': node.get('description', ''),
+        'parent_id': parent_id,
+        'children_ids': [],
+        'depth': depth,
+        'is_leaf': is_leaf,
+        'position': position,
+        'color': node.get('color', '#667eea'),
+        'icon': node.get('icon', 'bi-book'),
+        'learning_objectives': node.get('learning_objectives', []),
+        'estimated_hours': node.get('estimated_hours', 0),
+        'created_at': datetime.utcnow(),
+        'updated_at': datetime.utcnow(),
+        'status': 'draft',
+    }
+    Module.insert_one(module_doc)
+
+    children_ids = []
+    for i, child in enumerate(children):
+        child_id = _save_module_tree(child, teacher_id, subject, year_level, parent_id=module_id, depth=depth + 1)
+        children_ids.append(child_id)
+
+    if children_ids:
+        Module.update_one({'module_id': module_id}, {'$set': {'children_ids': children_ids}})
+    return module_id
+
+def _calculate_module_position(depth, sibling_count, parent_id):
+    """Calculate 3D position for module visualization."""
+    if depth == 0:
+        return {'x': 0, 'y': 0, 'z': 0, 'angle': 0, 'distance': 0}
+    parent = Module.find_one({'module_id': parent_id}) if parent_id else None
+    parent_pos = parent.get('position', {'x': 0, 'y': 0, 'z': 0}) if parent else {'x': 0, 'y': 0, 'z': 0}
+    base_distance = 100 * depth
+    return {
+        'x': parent_pos.get('x', 0),
+        'y': depth * 30,
+        'z': parent_pos.get('z', 0),
+        'angle': 0,
+        'distance': base_distance,
+    }
+
+def _update_student_mastery(student_id, module_id, change):
+    """Update student's mastery score and propagate to parents."""
+    current = StudentModuleMastery.find_one({'student_id': student_id, 'module_id': module_id})
+    current_score = current.get('mastery_score', 0) if current else 0
+    new_score = max(0, min(100, round(current_score + change)))
+
+    if new_score >= 100:
+        status = 'mastered'
+    elif new_score > 0:
+        status = 'in_progress'
+    else:
+        status = 'not_started'
+
+    StudentModuleMastery.update_one(
+        {'student_id': student_id, 'module_id': module_id},
+        {
+            '$set': {
+                'mastery_score': new_score,
+                'status': status,
+                'updated_at': datetime.utcnow(),
+                'last_activity': datetime.utcnow(),
+            },
+            '$inc': {'time_spent_minutes': 1},
+        },
+        upsert=True,
+    )
+
+    module = Module.find_one({'module_id': module_id})
+    if module and module.get('parent_id'):
+        _propagate_mastery_to_parent(student_id, module['parent_id'])
+
+def _propagate_mastery_to_parent(student_id, parent_module_id):
+    """Recalculate parent module mastery from children (min of children)."""
+    parent = Module.find_one({'module_id': parent_module_id})
+    if not parent:
+        return
+    children_ids = parent.get('children_ids', [])
+    if not children_ids:
+        return
+    children_scores = []
+    for cid in children_ids:
+        cm = StudentModuleMastery.find_one({'student_id': student_id, 'module_id': cid})
+        children_scores.append(cm.get('mastery_score', 0) if cm else 0)
+    parent_score = min(children_scores) if children_scores else 0
+    if parent_score >= 100:
+        status = 'mastered'
+    elif parent_score > 0 or any(s > 0 for s in children_scores):
+        status = 'in_progress'
+    else:
+        status = 'not_started'
+    StudentModuleMastery.update_one(
+        {'student_id': student_id, 'module_id': parent_module_id},
+        {
+            '$set': {
+                'mastery_score': parent_score,
+                'status': status,
+                'updated_at': datetime.utcnow(),
+            }
+        },
+        upsert=True,
+    )
+    if parent.get('parent_id'):
+        _propagate_mastery_to_parent(student_id, parent['parent_id'])
+
+def _calculate_tree_mastery(root_module_id, student_id):
+    """Overall mastery for a module tree (root node mastery)."""
+    m = StudentModuleMastery.find_one({'student_id': student_id, 'module_id': root_module_id})
+    return m.get('mastery_score', 0) if m else 0
+
+def _update_student_profile(student_id, subject, updates):
+    """Update student's learning profile with new insights."""
+    profile = StudentLearningProfile.find_one({'student_id': student_id, 'subject': subject})
+    update_ops = {'$set': {'last_updated': datetime.utcnow()}}
+    if updates.get('new_strength'):
+        st = updates['new_strength']
+        if isinstance(st, dict):
+            if profile:
+                update_ops.setdefault('$push', {})['strengths'] = st
+            else:
+                update_ops.setdefault('$set', {})['strengths'] = [st]
+    if updates.get('new_weakness'):
+        w = updates['new_weakness']
+        if isinstance(w, dict):
+            if profile:
+                update_ops.setdefault('$push', {})['weaknesses'] = w
+            else:
+                update_ops.setdefault('$set', {})['weaknesses'] = [w]
+    if updates.get('new_mistake_pattern'):
+        pat = updates['new_mistake_pattern']
+        if isinstance(pat, str):
+            entry = {'pattern': pat, 'frequency': 1}
+            if profile:
+                update_ops.setdefault('$push', {})['common_mistakes'] = entry
+            else:
+                update_ops.setdefault('$set', {})['common_mistakes'] = [entry]
+    StudentLearningProfile.update_one(
+        {'student_id': student_id, 'subject': subject},
+        update_ops,
+        upsert=True,
+    )
+
+
+# ============================================================================
+# MY MODULES - TEACHER ROUTES
+# ============================================================================
+
+@app.route('/teacher/modules')
+@teacher_required
+def teacher_modules():
+    """List all module trees created by this teacher."""
+    if not _teacher_has_module_access(session['teacher_id']):
+        return redirect(url_for('teacher_dashboard'))
+    root_modules = list(
+        Module.find({'teacher_id': session['teacher_id'], 'parent_id': None}).sort('created_at', -1)
+    )
+    for module in root_modules:
+        module['total_modules'] = len(_get_all_module_ids_in_tree(module['module_id']))
+    teacher = Teacher.find_one({'teacher_id': session['teacher_id']})
+    return render_template('teacher_modules.html', modules=root_modules, teacher=teacher)
+
+@app.route('/teacher/modules/create', methods=['GET', 'POST'])
+@teacher_required
+def create_module():
+    """Create new module tree from syllabus upload."""
+    if not _teacher_has_module_access(session['teacher_id']):
+        return redirect(url_for('teacher_dashboard'))
+    if request.method == 'POST':
+        try:
+            subject = request.form.get('subject', '').strip()
+            year_level = request.form.get('year_level', '').strip()
+            file = request.files.get('syllabus_file')
+
+            if not file or not subject:
+                return jsonify({'error': 'Missing required fields'}), 400
+
+            file_content = file.read()
+            file_type = 'pdf' if (file.filename or '').lower().endswith('.pdf') else 'docx'
+
+            result = generate_modules_from_syllabus(
+                file_content=file_content,
+                file_type=file_type,
+                subject=subject,
+                year_level=year_level,
+                teacher_id=session['teacher_id'],
+            )
+
+            if 'error' in result:
+                return jsonify({'error': result['error']}), 500
+
+            root_node = result.get('root')
+            if not root_node:
+                return jsonify({'error': 'No module structure generated'}), 500
+
+            root_module_id = _save_module_tree(
+                root_node, session['teacher_id'], subject, year_level
+            )
+            return jsonify({
+                'success': True,
+                'module_id': root_module_id,
+                'total_modules': result.get('total_modules', 0),
+            })
+        except Exception as e:
+            logger.error("Error creating module: %s", e)
+            return jsonify({'error': str(e)}), 500
+
+    teacher = Teacher.find_one({'teacher_id': session['teacher_id']})
+    return render_template('teacher_create_module.html', teacher=teacher)
+
+@app.route('/teacher/modules/<module_id>')
+@teacher_required
+def view_module(module_id):
+    """View and edit module tree in 3D space."""
+    if not _teacher_has_module_access(session['teacher_id']):
+        return redirect(url_for('teacher_dashboard'))
+    root_module = Module.find_one(
+        {'module_id': module_id, 'teacher_id': session['teacher_id']}
+    )
+    if not root_module:
+        return redirect(url_for('teacher_modules'))
+
+    def build_tree(m):
+        m = dict(m)
+        m['children'] = [
+            build_tree(Module.find_one({'module_id': cid}))
+            for cid in m.get('children_ids', [])
+            if Module.find_one({'module_id': cid})
+        ]
+        return m
+
+    module_tree = build_tree(root_module)
+    return render_template(
+        'teacher_module_view.html',
+        module=root_module,
+        module_tree=module_tree,
+        modules_json=json.dumps(module_tree, default=str),
+    )
+
+@app.route('/teacher/modules/<module_id>/node/<node_id>/resources', methods=['GET', 'POST'])
+@teacher_required
+def manage_module_resources(module_id, node_id):
+    """Add/edit resources for a leaf module."""
+    if not _teacher_has_module_access(session['teacher_id']):
+        return jsonify({'error': 'Access denied'}), 403
+    mod = Module.find_one({'module_id': node_id, 'teacher_id': session['teacher_id']})
+    if not mod:
+        return jsonify({'error': 'Module not found'}), 404
+
+    if request.method == 'POST':
+        try:
+            resource_type = request.form.get('type', 'link')
+            title = request.form.get('title', '').strip()
+            resource_doc = {
+                'resource_id': _generate_resource_id(),
+                'module_id': node_id,
+                'teacher_id': session['teacher_id'],
+                'type': resource_type,
+                'title': title,
+                'description': request.form.get('description', ''),
+                'order': ModuleResource.count({'module_id': node_id}) + 1,
+                'created_at': datetime.utcnow(),
+            }
+            if resource_type == 'youtube':
+                resource_doc['url'] = request.form.get('url', '')
+            elif resource_type == 'pdf':
+                f = request.files.get('file')
+                if f:
+                    resource_doc['content'] = base64.b64encode(f.read()).decode('utf-8')
+            elif resource_type == 'link':
+                resource_doc['url'] = request.form.get('url', '')
+            ModuleResource.insert_one(resource_doc)
+            return jsonify({'success': True, 'resource_id': resource_doc['resource_id']})
+        except Exception as e:
+            logger.error("Error adding resource: %s", e)
+            return jsonify({'error': str(e)}), 500
+
+    resources = list(ModuleResource.find({'module_id': node_id}).sort('order', 1))
+    return jsonify({'resources': resources})
+
+@app.route('/teacher/modules/<module_id>/publish', methods=['POST'])
+@teacher_required
+def publish_module(module_id):
+    """Publish a module tree for students."""
+    if not _teacher_has_module_access(session['teacher_id']):
+        return jsonify({'error': 'Access denied'}), 403
+    root = Module.find_one({'module_id': module_id, 'teacher_id': session['teacher_id']})
+    if not root:
+        return jsonify({'error': 'Module not found'}), 404
+    ids = _get_all_module_ids_in_tree(module_id)
+    for mid in ids:
+        Module.update_one({'module_id': mid}, {'$set': {'status': 'published', 'updated_at': datetime.utcnow()}})
+    return jsonify({'success': True})
+
+@app.route('/teacher/modules/<module_id>/mastery')
+@teacher_required
+def module_class_mastery(module_id):
+    """View class mastery overview for a module tree."""
+    if not _teacher_has_module_access(session['teacher_id']):
+        return redirect(url_for('teacher_dashboard'))
+    root_module = Module.find_one(
+        {'module_id': module_id, 'teacher_id': session['teacher_id']}
+    )
+    if not root_module:
+        return redirect(url_for('teacher_modules'))
+
+    tree_ids = _get_all_module_ids_in_tree(module_id)
+    pipeline = [
+        {'$match': {'module_id': {'$in': tree_ids}}},
+        {
+            '$group': {
+                '_id': '$student_id',
+                'avg_mastery': {'$avg': '$mastery_score'},
+                'modules_started': {'$sum': 1},
+                'total_time': {'$sum': '$time_spent_minutes'},
+            },
+        },
+    ]
+    student_mastery = list(StudentModuleMastery.aggregate(pipeline))
+    for sm in student_mastery:
+        student = Student.find_one({'student_id': sm['_id']})
+        if student:
+            sm['name'] = student.get('name', 'Unknown')
+            sm['class'] = student.get('class', '')
+    return render_template(
+        'teacher_module_mastery.html',
+        module=root_module,
+        student_mastery=student_mastery,
+    )
+
+
 @app.route('/teacher/messages')
 @teacher_required
 def teacher_messages():
@@ -4882,14 +5673,35 @@ def admin_dashboard():
     for t in teachers:
         t['student_count'] = Student.count({'teachers': t['teacher_id']})
     
-    # Add student counts to classes
+    # Add student counts to classes (support both 'class' and 'classes')
     for c in classes:
-        c['student_count'] = Student.count({'class': c['class_id']})
-    
+        c['student_count'] = Student.count({'$or': [{'class': c['class_id']}, {'classes': c['class_id']}]})
+
+    # Module access allocation (which teachers/classes can use learning modules)
+    module_access = _get_module_access_config()
+
     return render_template('admin_dashboard.html',
                          stats=stats,
                          teachers=teachers,
-                         classes=classes)
+                         classes=classes,
+                         module_access_teacher_ids=module_access['teacher_ids'],
+                         module_access_class_ids=module_access['class_ids'])
+
+
+@app.route('/admin/module-access', methods=['POST'])
+@admin_required
+def admin_save_module_access():
+    """Save which teachers and classes have access to learning modules."""
+    try:
+        data = request.get_json()
+        teacher_ids = list(data.get('teacher_ids') or [])
+        class_ids = list(data.get('class_ids') or [])
+        _save_module_access_config(teacher_ids, class_ids)
+        return jsonify({'success': True, 'message': 'Learning module access updated.'})
+    except Exception as e:
+        logger.error("Error saving module access: %s", e)
+        return jsonify({'error': str(e)}), 500
+
 
 @app.route('/admin/import_students', methods=['POST'])
 @admin_required

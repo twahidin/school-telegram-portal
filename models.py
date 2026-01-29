@@ -39,6 +39,31 @@ class Database:
         self.db.submissions.create_index([('assignment_id', 1), ('status', 1)])
         self.db.submissions.create_index('submission_id', unique=True)
 
+        # Module indexes
+        self.db.modules.create_index('module_id', unique=True)
+        self.db.modules.create_index('teacher_id')
+        self.db.modules.create_index('parent_id')
+        self.db.modules.create_index([('teacher_id', 1), ('subject', 1)])
+
+        # Module resources
+        self.db.module_resources.create_index('resource_id', unique=True)
+        self.db.module_resources.create_index('module_id')
+
+        # Student module mastery
+        self.db.student_module_mastery.create_index([('student_id', 1), ('module_id', 1)], unique=True)
+        self.db.student_module_mastery.create_index('module_id')
+
+        # Student learning profiles
+        self.db.student_learning_profiles.create_index([('student_id', 1), ('subject', 1)], unique=True)
+
+        # Learning sessions
+        self.db.learning_sessions.create_index('session_id', unique=True)
+        self.db.learning_sessions.create_index([('student_id', 1), ('module_id', 1)])
+        self.db.learning_sessions.create_index('started_at')
+
+        # Module access allocation (admin: which teachers/classes can use learning modules)
+        self.db.module_access.create_index('config_id', unique=True)
+
 db = Database()
 
 class Student:
@@ -203,3 +228,138 @@ class Submission:
     @staticmethod
     def count(query):
         return db.db.submissions.count_documents(query)
+
+
+# ============================================================================
+# MY MODULES - Learning module hierarchy and mastery
+# ============================================================================
+
+class Module:
+    """Learning module node in hierarchical structure. Root has parent_id=None."""
+    @staticmethod
+    def find_one(query):
+        return db.db.modules.find_one(query)
+
+    @staticmethod
+    def find(query):
+        return db.db.modules.find(query)
+
+    @staticmethod
+    def insert_one(document):
+        return db.db.modules.insert_one(document).inserted_id
+
+    @staticmethod
+    def update_one(query, update):
+        return db.db.modules.update_one(query, update)
+
+    @staticmethod
+    def delete_one(query):
+        return db.db.modules.delete_one(query)
+
+    @staticmethod
+    def delete_many(query):
+        return db.db.modules.delete_many(query)
+
+    @staticmethod
+    def count(query):
+        return db.db.modules.count_documents(query)
+
+    @staticmethod
+    def aggregate(pipeline):
+        return db.db.modules.aggregate(pipeline)
+
+
+class ModuleResource:
+    """Resources attached to leaf modules (YouTube, PDF, interactive, etc.)"""
+    @staticmethod
+    def find_one(query):
+        return db.db.module_resources.find_one(query)
+
+    @staticmethod
+    def find(query):
+        return db.db.module_resources.find(query)
+
+    @staticmethod
+    def insert_one(document):
+        return db.db.module_resources.insert_one(document).inserted_id
+
+    @staticmethod
+    def update_one(query, update):
+        return db.db.module_resources.update_one(query, update)
+
+    @staticmethod
+    def delete_one(query):
+        return db.db.module_resources.delete_one(query)
+
+    @staticmethod
+    def delete_many(query):
+        return db.db.module_resources.delete_many(query)
+
+    @staticmethod
+    def count(query):
+        return db.db.module_resources.count_documents(query)
+
+
+class StudentModuleMastery:
+    """Tracks individual student's mastery per module (0-100)."""
+    @staticmethod
+    def find_one(query):
+        return db.db.student_module_mastery.find_one(query)
+
+    @staticmethod
+    def find(query):
+        return db.db.student_module_mastery.find(query)
+
+    @staticmethod
+    def insert_one(document):
+        return db.db.student_module_mastery.insert_one(document).inserted_id
+
+    @staticmethod
+    def update_one(query, update, upsert=False):
+        return db.db.student_module_mastery.update_one(query, update, upsert=upsert)
+
+    @staticmethod
+    def delete_many(query):
+        return db.db.student_module_mastery.delete_many(query)
+
+    @staticmethod
+    def aggregate(pipeline):
+        return db.db.student_module_mastery.aggregate(pipeline)
+
+
+class StudentLearningProfile:
+    """AI-maintained profile: strengths, weaknesses, learning style."""
+    @staticmethod
+    def find_one(query):
+        return db.db.student_learning_profiles.find_one(query)
+
+    @staticmethod
+    def find(query):
+        return db.db.student_learning_profiles.find(query)
+
+    @staticmethod
+    def insert_one(document):
+        return db.db.student_learning_profiles.insert_one(document).inserted_id
+
+    @staticmethod
+    def update_one(query, update, upsert=False):
+        return db.db.student_learning_profiles.update_one(query, update, upsert=upsert)
+
+
+class LearningSession:
+    """Records each learning session: chat history, assessments, time spent."""
+    @staticmethod
+    def find_one(query):
+        return db.db.learning_sessions.find_one(query)
+
+    @staticmethod
+    def find(query):
+        return db.db.learning_sessions.find(query)
+
+    @staticmethod
+    def insert_one(document):
+        return db.db.learning_sessions.insert_one(document).inserted_id
+
+    @staticmethod
+    def update_one(query, update):
+        return db.db.learning_sessions.update_one(query, update)
