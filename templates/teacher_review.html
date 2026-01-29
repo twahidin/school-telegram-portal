@@ -232,23 +232,25 @@
                             <tfoot class="table-light">
                                 <tr>
                                     <td colspan="3"></td>
-                                    <td class="text-end fw-bold">Total:</td>
-                                    <td>
+                                    <td class="fw-bold">
                                         <div class="d-flex align-items-center gap-2">
                                             <button type="button" class="btn btn-outline-secondary btn-sm" onclick="recalculateTotal()" title="Sum marks from all questions">
                                                 <i class="bi bi-calculator me-1"></i>Recalculate
                                             </button>
-                                            <div class="input-group input-group-sm">
-                                                <input type="number" class="form-control fw-bold" id="total-marks" 
-                                                       name="total_marks"
-                                                       value="{{ ai_feedback.total_marks if ai_feedback and ai_feedback.total_marks else '' }}"
-                                                       min="0">
-                                                <span class="input-group-text">/</span>
-                                                <input type="number" class="form-control fw-bold" id="total-marks-max" 
-                                                       name="total_marks_max"
-                                                       value="{{ assignment.total_marks or 100 }}"
-                                                       min="0">
-                                            </div>
+                                            <span>Total:</span>
+                                        </div>
+                                    </td>
+                                    <td>
+                                        <div class="input-group input-group-sm">
+                                            <input type="number" class="form-control fw-bold" id="total-marks" 
+                                                   name="total_marks"
+                                                   value="{{ ai_feedback.total_marks if ai_feedback and ai_feedback.total_marks else '' }}"
+                                                   min="0">
+                                            <span class="input-group-text">/</span>
+                                            <input type="number" class="form-control fw-bold" id="total-marks-max" 
+                                                   name="total_marks_max"
+                                                   value="{{ assignment.total_marks or 100 }}"
+                                                   min="0">
                                         </div>
                                     </td>
                                 </tr>
