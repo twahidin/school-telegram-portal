@@ -594,14 +594,14 @@ Respond ONLY with valid JSON in this exact format:
             "text": "\nAnalyze this submission and provide JSON feedback:"
         })
         
-        # Make API call using unified function
+        # Make API call using unified function (generous max_tokens so long feedback isn't truncated)
         response_text = make_ai_api_call(
             client=client,
             model_name=model_name,
             provider=provider,
             system_prompt=system_prompt,
             messages_content=content,
-            max_tokens=4000,
+            max_tokens=16384,
             assignment=assignment
         )
         
@@ -627,15 +627,31 @@ Respond ONLY with valid JSON in this exact format:
         }
 
 def parse_ai_response(response_text: str) -> dict:
-    """Parse AI response into structured format"""
+    """Parse AI response into structured format. Strips markdown code fences and handles truncated JSON."""
+    if not response_text or not response_text.strip():
+        return {'error': 'Empty response', 'raw': response_text}
+    # Strip markdown code block if present (e.g. ```json ... ``` or ``` ... ```)
+    text = response_text.strip()
+    if text.startswith('```'):
+        text = re.sub(r'^```(?:json)?\s*', '', text)
+        text = re.sub(r'\s*```\s*$', '', text)
     try:
-        # Try to extract JSON from response
-        json_match = re.search(r'\{[\s\S]*\}', response_text)
+        json_match = re.search(r'\{[\s\S]*\}', text)
         if json_match:
-            return json.loads(json_match.group())
+            json_str = json_match.group()
+            return json.loads(json_str)
         return {'error': 'Could not parse response', 'raw': response_text}
     except json.JSONDecodeError:
-        return {'error': 'Invalid JSON', 'raw': response_text}
+        # Likely truncated when assignment is large (model hit max_tokens)
+        truncated_hint = (
+            ' Response may have been cut off; this assignment might have too many questions or long feedback. '
+            'Try "Remark" again or use fewer pages.'
+            if len(text) > 300 and ('"questions"' in text or '"question_num"' in text) else ''
+        )
+        return {
+            'error': f'Invalid JSON{truncated_hint}'.strip(),
+            'raw': response_text
+        }
 
 def analyze_single_page(page_data: bytes, page_type: str, assignment: dict, teacher: dict = None) -> dict:
     """
