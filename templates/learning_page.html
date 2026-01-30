@@ -25,27 +25,59 @@
 {% endblock %}
 
 {% block content %}
-<div class="learning-page-wrapper">
+<div class="learning-page-wrapper learning-v2">
     <div class="module-header-bar mb-3">
         <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
             <div class="d-flex align-items-center gap-2">
                 <a href="{{ url_for('student_module_view', module_id=root_module.module_id) }}" class="btn btn-outline-secondary btn-sm">
-                    <i class="bi bi-arrow-left me-1"></i>Back
+                    <i class="bi bi-arrow-left me-1"></i>Back to Modules
                 </a>
                 <div class="module-icon-sm" style="background: {{ module.color or '#667eea' }}20; color: {{ module.color or '#667eea' }};">
                     <i class="bi {{ module.icon or 'bi-book' }}"></i>
                 </div>
                 <div>
-                    <span class="text-muted small">{{ root_module.title }}</span>
+                    <span class="text-muted small">{{ root_module.title }} › {{ module.title }}</span>
                     <h5 class="mb-0">{{ module.title }}</h5>
                 </div>
             </div>
             <div class="d-flex align-items-center gap-2">
-                <div class="mastery-badge-small">
-                    <span class="text-muted small me-1">Mastery</span>
-                    <strong id="mastery-value">{{ (mastery.mastery_score if mastery else 0)|round|int }}%</strong>
-                </div>
+                <span class="mastery-badge-small"><i class="bi bi-trophy me-1"></i><strong id="mastery-value">{{ (mastery.mastery_score if mastery else 0)|round|int }}%</strong> Mastered</span>
             </div>
+        </div>
+    </div>
+
+    <div class="media-viewer-section mb-3 {% if not resources %}d-none{% endif %}">
+        <div class="media-tabs mb-2">
+            <button type="button" class="media-tab active" data-tab="video"><i class="bi bi-play-circle"></i> Video</button>
+            <button type="button" class="media-tab" data-tab="slides"><i class="bi bi-easel"></i> Slides</button>
+            <button type="button" class="media-tab" data-tab="interactive"><i class="bi bi-joystick"></i> Interactive</button>
+        </div>
+        <div class="media-content-area rounded overflow-hidden bg-dark">
+            {% for res in resources %}
+            <div class="media-pane {% if loop.first %}active{% else %}d-none{% endif %}" data-type="{{ res.type }}">
+                {% if res.type == 'youtube' and res.url %}
+                <div class="ratio ratio-16x9">
+                    <iframe src="{{ res.url.replace('watch?v=', 'embed/') if 'youtube' in (res.url or '') else res.url }}" allowfullscreen></iframe>
+                </div>
+                {% elif res.type == 'pdf' %}
+                <div class="p-3 text-white text-center">
+                    <a href="{{ res.url or '#' }}" target="_blank" rel="noopener" class="btn btn-primary"><i class="bi bi-file-pdf me-1"></i>{{ res.title }}</a>
+                </div>
+                {% else %}
+                <div class="p-4 text-center text-white">
+                    <i class="bi bi-link-45deg display-4"></i>
+                    <p class="mb-2">{{ res.title }}</p>
+                    <a href="{{ res.url or '#' }}" target="_blank" rel="noopener" class="btn btn-light btn-sm">Open</a>
+                </div>
+                {% endif %}
+            </div>
+            {% endfor %}
+            {% if not resources %}
+            <div class="media-pane active p-4 text-center text-white">
+                <i class="bi bi-collection-play display-4 opacity-50"></i>
+                <p class="mb-0 small">No media for this module yet.</p>
+            </div>
+            {% endif %}
         </div>
     </div>
 
@@ -351,6 +383,18 @@
         });
     }
 
+    document.querySelectorAll('.media-tab').forEach(function(tab, tabIdx) {
+        tab.addEventListener('click', function() {
+            document.querySelectorAll('.media-tab').forEach(function(bt) { bt.classList.remove('active'); });
+            this.classList.add('active');
+            document.querySelectorAll('.media-pane').forEach(function(pane, i) {
+                const show = i === tabIdx;
+                pane.classList.toggle('active', show);
+                pane.classList.toggle('d-none', !show);
+            });
+        });
+    });
+
     document.querySelectorAll('.resource-item[data-resource-id]').forEach(function(el) {
         el.addEventListener('click', function() {
             const id = el.getAttribute('data-resource-id');
@@ -392,5 +436,12 @@
 .resource-icon.youtube { background: rgba(255,0,0,0.1); color: #f00; }
 .resource-icon.pdf { background: rgba(239,68,68,0.1); color: #ef4444; }
 .resource-icon.link { background: rgba(6,182,212,0.1); color: #06b6d4; }
+.media-viewer-section { min-height: 200px; }
+.media-tabs { display: flex; gap: 0.5rem; }
+.media-tab { display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.5rem 1rem; border: none; background: #f1f5f9; border-radius: 8px; font-size: 0.85rem; cursor: pointer; }
+.media-tab:hover { background: #e2e8f0; }
+.media-tab.active { background: linear-gradient(135deg, #667eea, #764ba2); color: white; }
+.media-content-area { min-height: 220px; }
+.media-pane iframe { border: none; }
 </style>
 {% endblock %}

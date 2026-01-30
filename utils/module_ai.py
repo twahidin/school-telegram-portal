@@ -316,11 +316,19 @@ STUDENT PROFILE:
 - Common mistakes: {', '.join([m.get('pattern', '') for m in student_profile.get('common_mistakes', [])])}
 """
 
+        custom_prompt = (module.get('custom_prompt') or '').strip()
+        custom_block = ""
+        if custom_prompt:
+            custom_block = f"""
+TEACHER'S CUSTOM PROMPT FOR THIS MODULE (follow these instructions):
+{custom_prompt}
+
+"""
         system_prompt = f"""You are an expert, patient tutor helping a student learn.
 
 CURRENT MODULE: {module.get('title', 'Unknown')}
 LEARNING OBJECTIVES: {', '.join(module.get('learning_objectives', []))}
-{profile_context}
+{custom_block}{profile_context}
 
 YOUR ROLE:
 1. TEACH: Explain concepts clearly, use examples, adapt to student's level

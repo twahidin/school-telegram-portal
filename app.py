@@ -5114,6 +5114,37 @@ def view_module(module_id):
         modules_json=json.dumps(module_tree, default=str),
     )
 
+@app.route('/teacher/modules/<module_id>/node/<node_id>', methods=['PATCH', 'PUT'])
+@teacher_required
+def update_module_node(module_id, node_id):
+    """Update a module node: title, description, learning_objectives, custom_prompt."""
+    if not _teacher_has_module_access(session['teacher_id']):
+        return jsonify({'error': 'Access denied'}), 403
+    root = Module.find_one({'module_id': module_id, 'teacher_id': session['teacher_id']})
+    if not root:
+        return jsonify({'error': 'Module tree not found'}), 404
+    mod = Module.find_one({'module_id': node_id, 'teacher_id': session['teacher_id']})
+    if not mod:
+        return jsonify({'error': 'Module node not found'}), 404
+    try:
+        data = request.get_json() or {}
+        update = {'updated_at': datetime.utcnow()}
+        if 'title' in data:
+            update['title'] = (data.get('title') or '').strip() or mod.get('title', 'Untitled')
+        if 'description' in data:
+            update['description'] = data.get('description', '')
+        if 'learning_objectives' in data:
+            objs = data.get('learning_objectives')
+            update['learning_objectives'] = objs if isinstance(objs, list) else []
+        if 'custom_prompt' in data:
+            update['custom_prompt'] = (data.get('custom_prompt') or '').strip()
+        Module.update_one({'module_id': node_id, 'teacher_id': session['teacher_id']}, {'$set': update})
+        return jsonify({'success': True})
+    except Exception as e:
+        logger.error("Error updating module node: %s", e)
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/teacher/modules/<module_id>/node/<node_id>/resources', methods=['GET', 'POST'])
 @teacher_required
 def manage_module_resources(module_id, node_id):
@@ -5154,6 +5185,23 @@ def manage_module_resources(module_id, node_id):
 
     resources = list(ModuleResource.find({'module_id': node_id}).sort('order', 1))
     return jsonify({'resources': resources})
+
+
+@app.route('/teacher/modules/<module_id>/node/<node_id>/resources/<resource_id>', methods=['DELETE'])
+@teacher_required
+def delete_module_resource(module_id, node_id, resource_id):
+    """Delete a resource from a leaf module."""
+    if not _teacher_has_module_access(session['teacher_id']):
+        return jsonify({'error': 'Access denied'}), 403
+    mod = Module.find_one({'module_id': node_id, 'teacher_id': session['teacher_id']})
+    if not mod:
+        return jsonify({'error': 'Module not found'}), 404
+    res = ModuleResource.find_one({'resource_id': resource_id, 'module_id': node_id})
+    if not res:
+        return jsonify({'error': 'Resource not found'}), 404
+    ModuleResource.delete_one({'resource_id': resource_id, 'module_id': node_id})
+    return jsonify({'success': True})
+
 
 @app.route('/teacher/modules/<module_id>/publish', methods=['POST'])
 @teacher_required

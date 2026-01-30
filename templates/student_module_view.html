@@ -3,8 +3,8 @@
 {% block title %}{{ module.title }} - My Learning{% endblock %}
 
 {% block navbar %}
-<nav class="navbar navbar-expand-lg navbar-dark">
-    <div class="container">
+<nav class="navbar navbar-expand-lg navbar-dark student-module-nav">
+    <div class="container-fluid px-3">
         <a class="navbar-brand" href="{{ url_for('dashboard') }}">
             <i class="bi bi-mortarboard-fill me-2"></i>School Portal
         </a>
@@ -14,12 +14,12 @@
         <div class="collapse navbar-collapse" id="navbarNav">
             <ul class="navbar-nav me-auto">
                 <li class="nav-item"><a class="nav-link" href="{{ url_for('dashboard') }}"><i class="bi bi-house me-1"></i>Dashboard</a></li>
-                <li class="nav-item"><a class="nav-link" href="{{ url_for('assignments_list') }}"><i class="bi bi-journal-text me-1"></i>Assignments</a></li>
                 <li class="nav-item"><a class="nav-link active" href="{{ url_for('student_modules') }}"><i class="bi bi-diagram-3 me-1"></i>My Learning</a></li>
+                <li class="nav-item"><a class="nav-link" href="{{ url_for('assignments_list') }}"><i class="bi bi-journal-text me-1"></i>Assignments</a></li>
                 <li class="nav-item"><a class="nav-link" href="{{ url_for('student_submissions') }}"><i class="bi bi-check2-square me-1"></i>Submissions</a></li>
             </ul>
             <div class="navbar-nav">
-                <a class="nav-link" href="#"><i class="bi bi-person-circle me-1"></i>{{ session.student_name }}</a>
+                <span class="nav-link"><i class="bi bi-person-circle me-1"></i>{{ session.student_name }}</span>
             </div>
         </div>
     </div>
@@ -27,114 +27,272 @@
 {% endblock %}
 
 {% block content %}
-<div class="container py-4">
-    <div class="mb-4">
-        <a href="{{ url_for('student_modules') }}" class="btn btn-outline-secondary btn-sm mb-2">
-            <i class="bi bi-arrow-left me-1"></i>Back to My Learning
-        </a>
-        <h1><i class="bi {{ module.icon or 'bi-diagram-3' }} me-2" style="color: {{ module.color or '#667eea' }};"></i>{{ module.title }}</h1>
-        <p class="text-muted mb-0">{{ module.subject }} • {{ module.year_level }} — Click a leaf module to start learning</p>
-    </div>
+<style>
+.student-module-nav { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
+.flat-module-layout { display: grid; grid-template-columns: 1fr 380px; height: calc(100vh - 56px); }
+@media (max-width: 1200px) { .flat-module-layout { grid-template-columns: 1fr; } .flat-sidebar-panel { display: none; } }
+.flat-map-container { position: relative; overflow: hidden; background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); }
+.flat-connections-svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+.flat-connection-line { stroke: rgba(255,255,255,0.3); stroke-width: 2; fill: none; }
+.flat-connection-line.mastered { stroke: #10b981; stroke-width: 2; }
+.flat-connection-line.in-progress { stroke: #f59e0b; stroke-width: 2; stroke-dasharray: 5,5; }
+.flat-modules-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+.flat-module-node { position: absolute; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; z-index: 10; }
+.flat-module-node:hover { transform: scale(1.1); z-index: 20; }
+.flat-module-node.selected { transform: scale(1.15); z-index: 30; }
+.flat-module-circle { border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 20px rgba(0,0,0,0.3); border: 3px solid rgba(255,255,255,0.2); position: relative; overflow: hidden; }
+.flat-module-circle::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 40%; background: linear-gradient(to bottom, rgba(255,255,255,0.2), transparent); border-radius: 50% 50% 0 0; }
+.flat-module-root .flat-module-circle { width: 140px; height: 140px; }
+.flat-module-l1 .flat-module-circle { width: 100px; height: 100px; }
+.flat-module-l2 .flat-module-circle { width: 70px; height: 70px; }
+.flat-module-l3 .flat-module-circle { width: 50px; height: 50px; }
+.flat-mastery-full .flat-module-circle { background: linear-gradient(135deg, #10b981 0%, #059669 100%); border-color: #34d399; }
+.flat-mastery-high .flat-module-circle { background: linear-gradient(135deg, #84cc16 0%, #65a30d 100%); border-color: #a3e635; }
+.flat-mastery-medium .flat-module-circle { background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); border-color: #fbbf24; }
+.flat-mastery-low .flat-module-circle { background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); border-color: #f87171; }
+.flat-mastery-none .flat-module-circle { background: linear-gradient(135deg, #64748b 0%, #475569 100%); border-color: #94a3b8; opacity: 0.7; }
+.flat-module-node:not([class*="flat-mastery-"]) .flat-module-circle { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
+.flat-module-icon { color: white; font-size: 1.5rem; position: relative; z-index: 1; }
+.flat-module-l2 .flat-module-icon, .flat-module-l3 .flat-module-icon { font-size: 1rem; }
+.flat-module-mastery { position: absolute; bottom: -8px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.8); color: white; font-size: 0.65rem; font-weight: 600; padding: 2px 8px; border-radius: 10px; white-space: nowrap; }
+.flat-module-label { position: absolute; top: 100%; left: 50%; transform: translateX(-50%); margin-top: 8px; color: white; font-size: 0.75rem; font-weight: 500; text-align: center; white-space: nowrap; text-shadow: 0 2px 4px rgba(0,0,0,0.5); max-width: 100px; overflow: hidden; text-overflow: ellipsis; }
+.flat-module-node.selected .flat-module-circle { box-shadow: 0 0 0 4px rgba(255,255,255,0.5), 0 4px 30px rgba(102,126,234,0.5); }
+.flat-sidebar-panel { background: white; border-left: 1px solid #e2e8f0; display: flex; flex-direction: column; overflow: hidden; }
+.flat-sidebar-header { padding: 1.25rem; border-bottom: 1px solid #e2e8f0; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
+.flat-sidebar-content { flex: 1; overflow-y: auto; padding: 1.25rem; }
+.flat-empty-state { text-align: center; padding: 3rem 1rem; color: #64748b; }
+.flat-detail-icon { width: 60px; height: 60px; border-radius: 16px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; color: white; }
+.flat-mastery-section { background: #f8fafc; border-radius: 12px; padding: 1rem; margin-bottom: 1rem; }
+.flat-map-breadcrumb { position: absolute; top: 1rem; left: 50%; transform: translateX(-50%); background: rgba(255,255,255,0.95); padding: 0.5rem 1rem; border-radius: 20px; font-size: 0.85rem; z-index: 100; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+.flat-map-controls { position: absolute; top: 1rem; right: 1rem; display: flex; flex-direction: column; gap: 0.5rem; z-index: 100; }
+.flat-control-btn { width: 40px; height: 40px; border-radius: 10px; border: none; background: rgba(255,255,255,0.95); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 1.1rem; color: #1e293b; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+.flat-control-btn:hover { background: #667eea; color: white; }
+.flat-legend { position: absolute; bottom: 1rem; left: 1rem; background: rgba(255,255,255,0.95); border-radius: 12px; padding: 1rem; z-index: 100; }
+.flat-legend-title { font-weight: 600; margin-bottom: 0.5rem; font-size: 0.85rem; }
+.flat-pan-zoom { width: 100%; height: 100%; cursor: grab; }
+.flat-pan-zoom:active { cursor: grabbing; }
+.flat-pan-zoom-content { position: relative; width: 1400px; height: 900px; transform-origin: center center; }
+</style>
 
-    <div class="card shadow-sm">
-        <div class="card-body p-0">
-            <div id="module-3d-container" class="module-3d-container" style="height: 500px;"></div>
+<div class="flat-module-layout">
+    <div class="flat-map-container" id="mapContainer">
+        <nav class="flat-map-breadcrumb">
+            <span class="text-muted">{{ module.subject }}</span>
+            <span class="mx-2">›</span>
+            <span style="color: #667eea; font-weight: 600;">{{ module.title }}</span>
+        </nav>
+        <div class="flat-map-controls">
+            <button class="flat-control-btn" title="Zoom In" id="zoomIn"><i class="bi bi-zoom-in"></i></button>
+            <button class="flat-control-btn" title="Zoom Out" id="zoomOut"><i class="bi bi-zoom-out"></i></button>
+            <button class="flat-control-btn" title="Reset" id="resetView"><i class="bi bi-arrows-fullscreen"></i></button>
+        </div>
+        <div class="flat-legend">
+            <div class="flat-legend-title">Mastery</div>
+            <div class="d-flex flex-wrap gap-2 small text-muted">
+                <span><span class="d-inline-block rounded-circle bg-success" style="width:8px;height:8px;"></span> 100%</span>
+                <span><span class="d-inline-block rounded-circle" style="width:8px;height:8px;background:#84cc16;"></span> 70–99%</span>
+                <span><span class="d-inline-block rounded-circle bg-warning" style="width:8px;height:8px;"></span> 40–69%</span>
+                <span><span class="d-inline-block rounded-circle bg-danger" style="width:8px;height:8px;"></span> 1–39%</span>
+                <span><span class="d-inline-block rounded-circle bg-secondary" style="width:8px;height:8px;"></span> Not started</span>
+            </div>
+        </div>
+        <div class="flat-pan-zoom" id="panZoom">
+            <div class="flat-pan-zoom-content" id="panZoomContent">
+                <svg class="flat-connections-svg" id="connectionsSvg"></svg>
+                <div class="flat-modules-layer" id="modulesLayer"></div>
+            </div>
+        </div>
+    </div>
+    <div class="flat-sidebar-panel">
+        <div class="flat-sidebar-header">
+            <h2 class="h5 mb-0">Module Details</h2>
+            <p class="small mb-0 opacity-90">Click a module to view details</p>
+        </div>
+        <div class="flat-sidebar-content" id="sidebarContent">
+            <div class="flat-empty-state" id="emptyState">
+                <i class="bi bi-hand-index-thumb" style="font-size: 3rem; opacity: 0.5;"></i>
+                <h5 class="mt-2">Select a Module</h5>
+                <p class="small mb-0">Click any module node to view details and start learning</p>
+            </div>
+            <div id="moduleDetails" style="display: none;">
+                <div class="d-flex align-items-center gap-3 mb-3">
+                    <div class="flat-detail-icon" id="detailIcon" style="background: linear-gradient(135deg, #667eea, #764ba2);">
+                        <i class="bi bi-book" id="detailIconClass"></i>
+                    </div>
+                    <div>
+                        <h5 class="mb-1" id="detailTitle"></h5>
+                        <p class="text-muted small mb-0" id="detailPath"></p>
+                    </div>
+                </div>
+                <div class="flat-mastery-section">
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                        <span class="small fw-600">Your Mastery</span>
+                        <span class="fw-bold text-primary" id="detailMastery">0%</span>
+                    </div>
+                    <div class="progress" style="height: 8px;">
+                        <div class="progress-bar bg-primary" id="detailProgress" style="width: 0%"></div>
+                    </div>
+                </div>
+                <div class="mb-3">
+                    <h6 class="small fw-600 mb-2"><i class="bi bi-collection-play text-primary me-1"></i>Learning Resources</h6>
+                    <p class="small text-muted mb-0" id="detailResourcesHint">No extra resources for this module.</p>
+                </div>
+                <a href="#" class="btn btn-primary w-100" id="startLearningBtn" style="display: none;">
+                    <i class="bi bi-play-circle me-1"></i>Start Learning
+                </a>
+            </div>
         </div>
     </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/three@0.132.0/build/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.132.0/examples/js/controls/OrbitControls.js"></script>
 <script>
 (function() {
     const moduleTree = {{ modules_json|safe }};
-    const container = document.getElementById('module-3d-container');
     const rootModuleId = '{{ module.module_id }}';
-    if (!container || !moduleTree) return;
+    const mapContainer = document.getElementById('mapContainer');
+    const panZoomContent = document.getElementById('panZoomContent');
+    const connectionsSvg = document.getElementById('connectionsSvg');
+    const modulesLayer = document.getElementById('modulesLayer');
+    const emptyState = document.getElementById('emptyState');
+    const moduleDetails = document.getElementById('moduleDetails');
+    const startLearningBtn = document.getElementById('startLearningBtn');
 
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0xf8fafc);
-    const width = container.clientWidth;
-    const height = container.clientHeight;
-    const camera = new THREE.PerspectiveCamera(60, width / height, 0.1, 2000);
-    camera.position.set(0, 200, 400);
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setSize(width, height);
-    renderer.setPixelRatio(window.devicePixelRatio);
-    container.appendChild(renderer.domElement);
+    if (!moduleTree || !modulesLayer) return;
 
-    const controls = new THREE.OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controls.dampingFactor = 0.05;
-    controls.maxDistance = 800;
-    controls.minDistance = 100;
+    const CANVAS_W = 1400, CANVAS_H = 900;
+    const rootX = 700, rootY = 400;
+    const nodesWithPos = [];
+    const nodePositions = {};
 
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
-    scene.add(ambientLight);
-    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
-    dirLight.position.set(100, 200, 100);
-    scene.add(dirLight);
-
-    const raycaster = new THREE.Raycaster();
-    const mouse = new THREE.Vector2();
-    const meshes = [];
-
-    function getColor(masteryScore, baseColor) {
-        if (masteryScore >= 100) return 0x10b981;
-        if (masteryScore > 0) return 0xfbbf24;
-        if (baseColor && baseColor.indexOf('#') === 0) return parseInt(baseColor.slice(1), 16);
-        return 0x667eea;
+    function masteryClass(score) {
+        if (score >= 100) return 'flat-mastery-full';
+        if (score >= 70) return 'flat-mastery-high';
+        if (score >= 40) return 'flat-mastery-medium';
+        if (score >= 1) return 'flat-mastery-low';
+        return 'flat-mastery-none';
     }
 
-    function addNode(node, parentPos, depth, siblingIndex, siblingCount) {
-        const baseDist = 80 + depth * 30;
-        const angle = (siblingIndex / Math.max(siblingCount, 1)) * Math.PI * 2 + Math.PI / 4;
-        const x = (parentPos ? parentPos.x : 0) + Math.cos(angle) * baseDist;
-        const z = (parentPos ? parentPos.z : 0) + Math.sin(angle) * baseDist;
-        const y = depth * 20;
-        const position = new THREE.Vector3(x, y, z);
-
-        const radius = Math.max(20 - depth * 3, 8);
-        const geometry = new THREE.SphereGeometry(radius, 32, 32);
-        const masteryScore = node.mastery_score || 0;
-        const color = getColor(masteryScore, node.color);
-        const material = new THREE.MeshPhongMaterial({ color: color, shininess: 50, transparent: true, opacity: masteryScore > 0 ? 1 : 0.7 });
-        const mesh = new THREE.Mesh(geometry, material);
-        mesh.position.copy(position);
-        mesh.userData = { moduleId: rootModuleId, nodeId: node.module_id, title: node.title, isLeaf: node.is_leaf };
-        scene.add(mesh);
-        meshes.push(mesh);
-
+    function layoutNode(node, cx, cy, depth, siblingIndex, siblingCount, pathTitles) {
         const children = node.children || [];
-        children.forEach(function(child, i) { addNode(child, position, depth + 1, i, children.length); });
-    }
-    addNode(moduleTree, null, 0, 0, 1);
+        const isRoot = depth === 0;
+        const radius = isRoot ? 70 : (depth === 1 ? 50 : (depth === 2 ? 35 : 25));
+        nodePositions[node.module_id] = { x: cx, y: cy, radius, depth, path: pathTitles };
+        nodesWithPos.push({ node, cx, cy, radius, depth, pathTitles: pathTitles.slice() });
 
-    container.addEventListener('click', function(event) {
-        const rect = container.getBoundingClientRect();
-        mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-        mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-        raycaster.setFromCamera(mouse, camera);
-        const hits = raycaster.intersectObjects(meshes);
-        if (hits.length > 0 && hits[0].object.userData.isLeaf) {
-            window.location.href = '/modules/' + encodeURIComponent(rootModuleId) + '/learn/' + encodeURIComponent(hits[0].object.userData.nodeId);
+        const n = children.length;
+        for (let i = 0; i < n; i++) {
+            const angle = (i / Math.max(n, 1)) * Math.PI * 1.8 + Math.PI * 0.1;
+            const dist = (isRoot ? 220 : 120) + depth * 60;
+            const child = children[i];
+            const nx = cx + Math.cos(angle) * dist;
+            const ny = cy + Math.sin(angle) * dist;
+            const childPath = pathTitles.concat([child.title]);
+            layoutNode(child, nx, ny, depth + 1, i, n, childPath);
         }
-    });
-
-    function animate() {
-        requestAnimationFrame(animate);
-        controls.update();
-        renderer.render(scene, camera);
     }
-    animate();
+    layoutNode(moduleTree, rootX, rootY, 0, 0, 1, [moduleTree.title]);
 
-    window.addEventListener('resize', function() {
-        const w = container.clientWidth;
-        const h = container.clientHeight;
-        camera.aspect = w / h;
-        camera.updateProjectionMatrix();
-        renderer.setSize(w, h);
+    // SVG connections: parent -> each child
+    let pathD = '';
+    nodesWithPos.forEach(function(item) {
+        const children = item.node.children || [];
+        const from = nodePositions[item.node.module_id];
+        if (!from) return;
+        children.forEach(function(c) {
+            const to = nodePositions[c.module_id];
+            if (!to) return;
+            const mastery = (c.mastery_score || 0);
+            const cls = mastery >= 100 ? 'flat-connection-line mastered' : (mastery > 0 ? 'flat-connection-line in-progress' : 'flat-connection-line');
+            pathD += `<line class="${cls}" x1="${from.x}" y1="${from.y}" x2="${to.x}" y2="${to.y}"/>`;
+        });
     });
+    connectionsSvg.innerHTML = pathD;
+    connectionsSvg.setAttribute('viewBox', `0 0 ${CANVAS_W} ${CANVAS_H}`);
+    connectionsSvg.setAttribute('width', '100%');
+    connectionsSvg.setAttribute('height', '100%');
+
+    function selectModule(nodeId) {
+        const item = nodesWithPos.find(function(p) { return p.node.module_id === nodeId; });
+        if (!item) return;
+        document.querySelectorAll('.flat-module-node.selected').forEach(function(el) { el.classList.remove('selected'); });
+        const el = document.querySelector('[data-node-id="' + nodeId + '"]');
+        if (el) el.classList.add('selected');
+
+        emptyState.style.display = 'none';
+        moduleDetails.style.display = 'block';
+        document.getElementById('detailTitle').textContent = item.node.title;
+        document.getElementById('detailPath').textContent = item.pathTitles.join(' → ');
+        const score = item.node.mastery_score || 0;
+        document.getElementById('detailMastery').textContent = score + '%';
+        document.getElementById('detailProgress').style.width = score + '%';
+        const iconEl = document.getElementById('detailIcon');
+        iconEl.style.background = score >= 100 ? 'linear-gradient(135deg, #10b981, #059669)' : (score >= 70 ? 'linear-gradient(135deg, #84cc16, #65a30d)' : (score >= 40 ? 'linear-gradient(135deg, #f59e0b, #d97706)' : (score > 0 ? 'linear-gradient(135deg, #ef4444, #dc2626)' : 'linear-gradient(135deg, #64748b, #475569)')));
+        document.getElementById('detailIconClass').className = 'bi ' + (item.node.icon || 'bi-book');
+
+        if (item.node.is_leaf) {
+            startLearningBtn.style.display = 'inline-flex';
+            startLearningBtn.href = '{{ url_for("learning_page", module_id="__ROOT__", node_id="__NODE__") }}'.replace('__ROOT__', encodeURIComponent(rootModuleId)).replace('__NODE__', encodeURIComponent(nodeId));
+        } else {
+            startLearningBtn.style.display = 'none';
+        }
+    }
+
+    nodesWithPos.forEach(function(item) {
+        const n = item.node;
+        const score = n.mastery_score || 0;
+        const levelClass = item.depth === 0 ? 'flat-module-root' : (item.depth === 1 ? 'flat-module-l1' : (item.depth === 2 ? 'flat-module-l2' : 'flat-module-l3'));
+        const masteryC = masteryClass(score);
+        const left = item.cx - item.radius;
+        const top = item.cy - item.radius;
+        const colorStyle = !n.color || n.color.indexOf('#') !== 0 ? '' : ('background: linear-gradient(135deg, ' + n.color + ', ' + n.color + 'dd);');
+        const div = document.createElement('div');
+        div.className = 'flat-module-node ' + levelClass + ' ' + masteryC;
+        div.setAttribute('data-node-id', n.module_id);
+        div.style.left = left + 'px';
+        div.style.top = top + 'px';
+        div.innerHTML = '<div class="flat-module-circle" style="' + colorStyle + ' width:' + (item.radius*2) + 'px; height:' + (item.radius*2) + 'px;">' +
+            '<i class="bi ' + (n.icon || 'bi-book') + ' flat-module-icon"></i></div>' +
+            '<span class="flat-module-mastery">' + score + '%</span>' +
+            '<span class="flat-module-label">' + (n.title.length > 12 ? n.title.slice(0,11) + '…' : n.title) + '</span>';
+        div.onclick = function(e) { e.stopPropagation(); selectModule(n.module_id); };
+        modulesLayer.appendChild(div);
+    });
+
+    // Pan & zoom
+    let scale = 1, panX = 0, panY = 0, isPan = false, startX, startY;
+    function updateTransform() {
+        panZoomContent.style.transform = 'translate(' + panX + 'px, ' + panY + 'px) scale(' + scale + ')';
+    }
+    function centerContent() {
+        const rect = mapContainer.getBoundingClientRect();
+        panX = (rect.width - CANVAS_W * scale) / 2;
+        panY = (rect.height - CANVAS_H * scale) / 2;
+        updateTransform();
+    }
+    document.getElementById('zoomIn').onclick = function() { scale = Math.min(scale * 1.2, 2); updateTransform(); };
+    document.getElementById('zoomOut').onclick = function() { scale = Math.max(scale / 1.2, 0.4); updateTransform(); };
+    document.getElementById('resetView').onclick = function() { scale = 1; centerContent(); };
+    document.getElementById('panZoom').addEventListener('mousedown', function(e) {
+        if (e.target.closest('.flat-module-node')) return;
+        isPan = true; startX = e.clientX - panX; startY = e.clientY - panY;
+        document.getElementById('panZoom').style.cursor = 'grabbing';
+    });
+    document.addEventListener('mousemove', function(e) {
+        if (!isPan) return;
+        panX = e.clientX - startX; panY = e.clientY - startY;
+        updateTransform();
+    });
+    document.addEventListener('mouseup', function() {
+        isPan = false;
+        document.getElementById('panZoom').style.cursor = 'grab';
+    });
+    document.getElementById('panZoom').addEventListener('wheel', function(e) {
+        e.preventDefault();
+        scale = Math.max(0.4, Math.min(2, scale * (e.deltaY > 0 ? 0.9 : 1.1)));
+        updateTransform();
+    }, { passive: false });
+    window.addEventListener('load', centerContent);
+    window.addEventListener('resize', centerContent);
 })();
 </script>
 {% endblock %}

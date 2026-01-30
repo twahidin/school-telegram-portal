@@ -251,13 +251,21 @@ STUDENT PROFILE:
                 role = "Student" if msg.get('role') == 'student' else "Tutor"
                 history_text += f"{role}: {msg.get('content', '')}\n"
 
+        custom_prompt = (module.get('custom_prompt') or '').strip()
+        custom_block = ""
+        if custom_prompt:
+            custom_block = f"""
+TEACHER'S CUSTOM PROMPT FOR THIS MODULE (follow these instructions when teaching):
+{custom_prompt}
+
+"""
         return f"""CURRENT SESSION (use these values when calling tools):
 - student_id: {student_id}
 - module_id: {module.get('module_id')}
 - subject: {subject}
 - Module title: {module.get('title')}
 - Learning objectives: {', '.join(module.get('learning_objectives', []))}
-{profile_text}
+{custom_block}{profile_text}
 {history_text}
 """
 
