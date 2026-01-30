@@ -11,10 +11,27 @@ import logging
 import base64
 import re
 import json
+import io
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_text_from_pdf(pdf_bytes: bytes) -> str:
+    """Extract text from PDF using PyPDF2."""
+    try:
+        import PyPDF2
+        pdf_reader = PyPDF2.PdfReader(io.BytesIO(pdf_bytes))
+        text_parts = []
+        for page_num, page in enumerate(pdf_reader.pages):
+            page_text = page.extract_text()
+            if page_text:
+                text_parts.append(f"--- Page {page_num + 1} ---\n{page_text}")
+        return "\n\n".join(text_parts)
+    except Exception as e:
+        logger.error("Error extracting text from PDF: %s", e)
+        return ""
 
 # Message shown when no API key is configured (teacher or env)
 AI_UNAVAILABLE_MSG = (
@@ -66,14 +83,13 @@ def generate_modules_from_syllabus(
         content = []
 
         if file_type == 'pdf':
-            file_b64 = base64.standard_b64encode(file_content).decode('utf-8')
+            # Extract text from PDF (Claude API doesn't accept PDF as image)
+            pdf_text = _extract_text_from_pdf(file_content)
+            if not pdf_text.strip():
+                return {"error": "Could not extract text from PDF. The PDF may contain only images or be corrupted."}
             content.append({
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": "application/pdf",
-                    "data": file_b64,
-                },
+                "type": "text",
+                "text": f"SYLLABUS/SCHEME OF WORK DOCUMENT:\n\n{pdf_text}",
             })
         else:
             content.append({
