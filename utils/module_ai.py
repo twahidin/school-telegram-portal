@@ -33,6 +33,38 @@ def _extract_text_from_pdf(pdf_bytes: bytes) -> str:
         logger.error("Error extracting text from PDF: %s", e)
         return ""
 
+
+def _extract_and_repair_json(text: str) -> str:
+    """Extract JSON from LLM response and apply common repairs. Returns empty string if none found."""
+    if not text or not text.strip():
+        return ""
+    # Strip markdown code blocks
+    stripped = text.strip()
+    for marker in ("```json", "```"):
+        if stripped.startswith(marker):
+            stripped = stripped[len(marker):].lstrip()
+        if stripped.endswith("```"):
+            stripped = stripped[:-3].rstrip()
+    # Find first { and extract matching brace
+    start = stripped.find("{")
+    if start < 0:
+        return ""
+    depth = 0
+    for i in range(start, len(stripped)):
+        c = stripped[i]
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                json_str = stripped[start : i + 1]
+                # Remove trailing commas before } or ]
+                json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
+                # Remove control characters except newline/tab
+                json_str = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', json_str)
+                return json_str
+    return ""
+
 # Message shown when no API key is configured (teacher or env)
 AI_UNAVAILABLE_MSG = (
     "AI service not available. Add your Anthropic API key in Teacher Settings "
@@ -165,29 +197,80 @@ Year Level: {year_level}
 
 Analyze this document and create a comprehensive module hierarchy.
 Ensure all topics from the syllabus are covered.
-Respond with JSON only:""",
+Respond with valid JSON only (no markdown, no text outside the JSON). Escape any double quotes inside string values with backslash.""",
         })
 
-        message = client.messages.create(
-            model="claude-opus-4-5",
-            max_tokens=8000,
-            system=system_prompt,
-            messages=[{"role": "user", "content": content}],
-        )
+        # JSON schema for structured output (guarantees valid JSON from Claude Opus 4.5)
+        module_schema = {
+            "type": "object",
+            "properties": {
+                "root": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string"},
+                        "description": {"type": "string"},
+                        "estimated_hours": {"type": "number"},
+                        "color": {"type": "string"},
+                        "icon": {"type": "string"},
+                        "learning_objectives": {"type": "array", "items": {"type": "string"}},
+                        "children": {"type": "array", "items": {"$ref": "#/$defs/module"}},
+                        "is_leaf": {"type": "boolean"},
+                    },
+                    "required": ["title"],
+                    "additionalProperties": False,
+                },
+                "total_modules": {"type": "integer"},
+                "total_hours": {"type": "number"},
+            },
+            "required": ["root"],
+            "additionalProperties": False,
+            "$defs": {
+                "module": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string"},
+                        "description": {"type": "string"},
+                        "estimated_hours": {"type": "number"},
+                        "color": {"type": "string"},
+                        "icon": {"type": "string"},
+                        "learning_objectives": {"type": "array", "items": {"type": "string"}},
+                        "children": {"type": "array", "items": {"$ref": "#/$defs/module"}},
+                        "is_leaf": {"type": "boolean"},
+                    },
+                    "required": ["title"],
+                    "additionalProperties": False,
+                },
+            },
+        }
+
+        create_kwargs = {
+            "model": "claude-opus-4-5",
+            "max_tokens": 20000,
+            "system": system_prompt,
+            "messages": [{"role": "user", "content": content}],
+        }
+        create_kwargs["output_config"] = {
+            "format": {"type": "json_schema", "schema": module_schema},
+        }
+
+        used_structured = False
+        try:
+            message = client.messages.create(**create_kwargs)
+            used_structured = True
+        except Exception as api_err:
+            # If structured output is rejected (e.g. schema too complex), retry without it
+            logger.warning("Structured output failed, retrying without: %s", api_err)
+            create_kwargs.pop("output_config", None)
+            message = client.messages.create(**create_kwargs)
 
         response_text = message.content[0].text
-        json_match = re.search(r'\{[\s\S]*\}', response_text)
-        if json_match:
-            json_str = json_match.group()
-            # Try to fix common JSON issues from LLM output
-            # Remove trailing commas before } or ]
-            json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
-            # Remove any control characters except newlines/tabs
-            json_str = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', json_str)
+        json_str = response_text.strip() if used_structured else _extract_and_repair_json(response_text)
+
+        if json_str:
             try:
                 return json.loads(json_str)
             except json.JSONDecodeError as je:
-                logger.error("JSON parse error: %s\nRaw response (first 2000 chars): %s", je, json_str[:2000])
+                logger.error("JSON parse error: %s\nRaw (first 2000 chars): %s", je, json_str[:2000])
                 return {'error': f'AI returned invalid JSON. Please try again. (Parse error: {je.msg} at position {je.pos})'}
         return {'error': 'Could not parse module structure from AI response'}
 
