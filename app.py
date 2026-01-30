@@ -207,6 +207,12 @@ def login():
                 logger.error(f"Error verifying password for {user_id_upper}: {e}")
             
             if password_valid:
+                # Flag default-password users so they're prompted to change on dashboard
+                if password == 'student123':
+                    Student.update_one(
+                        {'student_id': user_id_upper},
+                        {'$set': {'must_change_password': True}}
+                    )
                 session['student_id'] = user_id_upper
                 session['student_name'] = student.get('name', 'Student')
                 session['student_class'] = student.get('class', '')

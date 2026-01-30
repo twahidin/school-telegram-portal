@@ -143,7 +143,7 @@ Respond with JSON only:""",
         })
 
         message = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-opus-4-5",
             max_tokens=8000,
             system=system_prompt,
             messages=[{"role": "user", "content": content}],
