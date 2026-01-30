@@ -116,7 +116,8 @@
                             <div class="col-md-6">
                                 <div class="mb-3">
                                     <label class="form-label">New Password</label>
-                                    <input type="password" class="form-control" id="new_password" placeholder="Enter new password">
+                                    <input type="password" class="form-control" id="new_password" placeholder="Enter new password" minlength="6">
+                                    <small class="text-muted">Min 6 characters, letters and numbers</small>
                                 </div>
                             </div>
                         </div>
@@ -670,8 +671,12 @@
             return;
         }
         
-        if (newPassword.length < 4) {
-            resultDiv.innerHTML = '<div class="alert alert-warning">New password must be at least 4 characters</div>';
+        if (newPassword.length < 6) {
+            resultDiv.innerHTML = '<div class="alert alert-warning">New password must be at least 6 characters</div>';
+            return;
+        }
+        if (!/[a-zA-Z]/.test(newPassword) || !/\d/.test(newPassword)) {
+            resultDiv.innerHTML = '<div class="alert alert-warning">Password must contain both letters and numbers</div>';
             return;
         }
         

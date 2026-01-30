@@ -292,8 +292,8 @@
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">
             <div class="modal-header bg-primary text-white">
-                <h5 class="modal-title"><i class="bi bi-key me-2"></i>Change Password</h5>
-                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                <h5 class="modal-title" id="change-password-modal-title"><i class="bi bi-key me-2"></i>Change Password</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" id="change-password-close-btn"></button>
             </div>
             <div class="modal-body">
                 <form id="change-password-form">
@@ -303,8 +303,8 @@
                     </div>
                     <div class="mb-3">
                         <label class="form-label">New Password</label>
-                        <input type="password" class="form-control" id="new-password" required minlength="4">
-                        <small class="text-muted">Minimum 4 characters</small>
+                        <input type="password" class="form-control" id="new-password" required minlength="6">
+                        <small class="text-muted">Minimum 6 characters, including letters and numbers</small>
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Confirm New Password</label>
@@ -314,7 +314,7 @@
                 <div id="password-change-result"></div>
             </div>
             <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" id="change-password-cancel-btn">Cancel</button>
                 <button type="button" class="btn btn-primary" id="save-password-btn">
                     <i class="bi bi-check-lg me-1"></i>Change Password
                 </button>
@@ -324,6 +324,9 @@
 </div>
 
 <script>
+// Must-change-password flag for students on default password
+window.mustChangePassword = {% if must_change_password %}true{% else %}false{% endif %};
+
 // ============================================================================
 // PWA Install & Push Notifications
 // ============================================================================
@@ -507,6 +510,23 @@ function showToast(title, message, type = 'info') {
 checkNotificationStatus();
 
 // ============================================================================
+// Force change password modal (default-password students)
+// ============================================================================
+if (window.mustChangePassword) {
+    const forceModalEl = document.getElementById('change-password-modal');
+    if (forceModalEl) {
+        const titleEl = document.getElementById('change-password-modal-title');
+        const cancelBtn = document.getElementById('change-password-cancel-btn');
+        const closeBtn = document.getElementById('change-password-close-btn');
+        if (titleEl) titleEl.innerHTML = '<i class="bi bi-exclamation-triangle me-2"></i>You must change your password';
+        if (cancelBtn) cancelBtn.style.display = 'none';
+        if (closeBtn) closeBtn.style.display = 'none';
+        const forceModal = new bootstrap.Modal(forceModalEl, { backdrop: 'static', keyboard: false });
+        forceModal.show();
+    }
+}
+
+// ============================================================================
 // Password Change
 // ============================================================================
 
@@ -526,8 +546,12 @@ document.getElementById('save-password-btn').addEventListener('click', async () 
         return;
     }
     
-    if (newPassword.length < 4) {
-        resultDiv.innerHTML = '<div class="alert alert-warning">Password must be at least 4 characters</div>';
+    if (newPassword.length < 6) {
+        resultDiv.innerHTML = '<div class="alert alert-warning">Password must be at least 6 characters</div>';
+        return;
+    }
+    if (!/[a-zA-Z]/.test(newPassword) || !/\d/.test(newPassword)) {
+        resultDiv.innerHTML = '<div class="alert alert-warning">Password must contain both letters and numbers</div>';
         return;
     }
     
@@ -549,6 +573,10 @@ document.getElementById('save-password-btn').addEventListener('click', async () 
             document.getElementById('new-password').value = '';
             document.getElementById('confirm-password').value = '';
             
+            if (window.mustChangePassword) {
+                setTimeout(() => location.reload(), 1500);
+                return;
+            }
             setTimeout(() => {
                 bootstrap.Modal.getInstance(document.getElementById('change-password-modal')).hide();
                 resultDiv.innerHTML = '';

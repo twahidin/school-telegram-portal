@@ -6,7 +6,7 @@ import os
 import io
 from datetime import datetime, timedelta, timezone
 from models import db, Student, Teacher, Message, Class, TeachingGroup, Assignment, Submission, Module, ModuleResource, StudentModuleMastery, StudentLearningProfile, LearningSession
-from utils.auth import hash_password, verify_password, generate_assignment_id, generate_submission_id, encrypt_api_key, decrypt_api_key
+from utils.auth import hash_password, verify_password, validate_password, generate_assignment_id, generate_submission_id, encrypt_api_key, decrypt_api_key
 from utils.ai_marking import get_teacher_ai_service, mark_submission
 from utils.google_drive import get_teacher_drive_manager, upload_assignment_file
 from utils.pdf_generator import generate_feedback_pdf
@@ -114,11 +114,16 @@ ADMIN_PASSWORD = os.getenv('ADMIN_PASSWORD', 'admin123')
 # ============================================================================
 
 def login_required(f):
-    """Require student login"""
+    """Require student login. Redirect to dashboard if must_change_password (except for dashboard and change_password)."""
     @wraps(f)
     def decorated_function(*args, **kwargs):
         if 'student_id' not in session:
             return redirect(url_for('login'))
+        student = Student.find_one({'student_id': session['student_id']})
+        if student and student.get('must_change_password'):
+            path = request.path or ''
+            if path != '/dashboard' and path != '/student/change_password':
+                return redirect(url_for('dashboard'))
         return f(*args, **kwargs)
     return decorated_function
 
@@ -184,41 +189,22 @@ def login():
         if student:
             password_hash = student.get('password_hash', '')
             
-            # If password_hash is missing or empty, set it to default 'student123'
+            # If password_hash is missing or empty, set it to default 'student123' and require change
             if not password_hash:
                 logger.warning(f"Student {user_id_upper} has no password_hash, setting default")
                 default_hash = hash_password('student123')
                 Student.update_one(
                     {'student_id': user_id_upper},
-                    {'$set': {'password_hash': default_hash}}
+                    {'$set': {'password_hash': default_hash, 'must_change_password': True}}
                 )
                 password_hash = default_hash
             
-            # Try to verify password
+            # Verify password only against stored hash. Never overwrite hash on failed verify.
             password_valid = False
             try:
                 password_valid = verify_password(password, password_hash)
             except Exception as e:
                 logger.error(f"Error verifying password for {user_id_upper}: {e}")
-                # If verification fails due to corrupted hash, try default password
-                if password == 'student123':
-                    logger.warning(f"Password hash may be corrupted for {user_id_upper}, resetting to default")
-                    default_hash = hash_password('student123')
-                    Student.update_one(
-                        {'student_id': user_id_upper},
-                        {'$set': {'password_hash': default_hash}}
-                    )
-                    password_valid = True
-            
-            # If password verification failed but user entered default password, reset hash
-            if not password_valid and password == 'student123':
-                logger.warning(f"Password verification failed for {user_id_upper} with default password, resetting hash")
-                default_hash = hash_password('student123')
-                Student.update_one(
-                    {'student_id': user_id_upper},
-                    {'$set': {'password_hash': default_hash}}
-                )
-                password_valid = True
             
             if password_valid:
                 session['student_id'] = user_id_upper
@@ -395,10 +381,12 @@ def dashboard():
         'feedback_received': feedback_received_count
     }
     
+    must_change = student.get('must_change_password', False)
     return render_template('dashboard.html', 
                          student=student, 
                          teachers=teachers,
-                         assignment_stats=assignment_stats)
+                         assignment_stats=assignment_stats,
+                         must_change_password=must_change)
 
 @app.route('/chat/<teacher_id>')
 @login_required
@@ -4596,6 +4584,10 @@ def teacher_change_password():
         if not current_password or not new_password:
             return jsonify({'error': 'Current and new passwords required'}), 400
         
+        ok, err = validate_password(new_password)
+        if not ok:
+            return jsonify({'error': err}), 400
+        
         teacher = Teacher.find_one({'teacher_id': session['teacher_id']})
         if not teacher:
             return jsonify({'error': 'Teacher not found'}), 404
@@ -5751,6 +5743,7 @@ def import_students():
                     continue
                 
                 password = s.get('password', 'student123')
+                is_default = (password == 'student123')
                 
                 Student.insert_one({
                     'student_id': student_id,
@@ -5758,6 +5751,7 @@ def import_students():
                     'class': s.get('class', ''),
                     'password_hash': hash_password(password),
                     'teachers': s.get('teachers', []),
+                    'must_change_password': is_default,
                     'created_at': datetime.utcnow()
                 })
                 
@@ -6031,13 +6025,13 @@ def reset_student_password():
         if not student:
             return jsonify({'error': 'Student not found'}), 404
         
-        # Reset password to student ID
+        # Reset password to student ID and require change on next login
         new_password = student_id
         hashed = hash_password(new_password)
         
         db.db.students.update_one(
             {'student_id': student_id},
-            {'$set': {'password_hash': hashed}}
+            {'$set': {'password_hash': hashed, 'must_change_password': True}}
         )
         
         return jsonify({
@@ -6066,10 +6060,10 @@ def mass_reset_student_passwords():
         default_password = custom_password if custom_password else 'student123'
         hashed = hash_password(default_password)
         
-        # Update all selected students
+        # Update all selected students; require change on next login
         result = db.db.students.update_many(
             {'student_id': {'$in': student_ids}},
-            {'$set': {'password_hash': hashed, 'updated_at': datetime.utcnow()}}
+            {'$set': {'password_hash': hashed, 'updated_at': datetime.utcnow(), 'must_change_password': True}}
         )
         
         return jsonify({
@@ -6118,10 +6112,10 @@ def teacher_reset_student_passwords():
         default_password = custom_password if custom_password else 'student123'
         hashed = hash_password(default_password)
         
-        # Update valid students
+        # Update valid students; require change on next login
         result = db.db.students.update_many(
             {'student_id': {'$in': valid_ids}},
-            {'$set': {'password_hash': hashed, 'updated_at': datetime.utcnow()}}
+            {'$set': {'password_hash': hashed, 'updated_at': datetime.utcnow(), 'must_change_password': True}}
         )
         
         return jsonify({
@@ -6147,8 +6141,9 @@ def student_change_password():
         if not current_password or not new_password:
             return jsonify({'error': 'Current and new passwords required'}), 400
         
-        if len(new_password) < 4:
-            return jsonify({'error': 'New password must be at least 4 characters'}), 400
+        ok, err = validate_password(new_password)
+        if not ok:
+            return jsonify({'error': err}), 400
         
         student = Student.find_one({'student_id': session['student_id']})
         if not student:
@@ -6158,11 +6153,11 @@ def student_change_password():
         if not verify_password(current_password, student.get('password_hash', '')):
             return jsonify({'error': 'Current password is incorrect'}), 400
         
-        # Update password
+        # Update password and clear must_change_password
         hashed = hash_password(new_password)
         Student.update_one(
             {'student_id': session['student_id']},
-            {'$set': {'password_hash': hashed, 'updated_at': datetime.utcnow()}}
+            {'$set': {'password_hash': hashed, 'updated_at': datetime.utcnow(), 'must_change_password': False}}
         )
         
         return jsonify({'success': True, 'message': 'Password changed successfully'})
@@ -7253,6 +7248,7 @@ def import_students_with_reconciliation():
                 
                 # No conflicts - create new student
                 password = s.get('password', 'student123')
+                is_default = (password == 'student123')
                 
                 Student.insert_one({
                     'student_id': student_id,
@@ -7260,6 +7256,7 @@ def import_students_with_reconciliation():
                     'class': s.get('class', ''),
                     'password_hash': hash_password(password),
                     'teachers': s.get('teachers', []),
+                    'must_change_password': is_default,
                     'created_at': datetime.utcnow()
                 })
                 

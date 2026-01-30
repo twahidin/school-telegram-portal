@@ -72,3 +72,17 @@ def decrypt_api_key(encrypted_key: str) -> str:
 def generate_token(length: int = 32) -> str:
     """Generate a secure random token"""
     return secrets.token_urlsafe(length)
+
+
+def validate_password(password: str) -> tuple[bool, str]:
+    """
+    Validate password: min 6 characters, must contain both letters and numbers.
+    Returns (ok, error_message). error_message is empty when ok is True.
+    """
+    if len(password) < 6:
+        return False, "Password must be at least 6 characters"
+    if not any(c.isalpha() for c in password):
+        return False, "Password must contain at least one letter"
+    if not any(c.isdigit() for c in password):
+        return False, "Password must contain at least one number"
+    return True, ""
