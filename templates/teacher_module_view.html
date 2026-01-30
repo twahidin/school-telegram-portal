@@ -39,7 +39,7 @@
             <h1><i class="bi {{ module.icon or 'bi-diagram-3' }} me-2" style="color: {{ module.color or '#667eea' }};"></i>{{ module.title }}</h1>
             <p class="text-muted mb-0">{{ module.subject }} • {{ module.year_level }}</p>
         </div>
-        <div class="d-flex gap-2">
+        <div class="d-flex gap-2 align-items-center">
             <a href="{{ url_for('module_class_mastery', module_id=module.module_id) }}" class="btn btn-outline-success">
                 <i class="bi bi-graph-up me-1"></i>Class Mastery
             </a>
@@ -50,6 +50,9 @@
             {% else %}
             <span class="badge bg-success align-self-center">Published</span>
             {% endif %}
+            <button type="button" class="btn btn-outline-danger" id="delete-module-tree-btn" title="Delete this module tree">
+                <i class="bi bi-trash me-1"></i>Delete
+            </button>
         </div>
     </div>
 
@@ -350,6 +353,19 @@
             const data = await res.json();
             if (data.success) window.location.reload();
         } finally { btn.disabled = false; }
+    });
+
+    document.getElementById('delete-module-tree-btn') && document.getElementById('delete-module-tree-btn').addEventListener('click', function() {
+        if (!confirm('Delete this entire module tree? All nodes, resources, and student progress will be removed. This cannot be undone.')) return;
+        const btn = this;
+        btn.disabled = true;
+        fetch('{{ url_for("delete_module_tree", module_id=module.module_id) }}', { method: 'POST' })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.success) window.location.href = '{{ url_for("teacher_modules") }}';
+                else { alert(data.error || 'Delete failed'); btn.disabled = false; }
+            })
+            .catch(function() { alert('Delete failed'); btn.disabled = false; });
     });
 })();
 </script>

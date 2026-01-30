@@ -363,3 +363,7 @@ class LearningSession:
     @staticmethod
     def update_one(query, update):
         return db.db.learning_sessions.update_one(query, update)
+
+    @staticmethod
+    def delete_many(query):
+        return db.db.learning_sessions.delete_many(query)

@@ -5203,6 +5203,27 @@ def delete_module_resource(module_id, node_id, resource_id):
     return jsonify({'success': True})
 
 
+@app.route('/teacher/modules/<module_id>/delete', methods=['POST', 'DELETE'])
+@teacher_required
+def delete_module_tree(module_id):
+    """Delete an entire module tree (root and all nodes, resources, mastery, sessions)."""
+    if not _teacher_has_module_access(session['teacher_id']):
+        return jsonify({'error': 'Access denied'}), 403
+    root = Module.find_one({'module_id': module_id, 'teacher_id': session['teacher_id']})
+    if not root:
+        return jsonify({'error': 'Module not found'}), 404
+    try:
+        tree_ids = _get_all_module_ids_in_tree(module_id)
+        ModuleResource.delete_many({'module_id': {'$in': tree_ids}})
+        StudentModuleMastery.delete_many({'module_id': {'$in': tree_ids}})
+        LearningSession.delete_many({'module_id': {'$in': tree_ids}})
+        Module.delete_many({'module_id': {'$in': tree_ids}})
+        return jsonify({'success': True})
+    except Exception as e:
+        logger.error("Error deleting module tree: %s", e)
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/teacher/modules/<module_id>/publish', methods=['POST'])
 @teacher_required
 def publish_module(module_id):

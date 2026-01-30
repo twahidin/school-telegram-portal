@@ -96,13 +96,16 @@
                         </div>
                     </div>
 
-                    <div class="d-flex gap-2">
+                    <div class="d-flex gap-2 flex-wrap">
                         <a href="{{ url_for('view_module', module_id=module.module_id) }}" class="btn btn-outline-primary btn-sm flex-grow-1">
                             <i class="bi bi-eye me-1"></i>View & Edit
                         </a>
                         <a href="{{ url_for('module_class_mastery', module_id=module.module_id) }}" class="btn btn-outline-success btn-sm">
                             <i class="bi bi-graph-up"></i>
                         </a>
+                        <button type="button" class="btn btn-outline-danger btn-sm delete-module-btn" data-module-id="{{ module.module_id }}" data-module-title="{{ module.title }}">
+                            <i class="bi bi-trash"></i>
+                        </button>
                     </div>
                 </div>
                 <div class="card-footer bg-transparent">
@@ -141,4 +144,60 @@
 .module-stats .stat { font-size: 0.875rem; color: var(--text-secondary); }
 .module-stats .stat i { margin-right: 0.25rem; }
 </style>
+
+<!-- Delete confirmation modal -->
+<div class="modal fade" id="deleteModuleModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Delete Module Tree</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p class="mb-0">Are you sure you want to delete <strong id="deleteModuleTitle"></strong>? This will remove the entire module tree, all resources, and student progress for this module. This cannot be undone.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-danger" id="confirmDeleteModuleBtn">
+                    <i class="bi bi-trash me-1"></i>Delete
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+(function() {
+    const modal = document.getElementById('deleteModuleModal');
+    const titleEl = document.getElementById('deleteModuleTitle');
+    const confirmBtn = document.getElementById('confirmDeleteModuleBtn');
+    let deleteModuleId = null;
+
+    document.querySelectorAll('.delete-module-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            deleteModuleId = this.getAttribute('data-module-id');
+            titleEl.textContent = this.getAttribute('data-module-title') || 'this module';
+            new bootstrap.Modal(modal).show();
+        });
+    });
+
+    confirmBtn && confirmBtn.addEventListener('click', async function() {
+        if (!deleteModuleId) return;
+        confirmBtn.disabled = true;
+        try {
+            const res = await fetch('/teacher/modules/' + encodeURIComponent(deleteModuleId) + '/delete', { method: 'POST' });
+            const data = await res.json();
+            if (data.success) {
+                bootstrap.Modal.getInstance(modal).hide();
+                window.location.reload();
+            } else {
+                alert(data.error || 'Delete failed');
+            }
+        } catch (e) {
+            alert('Delete failed');
+        }
+        confirmBtn.disabled = false;
+    });
+})();
+</script>
 {% endblock %}
