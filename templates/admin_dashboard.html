@@ -670,8 +670,8 @@
                                     <input type="text" class="form-control" id="tg_name" placeholder="e.g., 3I4 Chemistry Group A" required>
                                 </div>
                                 <div class="mb-3">
-                                    <label class="form-label">Select Class *</label>
-                                    <select class="form-select" id="tg_class_id" required>
+                                    <label class="form-label">Select Class <span class="text-muted">(optional)</span></label>
+                                    <select class="form-select" id="tg_class_id">
                                         <option value="">Select a class...</option>
                                         {% for c in classes %}
                                         <option value="{{ c.class_id }}">{{ c.class_id }}{% if c.name and c.name != c.class_id %} ({{ c.name }}){% endif %}</option>
@@ -688,11 +688,11 @@
                                     </select>
                                 </div>
                                 <div class="mb-3">
-                                    <label class="form-label">Select Students *</label>
+                                    <label class="form-label">Select Students <span class="text-muted">(optional)</span></label>
                                     <div id="tg-students-container" class="border rounded p-2" style="max-height: 300px; overflow-y: auto;">
-                                        <p class="text-muted small mb-0">Select a class first to see students</p>
+                                        <p class="text-muted small mb-0">Select a class to pick students, or add students later via "Add Students to Teaching Group by Name"</p>
                                     </div>
-                                    <small class="text-muted">Students from the selected class will appear here</small>
+                                    <small class="text-muted">Students from the selected class will appear here. You can also add students later by pasting names.</small>
                                 </div>
                                 <button type="submit" class="btn btn-primary">
                                     <i class="bi bi-plus-circle me-1"></i>Create Teaching Group
@@ -750,7 +750,7 @@
                                     <select class="form-select" id="tg_bulk_assign_group_id">
                                         <option value="">Choose a teaching group...</option>
                                     </select>
-                                    <small class="text-muted d-block mt-2">Paste names from Excel. Each line = one student.</small>
+                                    <small class="text-muted d-block mt-2">Paste names from Excel. Each line = one student. Students will be added to the group (existing students remain).</small>
                                 </div>
                                 <div class="col-md-8">
                                     <label class="form-label">Paste Student Names (one name per line)</label>
@@ -2612,13 +2612,13 @@
 
     // ================== TEACHING GROUPS ==================
     
-    // Load students when class is selected for teaching group
+    // Load students when class is selected for teaching group (class is optional)
     document.getElementById('tg_class_id').addEventListener('change', async (e) => {
         const classId = e.target.value;
         const container = document.getElementById('tg-students-container');
         
         if (!classId) {
-            container.innerHTML = '<p class="text-muted small mb-0">Select a class first to see students</p>';
+            container.innerHTML = '<p class="text-muted small mb-0">Select a class to pick students, or add students later via "Add Students to Teaching Group by Name"</p>';
             return;
         }
         
@@ -2694,17 +2694,12 @@
         e.preventDefault();
         
         const name = document.getElementById('tg_name').value.trim();
-        const classId = document.getElementById('tg_class_id').value;
+        const classId = document.getElementById('tg_class_id').value || null;
         const teacherId = document.getElementById('tg_teacher_id').value;
         const studentIds = [...document.querySelectorAll('.tg-student-checkbox:checked')].map(cb => cb.value);
         
-        if (!name || !classId || !teacherId) {
-            showResult('create-tg-result', 'Please fill in all required fields', 'warning');
-            return;
-        }
-        
-        if (studentIds.length === 0) {
-            showResult('create-tg-result', 'Please select at least one student', 'warning');
+        if (!name || !teacherId) {
+            showResult('create-tg-result', 'Group name and teacher are required', 'warning');
             return;
         }
         
@@ -2717,7 +2712,7 @@
             const data = await response.json();
             
             if (data.success) {
-                showResult('create-tg-result', `Teaching group "${name}" created with ${studentIds.length} students!`, 'success');
+                showResult('create-tg-result', data.message, 'success');
                 // Reset form
                 document.getElementById('create-teaching-group-form').reset();
                 document.getElementById('tg-students-container').innerHTML = '<p class="text-muted small mb-0">Select a class first to see students</p>';
@@ -2746,7 +2741,7 @@
             tbody.innerHTML = data.groups.map(g => `
                 <tr data-group-id="${g.group_id}">
                     <td><strong>${g.name}</strong></td>
-                    <td>${g.class_id}</td>
+                    <td>${g.class_id || '—'}</td>
                     <td>${g.teacher_name || g.teacher_id}</td>
                     <td>
                         <span class="badge bg-primary">${g.student_count || g.student_ids?.length || 0} students</span>

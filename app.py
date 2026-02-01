@@ -6522,19 +6522,16 @@ def get_teaching_groups():
 @app.route('/admin/api/teaching-groups', methods=['POST'])
 @admin_required
 def create_teaching_group():
-    """Create a new teaching group"""
+    """Create a new teaching group. Only name and teacher are required; class and students are optional."""
     try:
         data = request.get_json()
         name = data.get('name', '').strip()
-        class_id = data.get('class_id')
+        class_id = data.get('class_id') or None  # Optional
         teacher_id = data.get('teacher_id')
-        student_ids = data.get('student_ids', [])
+        student_ids = data.get('student_ids', []) or []
         
-        if not name or not class_id or not teacher_id:
-            return jsonify({'error': 'Name, class, and teacher are required'}), 400
-        
-        if not student_ids:
-            return jsonify({'error': 'At least one student must be selected'}), 400
+        if not name or not teacher_id:
+            return jsonify({'error': 'Group name and teacher are required'}), 400
         
         # Generate unique group ID
         import uuid
@@ -6552,10 +6549,15 @@ def create_teaching_group():
         
         TeachingGroup.insert_one(group_doc)
         
+        if student_ids:
+            msg = f'Teaching group "{name}" created with {len(student_ids)} students'
+        else:
+            msg = f'Teaching group "{name}" created. Add students later via "Add Students to Teaching Group by Name".'
+        
         return jsonify({
             'success': True,
             'group_id': group_id,
-            'message': f'Teaching group "{name}" created with {len(student_ids)} students'
+            'message': msg
         })
         
     except Exception as e:
