@@ -6037,9 +6037,10 @@ def add_class():
 @app.route('/admin/api/students')
 @admin_required
 def get_students():
-    """Get list of students with optional class filter"""
+    """Get list of students with optional class filter and name search"""
     try:
         class_filter = request.args.get('class', '')
+        search = request.args.get('search', '').strip()
         
         query = {}
         if class_filter == '__unassigned__':
@@ -6063,6 +6064,9 @@ def get_students():
                 {'class': class_filter},
                 {'classes': class_filter}
             ]
+        
+        if search:
+            query['name'] = {'$regex': search, '$options': 'i'}
         
         students = list(Student.find(query))
         
@@ -6777,6 +6781,39 @@ def add_students_to_teaching_group(group_id):
         
     except Exception as e:
         logger.error(f"Error adding students to teaching group: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/admin/api/teaching-groups/<group_id>/students', methods=['PUT'])
+@admin_required
+def update_teaching_group_students(group_id):
+    """Replace the student list of a teaching group (for edit: remove/add)"""
+    try:
+        data = request.get_json()
+        student_ids = data.get('student_ids', [])
+        
+        if student_ids is None:
+            return jsonify({'error': 'student_ids required'}), 400
+        
+        group = TeachingGroup.find_one({'group_id': group_id})
+        if not group:
+            return jsonify({'error': 'Teaching group not found'}), 404
+        
+        student_ids = list(student_ids) if isinstance(student_ids, list) else []
+        
+        TeachingGroup.update_one(
+            {'group_id': group_id},
+            {'$set': {'student_ids': student_ids, 'updated_at': datetime.utcnow()}}
+        )
+        
+        return jsonify({
+            'success': True,
+            'total': len(student_ids),
+            'message': f'Teaching group updated with {len(student_ids)} students'
+        })
+        
+    except Exception as e:
+        logger.error(f"Error updating teaching group students: {e}")
         return jsonify({'error': str(e)}), 500
 
 

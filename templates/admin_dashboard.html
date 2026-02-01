@@ -133,8 +133,14 @@
                         </div>
                         <div class="card-body">
                             <!-- Filter -->
-                            <div class="row mb-3">
-                                <div class="col">
+                            <div class="row mb-3 g-2 align-items-center">
+                                <div class="col-md">
+                                    <div class="input-group input-group-sm">
+                                        <span class="input-group-text"><i class="bi bi-search"></i></span>
+                                        <input type="text" class="form-control" id="filter-student-name" placeholder="Search by name...">
+                                    </div>
+                                </div>
+                                <div class="col-md-auto">
                                     <select class="form-select form-select-sm" id="filter-class">
                                         <option value="">All Classes</option>
                                         <option value="__unassigned__">Unassigned (No Class)</option>
@@ -143,7 +149,7 @@
                                         {% endfor %}
                                     </select>
                                 </div>
-                                <div class="col-auto">
+                                <div class="col-md-auto">
                                     <button class="btn btn-outline-danger btn-sm" id="delete-by-class" disabled>
                                         <i class="bi bi-trash me-1"></i>Delete Class
                                     </button>
@@ -689,10 +695,19 @@
                                 </div>
                                 <div class="mb-3">
                                     <label class="form-label">Select Students <span class="text-muted">(optional)</span></label>
-                                    <div id="tg-students-container" class="border rounded p-2" style="max-height: 300px; overflow-y: auto;">
-                                        <p class="text-muted small mb-0">Select a class to pick students, or add students later via "Add Students to Teaching Group by Name"</p>
+                                    <div id="tg-students-container" class="border rounded p-2" style="max-height: 200px; overflow-y: auto;">
+                                        <p class="text-muted small mb-0">Select a class to pick students from that class.</p>
                                     </div>
-                                    <small class="text-muted">Students from the selected class will appear here. You can also add students later by pasting names.</small>
+                                    <small class="text-muted">Students from the selected class will appear here.</small>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">Or search by name</label>
+                                    <div class="input-group input-group-sm mb-2">
+                                        <span class="input-group-text"><i class="bi bi-search"></i></span>
+                                        <input type="text" class="form-control" id="tg-search-student-name" placeholder="Type student name to search...">
+                                    </div>
+                                    <div id="tg-search-results" class="border rounded p-2 mb-2" style="max-height: 150px; overflow-y: auto; display: none;"></div>
+                                    <div id="tg-search-added" class="d-flex flex-wrap gap-1" style="min-height: 0;"></div>
                                 </div>
                                 <button type="submit" class="btn btn-primary">
                                     <i class="bi bi-plus-circle me-1"></i>Create Teaching Group
@@ -1206,6 +1221,43 @@
     </div>
 </div>
 
+<!-- Edit Teaching Group Students Modal -->
+<div class="modal fade" id="edit-tg-modal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content">
+            <div class="modal-header bg-primary text-white">
+                <h5 class="modal-title"><i class="bi bi-pencil-square me-2"></i>Edit Students: <span id="edit-tg-name"></span></h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="edit-tg-group-id">
+                <!-- Current students -->
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Current students</label>
+                    <div id="edit-tg-current-list" class="border rounded p-2" style="max-height: 180px; overflow-y: auto;">
+                        <p class="text-muted small mb-0">Loading...</p>
+                    </div>
+                </div>
+                <!-- Search to add -->
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Add student by search</label>
+                    <div class="input-group input-group-sm mb-2">
+                        <span class="input-group-text"><i class="bi bi-search"></i></span>
+                        <input type="text" class="form-control" id="edit-tg-search-name" placeholder="Type student name to search...">
+                    </div>
+                    <div id="edit-tg-search-results" class="border rounded p-2 mb-2" style="max-height: 120px; overflow-y: auto; display: none;"></div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="edit-tg-save-btn">
+                    <i class="bi bi-save me-1"></i>Save Changes
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <style>
 /* Spreadsheet styling */
 .spreadsheet-wrapper {
@@ -1610,7 +1662,16 @@
 
     async function loadStudents() {
         try {
-            const response = await fetch('/admin/api/students');
+            const classId = document.getElementById('filter-class')?.value || '';
+            const search = document.getElementById('filter-student-name')?.value?.trim() || '';
+            let url = '/admin/api/students';
+            const params = new URLSearchParams();
+            if (classId === '__unassigned__') params.set('class', '__unassigned__');
+            else if (classId) params.set('class', classId);
+            if (search) params.set('search', search);
+            if (params.toString()) url += '?' + params.toString();
+
+            const response = await fetch(url);
             const data = await response.json();
             
             const tbody = document.getElementById('students-tbody');
@@ -1652,55 +1713,17 @@
     }
 
     // Filter by class
-    document.getElementById('filter-class').addEventListener('change', async (e) => {
-        const classId = e.target.value;
-        // Disable delete class button for unassigned filter or no selection
+    document.getElementById('filter-class').addEventListener('change', () => {
+        const classId = document.getElementById('filter-class').value;
         document.getElementById('delete-by-class').disabled = !classId || classId === '__unassigned__';
-        
-        try {
-            let url = '/admin/api/students';
-            if (classId === '__unassigned__') {
-                url = '/admin/api/students?class=__unassigned__';
-            } else if (classId) {
-                url = `/admin/api/students?class=${classId}`;
-            }
-            const response = await fetch(url);
-            const data = await response.json();
-            
-            const tbody = document.getElementById('students-tbody');
-            if (data.students.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">No students found</td></tr>';
-                return;
-            }
-            
-            tbody.innerHTML = data.students.map(s => `
-                <tr data-id="${s.student_id}">
-                    <td><input type="checkbox" class="student-checkbox" value="${s.student_id}"></td>
-                    <td>${s.name}<br><small class="text-muted">${s.student_id}</small></td>
-                    <td>${s.class || '-'}</td>
-                    <td>${(s.teachers || []).join(', ') || '-'}</td>
-                    <td>
-                        <button class="btn btn-outline-primary btn-sm edit-student-btn me-1" 
-                                data-student-id="${s.student_id}" 
-                                data-student-name="${s.name}"
-                                data-student-class="${s.class || ''}"
-                                data-student-teachers="${(s.teachers || []).join(';')}"
-                                title="Edit Student">
-                            <i class="bi bi-pencil"></i>
-                        </button>
-                        <button class="btn btn-outline-warning btn-sm reset-pwd-btn" 
-                                data-student-id="${s.student_id}" data-student-name="${s.name}"
-                                title="Reset Password">
-                            <i class="bi bi-key"></i>
-                        </button>
-                    </td>
-                </tr>
-            `).join('');
-            attachResetPasswordListeners();
-            attachEditStudentListeners();
-        } catch (e) {
-            console.error('Failed to filter students:', e);
-        }
+        loadStudents();
+    });
+
+    // Search by name (debounced)
+    let searchDebounce;
+    document.getElementById('filter-student-name').addEventListener('input', () => {
+        clearTimeout(searchDebounce);
+        searchDebounce = setTimeout(() => loadStudents(), 300);
     });
 
     // Select all students
@@ -2657,6 +2680,70 @@
             container.innerHTML = '<p class="text-danger small mb-0">Error loading students</p>';
         }
     });
+
+    // Search students by name for Create Teaching Group
+    let tgSearchAddedIds = new Set();
+    let tgSearchDebounce;
+    document.getElementById('tg-search-student-name').addEventListener('input', async () => {
+        const q = document.getElementById('tg-search-student-name').value.trim();
+        const resultsDiv = document.getElementById('tg-search-results');
+        const addedDiv = document.getElementById('tg-search-added');
+
+        clearTimeout(tgSearchDebounce);
+        if (!q || q.length < 2) {
+            resultsDiv.style.display = 'none';
+            resultsDiv.innerHTML = '';
+            return;
+        }
+        tgSearchDebounce = setTimeout(async () => {
+            try {
+                const resp = await fetch(`/admin/api/students?search=${encodeURIComponent(q)}`);
+                const data = await resp.json();
+                if (!data.students || data.students.length === 0) {
+                    resultsDiv.innerHTML = '<p class="text-muted small mb-0">No students found</p>';
+                } else {
+                    resultsDiv.innerHTML = data.students.slice(0, 20).map(s => {
+                        const alreadyAdded = tgSearchAddedIds.has(s.student_id);
+                        const inClassList = document.querySelector(`.tg-student-checkbox[value="${s.student_id}"]`);
+                        const already = alreadyAdded || !!inClassList;
+                        return `<div class="d-flex justify-content-between align-items-center py-1 px-2 border-bottom">
+                            <span>${escapeHtml(s.name)} <small class="text-muted">(${s.student_id})</small></span>
+                            <button type="button" class="btn btn-outline-primary btn-sm tg-add-from-search" 
+                                data-id="${s.student_id}" data-name="${escapeHtml(s.name)}" ${already ? 'disabled' : ''}>
+                                <i class="bi bi-plus"></i> Add
+                            </button>
+                        </div>`;
+                    }).join('');
+                    if (data.students.length > 20) {
+                        resultsDiv.innerHTML += '<p class="text-muted small mb-0 mt-1">Type more to narrow results</p>';
+                    }
+                    resultsDiv.querySelectorAll('.tg-add-from-search').forEach(btn => {
+                        btn.addEventListener('click', () => {
+                            const id = btn.dataset.id, name = btn.dataset.name;
+                            tgSearchAddedIds.add(id);
+                            addedDiv.innerHTML += `<span class="badge bg-secondary d-inline-flex align-items-center gap-1">${name} <span class="tg-remove-added ms-1" data-id="${id}" role="button" title="Remove" style="cursor:pointer;opacity:0.9">×</span></span>`;
+                            addedDiv.querySelector(`.tg-remove-added[data-id="${id}"]`).addEventListener('click', (e) => {
+                                tgSearchAddedIds.delete(id);
+                                e.target.closest('.badge')?.remove();
+                            });
+                            btn.disabled = true;
+                        });
+                    });
+                }
+                resultsDiv.style.display = 'block';
+            } catch (e) {
+                resultsDiv.innerHTML = '<p class="text-danger small mb-0">Error searching</p>';
+                resultsDiv.style.display = 'block';
+            }
+        }, 300);
+    });
+
+    document.getElementById('tg-search-student-name').addEventListener('blur', () => {
+        setTimeout(() => {
+            const results = document.getElementById('tg-search-results');
+            if (!results.contains(document.activeElement)) results.style.display = 'none';
+        }, 150);
+    });
     
     // Learning module access - save
     const saveModuleAccessBtn = document.getElementById('save-module-access-btn');
@@ -2696,7 +2783,9 @@
         const name = document.getElementById('tg_name').value.trim();
         const classId = document.getElementById('tg_class_id').value || null;
         const teacherId = document.getElementById('tg_teacher_id').value;
-        const studentIds = [...document.querySelectorAll('.tg-student-checkbox:checked')].map(cb => cb.value);
+        const fromClass = [...document.querySelectorAll('.tg-student-checkbox:checked')].map(cb => cb.value);
+        const fromSearch = [...tgSearchAddedIds];
+        const studentIds = [...new Set([...fromClass, ...fromSearch])];
         
         if (!name || !teacherId) {
             showResult('create-tg-result', 'Group name and teacher are required', 'warning');
@@ -2715,7 +2804,12 @@
                 showResult('create-tg-result', data.message, 'success');
                 // Reset form
                 document.getElementById('create-teaching-group-form').reset();
-                document.getElementById('tg-students-container').innerHTML = '<p class="text-muted small mb-0">Select a class first to see students</p>';
+                document.getElementById('tg-students-container').innerHTML = '<p class="text-muted small mb-0">Select a class to pick students from that class.</p>';
+                document.getElementById('tg-search-student-name').value = '';
+                document.getElementById('tg-search-results').innerHTML = '';
+                document.getElementById('tg-search-results').style.display = 'none';
+                tgSearchAddedIds.clear();
+                document.getElementById('tg-search-added').innerHTML = '';
                 loadTeachingGroups();
             } else {
                 showResult('create-tg-result', data.error || 'Failed to create teaching group', 'danger');
@@ -2747,7 +2841,10 @@
                         <span class="badge bg-primary">${g.student_count || g.student_ids?.length || 0} students</span>
                     </td>
                     <td>
-                        <button class="btn btn-outline-primary btn-sm download-tg-pdf-btn me-1" data-group-id="${g.group_id}" title="Download Student List PDF">
+                        <button class="btn btn-outline-primary btn-sm edit-tg-btn me-1" data-group-id="${g.group_id}" data-group-name="${g.name}" title="Edit Students">
+                            <i class="bi bi-pencil-square"></i>
+                        </button>
+                        <button class="btn btn-outline-secondary btn-sm download-tg-pdf-btn me-1" data-group-id="${g.group_id}" title="Download Student List PDF">
                             <i class="bi bi-file-pdf"></i>
                         </button>
                         <button class="btn btn-outline-info btn-sm view-tg-btn me-1" data-group-id="${g.group_id}" title="View Students">
@@ -2767,7 +2864,38 @@
         }
     }
     
+    let editTgModal, editTgStudentIds = [], editTgStudentDetails = {};
+
     function attachTeachingGroupListeners() {
+        // Edit teaching group students
+        document.querySelectorAll('.edit-tg-btn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const groupId = btn.dataset.groupId;
+                const groupName = btn.dataset.groupName;
+                document.getElementById('edit-tg-group-id').value = groupId;
+                document.getElementById('edit-tg-name').textContent = groupName;
+                document.getElementById('edit-tg-current-list').innerHTML = '<p class="text-muted small mb-0">Loading...</p>';
+                document.getElementById('edit-tg-search-name').value = '';
+                document.getElementById('edit-tg-search-results').innerHTML = '';
+                document.getElementById('edit-tg-search-results').style.display = 'none';
+
+                try {
+                    const resp = await fetch(`/admin/api/teaching-groups/${groupId}`);
+                    const data = await resp.json();
+                    if (!data.group) throw new Error('Group not found');
+                    const students = data.group.students || [];
+                    editTgStudentIds = students.map(s => s.student_id);
+                    editTgStudentDetails = {};
+                    students.forEach(s => { editTgStudentDetails[s.student_id] = s.name; });
+                    renderEditTgCurrentList();
+                    if (!editTgModal) editTgModal = new bootstrap.Modal(document.getElementById('edit-tg-modal'));
+                    editTgModal.show();
+                } catch (e) {
+                    document.getElementById('edit-tg-current-list').innerHTML = '<p class="text-danger small mb-0">Error loading group</p>';
+                }
+            });
+        });
+
         // Download PDF for teaching group
         document.querySelectorAll('.download-tg-pdf-btn').forEach(btn => {
             btn.addEventListener('click', () => {
@@ -2818,6 +2946,95 @@
         });
     }
     
+    function renderEditTgCurrentList() {
+        const list = document.getElementById('edit-tg-current-list');
+        if (editTgStudentIds.length === 0) {
+            list.innerHTML = '<p class="text-muted small mb-0">No students in this group. Use search below to add.</p>';
+            return;
+        }
+        list.innerHTML = editTgStudentIds.map(id => {
+            const name = editTgStudentDetails[id] || id;
+            return `<div class="d-flex justify-content-between align-items-center py-1 px-2 border-bottom">
+                <span>${escapeHtml(name)} <small class="text-muted">(${id})</small></span>
+                <button type="button" class="btn btn-outline-danger btn-sm edit-tg-remove-btn" data-id="${id}"><i class="bi bi-x"></i> Remove</button>
+            </div>`;
+        }).join('');
+        list.querySelectorAll('.edit-tg-remove-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                editTgStudentIds = editTgStudentIds.filter(x => x !== btn.dataset.id);
+                delete editTgStudentDetails[btn.dataset.id];
+                renderEditTgCurrentList();
+            });
+        });
+    }
+
+    let editTgSearchDebounce;
+    document.getElementById('edit-tg-search-name').addEventListener('input', async () => {
+        const q = document.getElementById('edit-tg-search-name').value.trim();
+        const resultsDiv = document.getElementById('edit-tg-search-results');
+        clearTimeout(editTgSearchDebounce);
+        if (!q || q.length < 2) {
+            resultsDiv.style.display = 'none';
+            resultsDiv.innerHTML = '';
+            return;
+        }
+        editTgSearchDebounce = setTimeout(async () => {
+            try {
+                const resp = await fetch(`/admin/api/students?search=${encodeURIComponent(q)}`);
+                const data = await resp.json();
+                if (!data.students || data.students.length === 0) {
+                    resultsDiv.innerHTML = '<p class="text-muted small mb-0">No students found</p>';
+                } else {
+                    resultsDiv.innerHTML = data.students.slice(0, 15).map(s => {
+                        const already = editTgStudentIds.includes(s.student_id);
+                        return `<div class="d-flex justify-content-between align-items-center py-1 px-2 border-bottom">
+                            <span>${escapeHtml(s.name)} <small class="text-muted">(${s.student_id})</small></span>
+                            <button type="button" class="btn btn-outline-primary btn-sm edit-tg-add-btn" 
+                                data-id="${s.student_id}" data-name="${escapeHtml(s.name)}" ${already ? 'disabled' : ''}><i class="bi bi-plus"></i> Add</button>
+                        </div>`;
+                    }).join('');
+                    resultsDiv.querySelectorAll('.edit-tg-add-btn:not([disabled])').forEach(btn => {
+                        btn.addEventListener('click', () => {
+                            editTgStudentIds.push(btn.dataset.id);
+                            editTgStudentDetails[btn.dataset.id] = btn.dataset.name;
+                            renderEditTgCurrentList();
+                            btn.disabled = true;
+                        });
+                    });
+                }
+                resultsDiv.style.display = 'block';
+            } catch (e) {
+                resultsDiv.innerHTML = '<p class="text-danger small mb-0">Error searching</p>';
+                resultsDiv.style.display = 'block';
+            }
+        }, 300);
+    });
+
+    document.getElementById('edit-tg-save-btn').addEventListener('click', async () => {
+        const groupId = document.getElementById('edit-tg-group-id').value;
+        const btn = document.getElementById('edit-tg-save-btn');
+        btn.disabled = true;
+        try {
+            const resp = await fetch(`/admin/api/teaching-groups/${groupId}/students`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ student_ids: editTgStudentIds })
+            });
+            const data = await resp.json();
+            if (data.success) {
+                editTgModal?.hide();
+                loadTeachingGroups();
+                loadTeachingGroupsForBulkAssign();
+                showResult('create-tg-result', data.message || 'Teaching group updated', 'success');
+            } else {
+                alert(data.error || 'Failed to update');
+            }
+        } catch (e) {
+            alert('Error saving');
+        }
+        btn.disabled = false;
+    });
+
     // Load teaching groups when tab is shown
     document.getElementById('teaching-groups-tab').addEventListener('shown.bs.tab', () => {
         loadTeachingGroups();
