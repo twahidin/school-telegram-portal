@@ -193,7 +193,7 @@
                                         </div>
                                         {% endif %}
                                         <textarea class="form-control form-control-sm" id="overall-feedback" 
-                                                  name="overall_feedback" rows="3"
+                                                  name="overall_feedback" rows="6"
                                                   placeholder="Overall assessment of the essay...">{{ submission.get('teacher_feedback', {}).get('overall_feedback') or (ai_feedback.overall_feedback if ai_feedback else '') }}</textarea>
                                     </td>
                                     <td class="total-marks-cell">
@@ -497,6 +497,10 @@
     font-size: 0.85rem;
     min-height: 70px;
     resize: vertical;
+}
+
+#overall-feedback {
+    min-height: 140px;
 }
 
 #errors-table textarea {
