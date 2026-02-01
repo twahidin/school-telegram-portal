@@ -89,7 +89,7 @@
                             <button class="btn btn-outline-secondary" onclick="zoomIn()" title="Zoom In">
                                 <i class="bi bi-zoom-in"></i>
                             </button>
-                            <button class="btn btn-outline-secondary" onclick="toggleFullscreen()" title="Toggle Fullscreen" id="fullscreen-btn">
+                            <button class="btn btn-outline-secondary" onclick="openEssayExpandModal()" title="Expand in dialog (with zoom)" id="fullscreen-btn">
                                 <i class="bi bi-arrows-fullscreen"></i>
                             </button>
                         </div>
@@ -126,7 +126,7 @@
                         </button>
                     </div>
                 </div>
-                <div class="card-body p-0" style="max-height: 45vh; overflow: auto;">
+                <div class="card-body p-0 rubric-card-body">
                     <form id="rubric-form">
                         <table class="table table-bordered mb-0" id="rubric-table">
                             <thead class="table-light sticky-top">
@@ -368,6 +368,48 @@
     </div>
 </div>
 
+<!-- Essay Expand Modal (dialog with zoom) -->
+<div class="modal fade" id="essayExpandModal" tabindex="-1" aria-labelledby="essayExpandModalLabel" aria-hidden="true" data-bs-backdrop="static">
+    <div class="modal-dialog modal-xl modal-fullscreen-lg-down" style="max-width: 95vw;">
+        <div class="modal-content">
+            <div class="modal-header d-flex justify-content-between align-items-center">
+                <h5 class="modal-title" id="essayExpandModalLabel">
+                    <i class="bi bi-file-earmark me-2"></i>Student Essay
+                    <span class="btn btn-outline-secondary btn-sm disabled ms-2" id="modal-page-indicator">Page 1/1</span>
+                </h5>
+                <div class="d-flex align-items-center gap-2">
+                    <div class="btn-group btn-group-sm">
+                        <button type="button" class="btn btn-outline-secondary" onclick="modalPrevPage()" id="modal-prev-btn">
+                            <i class="bi bi-chevron-left"></i>
+                        </button>
+                        <button type="button" class="btn btn-outline-secondary" onclick="modalNextPage()" id="modal-next-btn">
+                            <i class="bi bi-chevron-right"></i>
+                        </button>
+                    </div>
+                    <div class="btn-group btn-group-sm">
+                        <button type="button" class="btn btn-outline-secondary" onclick="zoomOut(); applyZoom();" title="Zoom Out">
+                            <i class="bi bi-zoom-out"></i>
+                        </button>
+                        <button type="button" class="btn btn-outline-secondary" onclick="zoomIn(); applyZoom();" title="Zoom In">
+                            <i class="bi bi-zoom-in"></i>
+                        </button>
+                        <span class="align-middle small text-muted" id="modal-zoom-label">100%</span>
+                    </div>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body p-2 bg-dark overflow-auto" style="min-height: 70vh;">
+                <div id="modal-essay-viewer-wrap" class="d-flex justify-content-center align-items-start" style="min-height: 65vh;">
+                    <div id="modal-pdf-wrap" style="transform-origin: 0 0; display: none;">
+                        <iframe id="modal-pdf-viewer" style="width: 800px; height: 1000px; border: none;"></iframe>
+                    </div>
+                    <img id="modal-page-image" src="" alt="Essay page" style="max-width: 100%; height: auto; transform-origin: top center; display: none;">
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Reject Modal -->
 <div class="modal fade" id="rejectModal" tabindex="-1" aria-labelledby="rejectModalLabel" aria-hidden="true">
     <div class="modal-dialog modal-lg">
@@ -531,6 +573,13 @@
 .criterion-marks-cell.marks-full, .total-marks-cell.marks-full {
     background-color: #d1e7dd !important; /* Green */
 }
+
+/* Rubric card same height as Student Essay panel */
+.rubric-card-body {
+    height: calc((100vh - 180px) / 2);
+    min-height: 200px;
+    overflow: auto;
+}
 </style>
 {% endblock %}
 
@@ -595,62 +644,85 @@
             img.style.transform = `scale(${currentZoom})`;
             img.style.transformOrigin = 'top center';
         }
+        const modalImg = document.getElementById('modal-page-image');
+        if (modalImg) {
+            modalImg.style.transform = `scale(${currentZoom})`;
+            modalImg.style.transformOrigin = 'top center';
+        }
+        const modalPdfWrap = document.getElementById('modal-pdf-wrap');
+        if (modalPdfWrap) {
+            modalPdfWrap.style.transform = `scale(${currentZoom})`;
+            modalPdfWrap.style.transformOrigin = '0 0';
+        }
+        const zoomLabel = document.getElementById('modal-zoom-label');
+        if (zoomLabel) {
+            zoomLabel.textContent = Math.round(currentZoom * 100) + '%';
+        }
     }
     
-    // Fullscreen functionality
-    let isFullscreen = false;
-    
-    function toggleFullscreen() {
-        const submissionBody = document.getElementById('submission-body');
-        const fullscreenBtn = document.getElementById('fullscreen-btn');
+    function openEssayExpandModal() {
+        const modal = new bootstrap.Modal(document.getElementById('essayExpandModal'));
+        const modalPrevBtn = document.getElementById('modal-prev-btn');
+        const modalNextBtn = document.getElementById('modal-next-btn');
+        const modalPageIndicator = document.getElementById('modal-page-indicator');
+        const modalPdfWrap = document.getElementById('modal-pdf-wrap');
+        const modalPdfViewer = document.getElementById('modal-pdf-viewer');
+        const modalPageImage = document.getElementById('modal-page-image');
         
-        if (!document.fullscreenElement) {
-            submissionBody.requestFullscreen().then(() => {
-                submissionBody.style.height = '100vh';
-                submissionBody.style.background = '#1a1a1a';
-                fullscreenBtn.innerHTML = '<i class="bi bi-fullscreen-exit"></i>';
-                isFullscreen = true;
-            }).catch(err => {
-                expandView();
-            });
+        modalPageIndicator.textContent = `Page ${currentPage + 1}/${pageCount}`;
+        modalPrevBtn.disabled = currentPage === 0;
+        modalNextBtn.disabled = currentPage >= pageCount - 1;
+        
+        if (fileType === 'pdf') {
+            modalPdfWrap.style.display = '';
+            modalPageImage.style.display = 'none';
+            modalPdfViewer.src = `/teacher/submission/${submissionId}/file/${currentPage}`;
         } else {
-            document.exitFullscreen().then(() => {
-                restoreView();
-            });
+            modalPdfWrap.style.display = 'none';
+            modalPageImage.style.display = 'block';
+            modalPageImage.src = `/teacher/submission/${submissionId}/file/${currentPage}`;
+        }
+        applyZoom();
+        modal.show();
+    }
+    
+    function modalPrevPage() {
+        if (currentPage <= 0) return;
+        currentPage--;
+        updatePageView();
+        const modalPdfViewer = document.getElementById('modal-pdf-viewer');
+        const modalPageImage = document.getElementById('modal-page-image');
+        const modalPageIndicator = document.getElementById('modal-page-indicator');
+        const modalPrevBtn = document.getElementById('modal-prev-btn');
+        const modalNextBtn = document.getElementById('modal-next-btn');
+        modalPageIndicator.textContent = `Page ${currentPage + 1}/${pageCount}`;
+        modalPrevBtn.disabled = currentPage === 0;
+        modalNextBtn.disabled = currentPage >= pageCount - 1;
+        if (fileType === 'pdf') {
+            modalPdfViewer.src = `/teacher/submission/${submissionId}/file/${currentPage}`;
+        } else {
+            modalPageImage.src = `/teacher/submission/${submissionId}/file/${currentPage}`;
         }
     }
     
-    function expandView() {
-        const submissionPanel = document.getElementById('submission-panel');
-        const feedbackPanel = document.getElementById('feedback-panel');
-        const fullscreenBtn = document.getElementById('fullscreen-btn');
-        
-        submissionPanel.className = 'col-12';
-        feedbackPanel.style.display = 'none';
-        document.getElementById('submission-body').style.height = '90vh';
-        fullscreenBtn.innerHTML = '<i class="bi bi-fullscreen-exit"></i>';
-        isFullscreen = true;
-    }
-    
-    function restoreView() {
-        const submissionPanel = document.getElementById('submission-panel');
-        const feedbackPanel = document.getElementById('feedback-panel');
-        const fullscreenBtn = document.getElementById('fullscreen-btn');
-        const submissionBody = document.getElementById('submission-body');
-        
-        submissionPanel.className = 'col-lg-4';
-        feedbackPanel.style.display = '';
-        submissionBody.style.height = 'calc((100vh - 180px) / 2)';
-        submissionBody.style.background = '#f0f0f0';
-        fullscreenBtn.innerHTML = '<i class="bi bi-arrows-fullscreen"></i>';
-        isFullscreen = false;
-    }
-    
-    document.addEventListener('fullscreenchange', () => {
-        if (!document.fullscreenElement && isFullscreen) {
-            restoreView();
+    function modalNextPage() {
+        if (currentPage >= pageCount - 1) return;
+        currentPage++;
+        updatePageView();
+        const modalPdfViewer = document.getElementById('modal-pdf-viewer');
+        const modalPageImage = document.getElementById('modal-page-image');
+        const modalPageIndicator = document.getElementById('modal-page-indicator');
+        const modalPrevBtn = document.getElementById('modal-prev-btn');
+        const modalNextBtn = document.getElementById('modal-next-btn');
+        modalPageIndicator.textContent = `Page ${currentPage + 1}/${pageCount}`;
+        modalPrevBtn.disabled = currentPage === 0;
+        modalNextBtn.disabled = currentPage >= pageCount - 1;
+        if (fileType === 'pdf') {
+            modalPdfViewer.src = `/teacher/submission/${submissionId}/file/${currentPage}`;
+        } else {
+            modalPageImage.src = `/teacher/submission/${submissionId}/file/${currentPage}`;
         }
-    });
+    }
     
     // Update mark box colors based on marks
     function updateMarkBoxColors() {
@@ -1130,6 +1202,9 @@
     
     // Initial total calculation
     calculateTotal();
+    
+    // Apply initial zoom to main essay view
+    applyZoom();
     
     // Reject Modal Functions
     function openRejectModal() {
