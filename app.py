@@ -1103,6 +1103,59 @@ def view_submission(submission_id):
         logger.error(f"Error viewing submission {submission_id}: {e}", exc_info=True)
         return redirect(url_for('student_submissions'))
 
+
+@app.route('/submissions/<submission_id>/send-corrections', methods=['POST'])
+@login_required
+def send_corrections(submission_id):
+    """Save student corrections/challenges and notify teacher."""
+    try:
+        submission = Submission.find_one({
+            'submission_id': submission_id,
+            'student_id': session['student_id']
+        })
+        if not submission:
+            return jsonify({'error': 'Submission not found'}), 404
+        if not submission.get('feedback_sent', False):
+            return jsonify({'error': 'Feedback not yet sent'}), 400
+        if submission.get('correction_sent', False):
+            return jsonify({'error': 'Corrections already sent'}), 400
+
+        data = request.get_json() or {}
+        questions = data.get('questions') or {}
+        criteria = data.get('criteria') or {}
+        errors = data.get('errors') or []
+
+        student_corrections = {
+            'questions': {k: (v or '').strip() for k, v in questions.items()},
+            'criteria': {k: (v or '').strip() for k, v in criteria.items()},
+            'errors': [(e.get('text', e) if isinstance(e, dict) else (e or '')).strip() for e in errors]
+        }
+
+        Submission.update_one(
+            {'submission_id': submission_id},
+            {'$set': {
+                'student_corrections': student_corrections,
+                'correction_sent': True,
+                'correction_sent_at': datetime.utcnow()
+            }}
+        )
+
+        assignment = Assignment.find_one({'assignment_id': submission['assignment_id']})
+        teacher = Teacher.find_one({'teacher_id': assignment['teacher_id']}) if assignment else None
+        student = Student.find_one({'student_id': session['student_id']})
+        if teacher and student and assignment:
+            try:
+                from utils.notifications import notify_correction_challenge_received
+                notify_correction_challenge_received(submission, assignment, student, teacher)
+            except Exception as e:
+                logger.warning(f"Could not send correction notification: {e}")
+
+        return jsonify({'success': True})
+    except Exception as e:
+        logger.error(f"Error sending corrections: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/submissions/<submission_id>/pdf')
 @login_required
 def download_submission_pdf(submission_id):
@@ -1171,16 +1224,28 @@ def student_submit_files():
         student = Student.find_one({'student_id': session['student_id']})
         teacher = Teacher.find_one({'teacher_id': assignment['teacher_id']})
         
-        # Check for existing submission: block if already submitted/reviewed; if rejected, overwrite in place
         from bson import ObjectId
-        existing = Submission.find_one(
-            {'assignment_id': assignment_id, 'student_id': session['student_id']},
-            sort=[('submitted_at', -1), ('created_at', -1)]
-        )
-        if existing and existing.get('status') in ['submitted', 'ai_reviewed', 'reviewed']:
-            if existing.get('submitted_via') == 'manual':
-                return jsonify({'error': 'This assignment was submitted by your teacher. You cannot resubmit unless the teacher rejects it.'}), 400
-            return jsonify({'error': 'Already submitted'}), 400
+        is_rubric_resubmit = request.form.get('is_rubric_resubmit') == '1'
+        marking_type = assignment.get('marking_type', 'standard')
+
+        # Rubric resubmit: allow new submission (new version) instead of blocking
+        if is_rubric_resubmit and marking_type == 'rubric':
+            existing = None  # always create new submission
+            version_count = Submission.count({
+                'assignment_id': assignment_id,
+                'student_id': session['student_id']
+            })
+            version = version_count + 1
+        else:
+            existing = Submission.find_one(
+                {'assignment_id': assignment_id, 'student_id': session['student_id']},
+                sort=[('submitted_at', -1), ('created_at', -1)]
+            )
+            if existing and existing.get('status') in ['submitted', 'ai_reviewed', 'reviewed']:
+                if existing.get('submitted_via') == 'manual':
+                    return jsonify({'error': 'This assignment was submitted by your teacher. You cannot resubmit unless the teacher rejects it.'}), 400
+                return jsonify({'error': 'Already submitted'}), 400
+            version = 1 if marking_type == 'rubric' else None
 
         fs = GridFS(db.db)
         if existing:
@@ -1238,6 +1303,8 @@ def student_submit_files():
             'submitted_via': 'web',
             'created_at': existing['created_at'] if existing else datetime.utcnow()
         }
+        if version is not None:
+            submission['version'] = version
         if existing:
             Submission.update_one(
                 {'submission_id': submission_id},

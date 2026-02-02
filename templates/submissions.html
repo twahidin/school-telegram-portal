@@ -65,7 +65,7 @@
             </div>
             
             <div class="submission-info">
-                <h5>{{ submission.assignment.title if submission.assignment else 'Unknown Assignment' }}</h5>
+                <h5>{{ submission.assignment.title if submission.assignment else 'Unknown Assignment' }}{% if submission.get('version') %} <span class="text-muted">(Version {{ submission.version }})</span>{% endif %}</h5>
                 <div class="submission-meta">
                     <span><i class="bi bi-journal me-1"></i>{{ submission.assignment.subject if submission.assignment else 'N/A' }}</span>
                     {% if submission.submitted_at %}

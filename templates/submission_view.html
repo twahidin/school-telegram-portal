@@ -37,7 +37,7 @@
     <nav aria-label="breadcrumb" class="mb-3">
         <ol class="breadcrumb">
             <li class="breadcrumb-item"><a href="{{ url_for('student_submissions') }}">My Submissions</a></li>
-            <li class="breadcrumb-item active">{{ assignment.title }}</li>
+            <li class="breadcrumb-item active">{{ assignment.title }}{% if submission.get('version') %} (Version {{ submission.version }}){% endif %}</li>
         </ol>
     </nav>
     
@@ -46,7 +46,7 @@
         <div class="card-body">
             <div class="row align-items-center">
                 <div class="col-md-8">
-                    <h4 class="mb-1">{{ assignment.title }}</h4>
+                    <h4 class="mb-1">{{ assignment.title }}{% if submission.get('version') %} <span class="text-muted">(Version {{ submission.version }})</span>{% endif %}</h4>
                     <p class="text-muted mb-2">
                         <span class="badge bg-primary me-2">{{ assignment.subject }}</span>
                         Submitted: {{ (submission.submitted_at|sgt).strftime('%d %B %Y, %H:%M') if submission.submitted_at else 'N/A' }} SGT
@@ -62,6 +62,18 @@
                     </div>
                 </div>
                 <div class="col-md-4 text-md-end mt-3 mt-md-0">
+                    {% if submission.get('feedback_sent', False) %}
+                    <div class="d-flex flex-wrap gap-2 justify-content-md-end mb-2">
+                        <button type="button" class="btn btn-primary" id="btn-send-corrections" 
+                                data-submission-id="{{ submission.submission_id }}"
+                                {% if submission.get('correction_sent', False) %}disabled title="Already sent"{% endif %}>
+                            <i class="bi bi-send me-1"></i>{% if submission.get('correction_sent', False) %}Corrections Sent{% else %}Send Corrections / Challenge{% endif %}
+                        </button>
+                        {% if submission.get('correction_sent', False) and submission.get('correction_sent_at') %}
+                        <small class="text-muted align-self-center">Sent {{ (submission.correction_sent_at|sgt).strftime('%d %b %Y, %H:%M') }} SGT</small>
+                        {% endif %}
+                    </div>
+                    {% endif %}
                     {% if submission.get('feedback_sent', False) and submission.get('final_marks') is not none %}
                     <div class="score-box">
                         {% if assignment.marking_type == 'rubric' or assignment.get('award_marks', True) %}
@@ -96,8 +108,8 @@
     </div>
     
     <div class="row">
-        <!-- Left: Your Submission -->
-        <div class="col-lg-6 mb-4">
+        <!-- Left: Your Submission (reduced by 1/4 for correction column) -->
+        <div class="col-lg-4 mb-4">
             <div class="card h-100">
                 <div class="card-header d-flex justify-content-between align-items-center">
                     <h5 class="mb-0"><i class="bi bi-file-earmark me-2"></i>Your Submission</h5>
@@ -113,7 +125,7 @@
                 </div>
                 <div class="card-body p-0">
                     {% if submission.file_ids %}
-                    <div class="submission-viewer-container" style="height: calc(100vh - 350px); min-height: 400px; overflow: auto; background: #f5f5f5;">
+                    <div class="submission-viewer-container" style="height: calc(100vh - 350px); min-height: 320px; overflow: auto; background: #f5f5f5;">
                         {% if submission.file_type == 'pdf' %}
                         <!-- PDF Viewer - Full scrollable document -->
                         <iframe id="submission-viewer" 
@@ -146,8 +158,8 @@
             </div>
         </div>
         
-        <!-- Right: Feedback -->
-        <div class="col-lg-6 mb-4">
+        <!-- Right: Feedback + Your correction/challenge column -->
+        <div class="col-lg-8 mb-4">
             <div class="card h-100">
                 <div class="card-header">
                     <h5 class="mb-0"><i class="bi bi-chat-left-text me-2"></i>Feedback</h5>
@@ -159,6 +171,8 @@
                         {# Only show feedback after teacher has sent it #}
                         {% set ai_feedback = submission.get('ai_feedback', {}) %}
                         {% set teacher_feedback = submission.get('teacher_feedback', {}) %}
+                        {% set student_corrections = submission.get('student_corrections', {}) %}
+                        {% set correction_sent = submission.get('correction_sent', False) %}
                         {% set questions = ai_feedback.get('questions', []) %}
                         {% set criteria = ai_feedback.get('criteria', []) %}
                         {% set is_rubric = assignment.marking_type == 'rubric' or (criteria and not questions) %}
@@ -177,11 +191,13 @@
                                         {% endif %}
                                         <th>Feedback</th>
                                         <th style="width: 70px;">{% if show_marks_column %}Marks{% else %}Result{% endif %}</th>
+                                        <th style="width: 22%;">Your correction / challenge</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     {% for q in questions %}
                                     {% set teacher_q = teacher_feedback.get('questions', {}).get(q.question_num|string, {}) %}
+                                    {% set q_correction = student_corrections.get('questions', {}).get(q.question_num|string, '') %}
                                     {% set marks = teacher_q.get('marks') if teacher_q.get('marks') is not none else q.get('marks_awarded') %}
                                     {% set marks_total_val = (q.marks_total|float) if (q.marks_total and q.marks_total|float > 0) else 1 %}
                                     {% set marks_num = marks|float if marks is not none else None %}
@@ -249,6 +265,13 @@
                                             {% endif %}
                                             {% endif %}
                                         </td>
+                                        <td class="correction-cell">
+                                            {% if correction_sent %}
+                                            <div class="small text-muted">{{ q_correction or '—' }}</div>
+                                            {% else %}
+                                            <textarea class="form-control form-control-sm correction-input" name="correction_q{{ q.question_num }}" rows="2" placeholder="Your correction or challenge...">{{ q_correction }}</textarea>
+                                            {% endif %}
+                                        </td>
                                     </tr>
                                     {% endfor %}
                                 </tbody>
@@ -261,15 +284,17 @@
                             <table class="table table-sm table-bordered feedback-table">
                                 <thead class="table-light">
                                     <tr>
-                                        <th style="width: 15%;">Criterion</th>
-                                        <th style="width: 35%;">Reasoning for Mark</th>
-                                        <th style="width: 35%;">Feedback / Area for Improvement</th>
-                                        <th style="width: 15%;">Marks</th>
+                                        <th style="width: 12%;">Criterion</th>
+                                        <th style="width: 28%;">Reasoning for Mark</th>
+                                        <th style="width: 28%;">Feedback / Area for Improvement</th>
+                                        <th style="width: 12%;">Marks</th>
+                                        <th style="width: 20%;">Your correction / challenge</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     {% for criterion in criteria %}
                                     {% set teacher_c = teacher_feedback.get('criteria', {}).get(criterion.name|string, {}) %}
+                                    {% set c_correction = student_corrections.get('criteria', {}).get(criterion.name|string, '') %}
                                     <tr>
                                         <td class="fw-bold">{{ criterion.name }}</td>
                                         <td class="small">
@@ -287,6 +312,13 @@
                                             <span class="text-muted">—/{{ mx }}</span>
                                             {% endif %}
                                         </td>
+                                        <td class="correction-cell">
+                                            {% if correction_sent %}
+                                            <div class="small text-muted">{{ c_correction or '—' }}</div>
+                                            {% else %}
+                                            <textarea class="form-control form-control-sm correction-input rubric-criterion" data-criterion="{{ criterion.name }}" rows="2" placeholder="Your correction or challenge...">{{ c_correction }}</textarea>
+                                            {% endif %}
+                                        </td>
                                     </tr>
                                     {% endfor %}
                                 </tbody>
@@ -299,30 +331,43 @@
                                         <td class="text-center fw-bold">
                                             {{ submission.get('teacher_feedback', {}).get('total_marks') or ai_feedback.total_marks or '—' }}/{{ assignment.total_marks or 100 }}
                                         </td>
+                                        <td></td>
                                     </tr>
                                 </tfoot>
                             </table>
                         </div>
                         {% set display_errors = teacher_feedback.get('errors') or ai_feedback.get('errors') or [] %}
+                        {% set errors_corrections = student_corrections.get('errors', []) %}
                         {% if display_errors %}
                         <h6 class="mt-4 mb-2"><i class="bi bi-exclamation-triangle me-2"></i>Detailed Corrections</h6>
                         <div class="table-responsive">
                             <table class="table table-sm table-bordered">
                                 <thead class="table-light">
                                     <tr>
-                                        <th style="width: 15%;">Location</th>
-                                        <th style="width: 25%;">Error</th>
-                                        <th style="width: 30%;">Suggested Correction</th>
-                                        <th style="width: 30%;">Feedback</th>
+                                        <th style="width: 12%;">Location</th>
+                                        <th style="width: 20%;">Error</th>
+                                        <th style="width: 24%;">Suggested Correction</th>
+                                        <th style="width: 24%;">Feedback</th>
+                                        <th style="width: 20%;">Your correction / challenge</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     {% for err in display_errors %}
+                                    {% set err_idx = loop.index0 %}
+                                    {% set err_correction_raw = errors_corrections[err_idx] if err_idx < errors_corrections|length else '' %}
+                                    {% set err_correction_text = err_correction_raw.get('text', err_correction_raw) if err_correction_raw is mapping else err_correction_raw %}
                                     <tr>
                                         <td class="small">{{ err.location or '—' }}</td>
                                         <td class="small">{{ err.error or '—' }}</td>
                                         <td class="small">{{ err.correction or '—' }}</td>
                                         <td class="small">{{ err.feedback or '—' }}</td>
+                                        <td class="correction-cell">
+                                            {% if correction_sent %}
+                                            <div class="small text-muted">{{ err_correction_text or '—' }}</div>
+                                            {% else %}
+                                            <textarea class="form-control form-control-sm correction-input rubric-error" data-error-index="{{ err_idx }}" rows="2" placeholder="Your correction or challenge...">{{ err_correction_text }}</textarea>
+                                            {% endif %}
+                                        </td>
                                     </tr>
                                     {% endfor %}
                                 </tbody>
@@ -376,6 +421,33 @@
             </div>
         </div>
     </div>
+
+    <!-- Rubric: Resubmit new version (Version 2, 3...) -->
+    {% if assignment.marking_type == 'rubric' and submission.get('feedback_sent', False) %}
+    <div class="row mt-4">
+        <div class="col-12">
+            <div class="card border-primary">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0"><i class="bi bi-arrow-repeat me-2"></i>Submit a new version for feedback</h5>
+                    <small>Upload a revised essay (PDF or images) to get another round of feedback. Each version is tracked (Version 2, 3...).</small>
+                </div>
+                <div class="card-body">
+                    <form id="resubmit-rubric-form" enctype="multipart/form-data">
+                        <input type="hidden" name="assignment_id" value="{{ assignment.assignment_id }}">
+                        <div class="mb-3">
+                            <label class="form-label">Upload your revised assignment (PDF or images)</label>
+                            <input type="file" class="form-control" name="files" id="resubmit-files" accept=".pdf,image/*" multiple required>
+                            <small class="text-muted">You can select one PDF or multiple image files.</small>
+                        </div>
+                        <button type="submit" class="btn btn-primary" id="btn-resubmit-rubric">
+                            <i class="bi bi-upload me-1"></i>Submit new version
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
 </div>
 
 <style>
@@ -435,7 +507,87 @@
 
 {% block scripts %}
 <script>
-    // No page navigation needed - all images are stacked for scrolling
-    // PDF uses iframe with built-in scroll
+(function() {
+    // Send Corrections / Challenge
+    var btnSend = document.getElementById('btn-send-corrections');
+    if (btnSend && !btnSend.disabled) {
+        btnSend.addEventListener('click', function() {
+            var submissionId = this.getAttribute('data-submission-id');
+            if (!submissionId) return;
+            var payload = { questions: {}, criteria: {}, errors: [] };
+            // Standard: correction_q1, correction_q2, ...
+            document.querySelectorAll('.correction-input[name^="correction_q"]').forEach(function(t) {
+                var num = (t.getAttribute('name') || '').replace('correction_q', '');
+                if (num) payload.questions[num] = (t.value || '').trim();
+            });
+            // Rubric criteria: .rubric-criterion[data-criterion]
+            document.querySelectorAll('.correction-input.rubric-criterion').forEach(function(t) {
+                var name = t.getAttribute('data-criterion');
+                if (name) payload.criteria[name] = (t.value || '').trim();
+            });
+            // Rubric errors: .rubric-error[data-error-index]
+            document.querySelectorAll('.correction-input.rubric-error').forEach(function(t) {
+                var idx = parseInt(t.getAttribute('data-error-index'), 10);
+                if (!isNaN(idx)) {
+                    while (payload.errors.length <= idx) payload.errors.push('');
+                    payload.errors[idx] = (t.value || '').trim();
+                }
+            });
+            btnSend.disabled = true;
+            btnSend.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Sending...';
+            fetch('/submissions/' + submissionId + '/send-corrections', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+                body: JSON.stringify(payload)
+            }).then(function(r) { return r.json(); }).then(function(data) {
+                if (data.success) {
+                    window.location.reload();
+                } else {
+                    btnSend.disabled = false;
+                    btnSend.innerHTML = '<i class="bi bi-send me-1"></i>Send Corrections / Challenge';
+                    alert(data.error || 'Failed to send.');
+                }
+            }).catch(function() {
+                btnSend.disabled = false;
+                btnSend.innerHTML = '<i class="bi bi-send me-1"></i>Send Corrections / Challenge';
+                alert('Network error. Please try again.');
+            });
+        });
+    }
+
+    // Rubric resubmit (new version)
+    var resubmitForm = document.getElementById('resubmit-rubric-form');
+    if (resubmitForm) {
+        resubmitForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            var files = document.getElementById('resubmit-files');
+            if (!files || !files.files || files.files.length === 0) {
+                alert('Please select at least one file (PDF or images).');
+                return;
+            }
+            var formData = new FormData();
+            formData.append('assignment_id', resubmitForm.querySelector('input[name="assignment_id"]').value);
+            formData.append('file_type', files.files[0].name.toLowerCase().endsWith('.pdf') ? 'pdf' : 'images');
+            for (var i = 0; i < files.files.length; i++) formData.append('files', files.files[i]);
+            formData.append('is_rubric_resubmit', '1');
+            var btn = document.getElementById('btn-resubmit-rubric');
+            if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Submitting...'; }
+            fetch('/student/submit', {
+                method: 'POST',
+                body: formData
+            }).then(function(r) { return r.json(); }).then(function(data) {
+                if (data.success && data.redirect) {
+                    window.location.href = data.redirect;
+                } else {
+                    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-upload me-1"></i>Submit new version'; }
+                    alert(data.error || 'Submission failed.');
+                }
+            }).catch(function() {
+                if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-upload me-1"></i>Submit new version'; }
+                alert('Network error. Please try again.');
+            });
+        });
+    }
+})();
 </script>
 {% endblock %}

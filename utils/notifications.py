@@ -62,6 +62,36 @@ def notify_feedback_ready(submission: dict, assignment: dict, student: dict):
         logger.error(f"Error sending feedback notification: {e}")
         return False
 
+def notify_correction_challenge_received(submission: dict, assignment: dict, student: dict, teacher: dict):
+    """
+    Notify teacher when a student sends corrections or challenges feedback.
+    """
+    try:
+        from bot_handler import send_notification
+
+        telegram_id = teacher.get('telegram_id')
+        if not telegram_id:
+            logger.warning(f"Teacher {teacher.get('teacher_id')} has no Telegram ID linked")
+            return False
+
+        data = {
+            'student_name': student.get('name', 'Unknown'),
+            'student_class': student.get('class'),
+            'student_id': student.get('student_id', 'N/A'),
+            'assignment_title': assignment.get('title', 'Untitled'),
+            'subject': assignment.get('subject', 'N/A'),
+            'submission_id': submission.get('submission_id', ''),
+        }
+
+        return send_notification(telegram_id, 'correction_challenge_received', data)
+    except ImportError:
+        logger.warning("bot_handler not available for notifications")
+        return False
+    except Exception as e:
+        logger.error(f"Error sending correction notification: {e}")
+        return False
+
+
 def notify_new_message(teacher: dict, student: dict, message: str):
     """
     Notify teacher of a new message from student

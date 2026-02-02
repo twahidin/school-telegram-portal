@@ -68,6 +68,21 @@ def send_notification(telegram_id: int, notification_type: str, data: dict):
 📝 Assignment: {data.get('assignment_title', 'Untitled')}
 📅 Due: {data.get('due_date', 'N/A')}
 📊 Pending submissions: {data.get('pending_count', 0)}"""
+
+        elif notification_type == 'correction_challenge_received':
+            web_url = os.getenv('WEB_URL', 'http://localhost:5000')
+            student_display = data.get('student_name', 'Unknown')
+            if data.get('student_class'):
+                student_display = f"{student_display} ({data.get('student_class')})"
+            message = f"""📩 *Correction/Challenge Received*
+
+👤 Student: {student_display}
+📝 Assignment: {data.get('assignment_title', 'Untitled')}
+📖 Subject: {data.get('subject', 'N/A')}
+
+The student has sent corrections or challenged the feedback.
+
+🔗 [View submission & student response]({web_url}/teacher/submissions/{data.get('submission_id', '')}/review)"""
         
         else:
             message = f"📢 Notification: {notification_type}\n{str(data)}"

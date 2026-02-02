@@ -31,6 +31,11 @@
                             <i class="bi bi-check-circle me-1"></i>Feedback Sent
                         </span>
                         {% endif %}
+                        {% if submission.get('correction_sent', False) %}
+                        <span class="badge bg-info ms-2">
+                            <i class="bi bi-reply me-1"></i>Correction/Challenge Received
+                        </span>
+                        {% endif %}
                     </h4>
                     <p class="text-muted mb-0">
                         <strong>{{ student.name }}</strong> ({{ student.student_id }}) 
@@ -130,10 +135,11 @@
                             <thead class="table-light sticky-top">
                                 <tr>
                                     <th style="width: 50px;">Q#</th>
-                                    <th style="width: 20%;">AI Extracted<br>Student Answer</th>
-                                    <th style="width: 20%;">Answer Key</th>
-                                    <th style="width: 30%;">Feedback</th>
+                                    <th style="width: 18%;">AI Extracted<br>Student Answer</th>
+                                    <th style="width: 18%;">Answer Key</th>
+                                    <th style="width: 26%;">Feedback</th>
                                     <th style="width: 80px;">{% if assignment.marking_type == 'rubric' or assignment.get('award_marks', True) %}Marks{% else %}Result{% endif %}</th>
+                                    <th style="width: 20%;">Student correction / challenge</th>
                                 </tr>
                             </thead>
                             <tbody id="feedback-tbody">
@@ -230,11 +236,20 @@
                                             </select>
                                             {% endif %}
                                         </td>
+                                        <td class="small student-correction-cell">
+                                            {% set student_corrections = submission.get('student_corrections', {}) %}
+                                            {% set q_correction = student_corrections.get('questions', {}).get(q.question_num|string, '') %}
+                                            {% if q_correction %}
+                                            <div class="text-muted">{{ q_correction }}</div>
+                                            {% else %}
+                                            <span class="text-muted fst-italic">—</span>
+                                            {% endif %}
+                                        </td>
                                     </tr>
                                     {% endfor %}
                                 {% else %}
                                     <tr>
-                                        <td colspan="5" class="text-center text-muted py-4">
+                                        <td colspan="6" class="text-center text-muted py-4">
                                             <i class="bi bi-hourglass me-2"></i>
                                             No AI feedback available yet. Click "Generate AI Feedback" to analyze.
                                         </td>
@@ -243,7 +258,7 @@
                             </tbody>
                             <tfoot class="table-light">
                                 <tr>
-                                    <td colspan="3"></td>
+                                    <td colspan="4"></td>
                                     <td class="fw-bold">
                                         {% if show_marks_column %}
                                         <div class="d-flex align-items-center gap-2">
@@ -275,6 +290,7 @@
                                         <span class="text-muted">—</span>
                                         {% endif %}
                                     </td>
+                                    <td></td>
                                 </tr>
                             </tfoot>
                         </table>

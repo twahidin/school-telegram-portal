@@ -31,6 +31,11 @@
                             <i class="bi bi-check-circle me-1"></i>Feedback Sent
                         </span>
                         {% endif %}
+                        {% if submission.get('correction_sent', False) %}
+                        <span class="badge bg-info ms-2">
+                            <i class="bi bi-reply me-1"></i>Correction/Challenge Received
+                        </span>
+                        {% endif %}
                     </h4>
                     <p class="text-muted mb-0">
                         <strong>{{ student.name }}</strong> ({{ student.student_id }}) 
@@ -131,17 +136,20 @@
                         <table class="table table-bordered mb-0" id="rubric-table">
                             <thead class="table-light sticky-top">
                                 <tr>
-                                    <th style="width: 15%;">Criterion</th>
-                                    <th style="width: 35%;">AI Reasoning for Mark</th>
-                                    <th style="width: 35%;">Feedback / Area for Improvement (AFI)</th>
-                                    <th style="width: 15%;">Marks</th>
+                                    <th style="width: 12%;">Criterion</th>
+                                    <th style="width: 28%;">AI Reasoning for Mark</th>
+                                    <th style="width: 28%;">Feedback / Area for Improvement (AFI)</th>
+                                    <th style="width: 12%;">Marks</th>
+                                    <th style="width: 20%;">Student correction / challenge</th>
                                 </tr>
                             </thead>
                             <tbody id="rubric-tbody">
                                 {% if ai_feedback and ai_feedback.criteria %}
                                     {% set teacher_feedback = submission.get('teacher_feedback', {}) %}
+                                    {% set student_corrections = submission.get('student_corrections', {}) %}
                                     {% for criterion in ai_feedback.criteria %}
                                     {% set teacher_c = teacher_feedback.get('criteria', {}).get(criterion.name|string, {}) %}
+                                    {% set c_correction = student_corrections.get('criteria', {}).get(criterion.name|string, '') %}
                                     <tr data-criterion="{{ criterion.name }}">
                                         <td class="fw-bold align-middle">
                                             {{ criterion.name }}
@@ -171,11 +179,14 @@
                                                        placeholder="10">
                                             </div>
                                         </td>
+                                        <td class="small text-muted">
+                                            {% if c_correction %}{{ c_correction }}{% else %}<span class="fst-italic">—</span>{% endif %}
+                                        </td>
                                     </tr>
                                     {% endfor %}
                                 {% else %}
                                     <tr id="no-criteria-row">
-                                        <td colspan="4" class="text-center text-muted py-4">
+                                        <td colspan="5" class="text-center text-muted py-4">
                                             <i class="bi bi-hourglass me-2"></i>
                                             No rubric criteria loaded. AI analysis may still be processing.
                                         </td>
@@ -215,6 +226,7 @@
                                             </div>
                                         </div>
                                     </td>
+                                    <td></td>
                                 </tr>
                             </tfoot>
                         </table>
@@ -238,19 +250,23 @@
                     <table class="table table-bordered table-hover mb-0" id="errors-table">
                         <thead class="table-light sticky-top">
                             <tr>
-                                <th style="width: 15%;">Location</th>
-                                <th style="width: 25%;">Error</th>
-                                <th style="width: 30%;">Suggested Correction</th>
-                                <th style="width: 25%;">Feedback</th>
-                                <th style="width: 5%;">Action</th>
+                                <th style="width: 12%;">Location</th>
+                                <th style="width: 20%;">Error</th>
+                                <th style="width: 24%;">Suggested Correction</th>
+                                <th style="width: 20%;">Feedback</th>
+                                <th style="width: 20%;">Student correction / challenge</th>
+                                <th style="width: 4%;">Action</th>
                             </tr>
                         </thead>
                         <tbody id="errors-tbody">
                             {% if ai_feedback and ai_feedback.errors %}
                                 {% set teacher_errors = submission.get('teacher_feedback', {}).get('errors', []) %}
+                                {% set errors_corrections = submission.get('student_corrections', {}).get('errors', []) %}
                                 {% for error in ai_feedback.errors %}
                                 {% set idx = loop.index0 %}
                                 {% set teacher_e = teacher_errors[idx] if idx < teacher_errors|length else {} %}
+                                {% set err_correction_raw = errors_corrections[idx] if idx < errors_corrections|length else '' %}
+                                {% set err_correction_text = err_correction_raw.get('text', err_correction_raw) if err_correction_raw is mapping else err_correction_raw %}
                                 <tr data-error-index="{{ idx }}">
                                     <td>
                                         <input type="text" class="form-control form-control-sm location-input" 
@@ -273,6 +289,9 @@
                                                   name="error_feedback_{{ idx }}" rows="4"
                                                   placeholder="Feedback on this error...">{{ teacher_e.get('feedback') or error.feedback or '' }}</textarea>
                                     </td>
+                                    <td class="small text-muted">
+                                        {% if err_correction_text %}{{ err_correction_text }}{% else %}<span class="fst-italic">—</span>{% endif %}
+                                    </td>
                                     <td class="text-center">
                                         <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeErrorRow(this)" title="Remove">
                                             <i class="bi bi-trash"></i>
@@ -282,7 +301,7 @@
                                 {% endfor %}
                             {% else %}
                                 <tr id="no-errors-row">
-                                    <td colspan="5" class="text-center text-muted py-3">
+                                    <td colspan="6" class="text-center text-muted py-3">
                                         <i class="bi bi-check-circle me-2"></i>
                                         No specific errors detected. Click "Add Correction" to manually add feedback.
                                     </td>
@@ -882,6 +901,7 @@
                           name="error_feedback_${errorIndex}" rows="4"
                           placeholder="Feedback on this error...">${escapeHtml(feedback)}</textarea>
             </td>
+            <td class="small text-muted"><span class="fst-italic">—</span></td>
             <td class="text-center">
                 <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeErrorRow(this)" title="Remove">
                     <i class="bi bi-trash"></i>
@@ -910,7 +930,7 @@
         if (tbody.children.length === 0) {
             tbody.innerHTML = `
                 <tr id="no-errors-row">
-                    <td colspan="5" class="text-center text-muted py-3">
+                    <td colspan="6" class="text-center text-muted py-3">
                         <i class="bi bi-check-circle me-2"></i>
                         No specific errors detected. Click "Add Correction" to manually add feedback.
                     </td>

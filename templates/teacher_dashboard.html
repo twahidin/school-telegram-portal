@@ -233,11 +233,7 @@
                     <td>{{ sub.assignment.title if sub.assignment else 'Unknown' }}</td>
                     <td>{{ (sub.submitted_at|sgt).strftime('%d %b, %H:%M') if sub.submitted_at else 'N/A' }} SGT</td>
                     <td>
-                        {% if sub.status == 'ai_reviewed' %}
-                        <span class="badge bg-info"><i class="bi bi-robot me-1"></i>AI Reviewed</span>
-                        {% else %}
-                        <span class="badge bg-warning"><i class="bi bi-clock me-1"></i>Pending</span>
-                        {% endif %}
+                        <span class="badge bg-warning text-dark"><i class="bi bi-clock me-1"></i>Pending Review</span>
                     </td>
                     <td>
                         <a href="{{ url_for('review_submission', submission_id=sub.submission_id) }}" class="btn btn-sm btn-primary">
