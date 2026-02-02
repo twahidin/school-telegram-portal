@@ -49,12 +49,12 @@
                             <select class="form-select" id="student_id" name="student_id" required>
                                 <option value="">— Select student —</option>
                                 {% for s in students %}
-                                <option value="{{ s.student_id }}" {% if s.student_id in submitted_student_ids %}disabled{% endif %}>
-                                    {{ s.name }} ({{ s.student_id }}){% if s.student_id in submitted_student_ids %} — already submitted{% endif %}
+                                <option value="{{ s.student_id }}">
+                                    {{ s.name }} ({{ s.student_id }}){% if s.student_id in submitted_student_ids %} — already submitted (you can resubmit to replace files){% endif %}
                                 </option>
                                 {% endfor %}
                             </select>
-                            <small class="text-muted">Students who already have a submission are disabled.</small>
+                            <small class="text-muted">You can record a new submission or resubmit for any student; the new files will replace the previous submission.</small>
                         </div>
 
                         <div class="mb-4">

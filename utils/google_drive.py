@@ -2,6 +2,7 @@ import os
 import logging
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload, MediaIoBaseUpload, MediaIoBaseDownload
 import io
 
@@ -108,11 +109,22 @@ class DriveManager:
                 file_metadata['parents'] = [parent_id or self.folder_id]
             
             file = self.service.files().create(
-                body=file_metadata, 
-                fields='id'
+                body=file_metadata,
+                fields='id',
+                supportsAllDrives=True
             ).execute()
             
             return file.get('id')
+        except HttpError as e:
+            if e.resp.status == 403 and ('storageQuotaExceeded' in str(e) or 'Service Accounts do not have storage quota' in str(e)):
+                logger.warning(
+                    "Google Drive: Service account has no storage quota. Use a folder inside a Shared Drive "
+                    "(https://developers.google.com/workspace/drive/api/guides/about-shareddrives) and share it with the "
+                    "service account, or use OAuth delegation (https://support.google.com/a/answer/7281227)."
+                )
+                return None
+            logger.error(f"Error creating folder: {e}")
+            return None
         except Exception as e:
             logger.error(f"Error creating folder: {e}")
             return None
@@ -140,13 +152,24 @@ class DriveManager:
             file = self.service.files().create(
                 body=file_metadata,
                 media_body=media,
-                fields='id, webViewLink'
+                fields='id, webViewLink',
+                supportsAllDrives=True
             ).execute()
             
             return {
                 'id': file.get('id'),
                 'link': file.get('webViewLink')
             }
+        except HttpError as e:
+            if e.resp.status == 403 and ('storageQuotaExceeded' in str(e) or 'Service Accounts do not have storage quota' in str(e)):
+                logger.warning(
+                    "Google Drive: Service account has no storage quota. Use a folder inside a Shared Drive "
+                    "(https://developers.google.com/workspace/drive/api/guides/about-shareddrives) and share it with the "
+                    "service account, or use OAuth delegation (https://support.google.com/a/answer/7281227)."
+                )
+                return None
+            logger.error(f"Error uploading file: {e}")
+            return None
         except Exception as e:
             logger.error(f"Error uploading file: {e}")
             return None
@@ -167,13 +190,24 @@ class DriveManager:
             file = self.service.files().create(
                 body=file_metadata,
                 media_body=media,
-                fields='id, webViewLink'
+                fields='id, webViewLink',
+                supportsAllDrives=True
             ).execute()
             
             return {
                 'id': file.get('id'),
                 'link': file.get('webViewLink')
             }
+        except HttpError as e:
+            if e.resp.status == 403 and ('storageQuotaExceeded' in str(e) or 'Service Accounts do not have storage quota' in str(e)):
+                logger.warning(
+                    "Google Drive: Service account has no storage quota. Use a folder inside a Shared Drive "
+                    "(https://developers.google.com/workspace/drive/api/guides/about-shareddrives) and share it with the "
+                    "service account, or use OAuth delegation (https://support.google.com/a/answer/7281227)."
+                )
+                return None
+            logger.error(f"Error uploading content: {e}")
+            return None
         except Exception as e:
             logger.error(f"Error uploading content: {e}")
             return None

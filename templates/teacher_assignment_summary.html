@@ -292,10 +292,10 @@
                                         {% endif %}
                                     </td>
                                     <td>
-                                        {% if item.submission and item.submission.final_marks is not none %}
+                                        {% if item.submission and item.display_marks is not none %}
                                         {% if assignment.marking_type == 'rubric' or assignment.get('award_marks', True) %}
                                         <span class="{% if item.percentage >= 70 %}text-success{% elif item.percentage >= 50 %}text-warning{% else %}text-danger{% endif %} fw-bold">
-                                            {{ item.submission.final_marks }}/{{ assignment.total_marks }}
+                                            {{ "%.0f"|format(item.display_marks) }}/{{ assignment.total_marks }}
                                         </span>
                                         <br><small class="text-muted">{{ "%.0f"|format(item.percentage) }}%</small>
                                         {% else %}

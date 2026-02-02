@@ -1171,20 +1171,28 @@ def student_submit_files():
         student = Student.find_one({'student_id': session['student_id']})
         teacher = Teacher.find_one({'teacher_id': assignment['teacher_id']})
         
-        # Check for existing submission (student cannot resubmit unless teacher rejected)
-        existing = Submission.find_one({
-            'assignment_id': assignment_id,
-            'student_id': session['student_id'],
-            'status': {'$in': ['submitted', 'ai_reviewed', 'reviewed']}
-        })
-        
-        if existing:
+        # Check for existing submission: block if already submitted/reviewed; if rejected, overwrite in place
+        from bson import ObjectId
+        existing = Submission.find_one(
+            {'assignment_id': assignment_id, 'student_id': session['student_id']},
+            sort=[('submitted_at', -1), ('created_at', -1)]
+        )
+        if existing and existing.get('status') in ['submitted', 'ai_reviewed', 'reviewed']:
             if existing.get('submitted_via') == 'manual':
                 return jsonify({'error': 'This assignment was submitted by your teacher. You cannot resubmit unless the teacher rejects it.'}), 400
             return jsonify({'error': 'Already submitted'}), 400
-        
-        submission_id = generate_submission_id()
+
         fs = GridFS(db.db)
+        if existing:
+            submission_id = existing['submission_id']
+            # Overwrite: delete old files from GridFS
+            for old_fid in existing.get('file_ids', []):
+                try:
+                    fs.delete(ObjectId(old_fid))
+                except Exception as e:
+                    logger.warning(f"Error deleting old submission file {old_fid}: {e}")
+        else:
+            submission_id = generate_submission_id()
         
         # Store files
         file_ids = []
@@ -1217,7 +1225,6 @@ def student_submit_files():
                 'page_num': i + 1
             })
         
-        # Create submission
         submission = {
             'submission_id': submission_id,
             'assignment_id': assignment_id,
@@ -1229,10 +1236,15 @@ def student_submit_files():
             'status': 'submitted',
             'submitted_at': datetime.utcnow(),
             'submitted_via': 'web',
-            'created_at': datetime.utcnow()
+            'created_at': existing['created_at'] if existing else datetime.utcnow()
         }
-        
-        Submission.insert_one(submission)
+        if existing:
+            Submission.update_one(
+                {'submission_id': submission_id},
+                {'$set': submission, '$unset': {'rejection_reason': '', 'rejected_at': '', 'rejected_by': ''}}
+            )
+        else:
+            Submission.insert_one(submission)
         
         # Generate AI feedback
         try:
@@ -2278,21 +2290,17 @@ def assignment_summary(assignment_id):
     
     submission_map = {s['student_id']: s for s in submissions}
     
-    # Calculate statistics
+    total_marks = float(assignment.get('total_marks', 100) or 100)
+    
+    # Calculate statistics (use AI-derived marks when final_marks not yet set)
     reviewed_count = len([s for s in submissions if s['status'] == 'reviewed'])
     pending_count = len(submissions) - reviewed_count
     
-    # Convert final_marks to float, handling string values
     scores = []
     for s in submissions:
-        fm = s.get('final_marks')
-        if fm is not None:
-            try:
-                scores.append(float(fm))
-            except (ValueError, TypeError):
-                pass  # Skip invalid values
-    
-    total_marks = float(assignment.get('total_marks', 100) or 100)
+        display_marks, _ = _submission_display_marks(s, total_marks)
+        if display_marks is not None:
+            scores.append(display_marks)
     
     avg_marks = sum(scores) / len(scores) if scores else 0
     avg_score = (avg_marks / total_marks * 100) if total_marks > 0 else 0
@@ -2352,23 +2360,18 @@ def assignment_summary(assignment_id):
     # Analyze class insights from AI feedback
     insights = analyze_class_insights(submissions)
     
-    # Build student submission list
+    # Build student submission list (use AI-derived marks when final_marks not yet set)
     student_submissions = []
     for student in sorted(all_students, key=lambda x: x.get('name', '')):
         sub = submission_map.get(student['student_id'])
-        percentage = 0
-        if sub and sub.get('final_marks') is not None:
-            try:
-                fm = float(sub['final_marks'])
-                percentage = (fm / total_marks * 100) if total_marks > 0 else 0
-            except (ValueError, TypeError):
-                percentage = 0
+        display_marks, percentage = _submission_display_marks(sub, total_marks) if sub else (None, 0)
         
         student_submissions.append({
             'student': student,
             'submission': sub,
             'status': sub['status'] if sub else 'not_submitted',
-            'percentage': percentage
+            'percentage': percentage,
+            'display_marks': display_marks
         })
     
     # Sort: pending first, then by score descending
@@ -2598,6 +2601,44 @@ def download_heatmap_pdf(assignment_id):
         return str(e), 500
 
 
+def _submission_display_marks(submission, total_possible):
+    """
+    Return (marks_float or None, percentage) for display.
+    Uses final_marks if set; otherwise derives from ai_feedback for ai_reviewed submissions.
+    """
+    if not submission or total_possible <= 0:
+        return None, 0
+    fm = submission.get('final_marks')
+    if fm is not None:
+        try:
+            m = float(fm)
+            pct = (m / total_possible * 100) if total_possible > 0 else 0
+            return m, pct
+        except (ValueError, TypeError):
+            pass
+    af = submission.get('ai_feedback') or {}
+    if submission.get('status') != 'ai_reviewed' or not af:
+        return None, 0
+    # Derive from AI feedback: rubric has criteria, standard has questions
+    total = af.get('total_marks')
+    if total is not None:
+        try:
+            m = float(total)
+            pct = (m / total_possible * 100) if total_possible > 0 else 0
+            return m, pct
+        except (ValueError, TypeError):
+            pass
+    total = sum(c.get('marks_awarded', 0) for c in af.get('criteria', []))
+    if total == 0:
+        total = sum(q.get('marks_awarded', 0) for q in af.get('questions', []))
+    try:
+        m = float(total)
+        pct = (m / total_possible * 100) if total_possible > 0 else 0
+        return m, pct
+    except (ValueError, TypeError):
+        return None, 0
+
+
 def _get_students_for_assignment(assignment, teacher_id):
     """Get list of students for an assignment (class or teaching group)."""
     target_type = assignment.get('target_type', 'class')
@@ -2680,12 +2721,12 @@ def manual_submission(assignment_id):
     all_students = _get_students_for_assignment(assignment, session['teacher_id'])
     
     if request.method == 'GET':
-        # Get existing submissions so we can show which students already have one
-        submissions = list(Submission.find({
-            'assignment_id': assignment_id,
-            'status': {'$in': ['submitted', 'ai_reviewed', 'reviewed']}
-        }))
-        submitted_student_ids = {s['student_id'] for s in submissions}
+        # Show which students have a submission (any status) so we can label "already submitted (you can resubmit)"
+        submissions = list(Submission.find({'assignment_id': assignment_id}).sort('submitted_at', -1))
+        submitted_student_ids = set()
+        for s in submissions:
+            if s['student_id'] not in submitted_student_ids:
+                submitted_student_ids.add(s['student_id'])
         return render_template('teacher_manual_submission.html',
                              teacher=teacher,
                              assignment=assignment,
@@ -2712,25 +2753,27 @@ def manual_submission(assignment_id):
                              submitted_student_ids=set(),
                              error='Invalid student.')
     
-    existing = Submission.find_one({
-        'assignment_id': assignment_id,
-        'student_id': student_id,
-        'status': {'$in': ['submitted', 'ai_reviewed', 'reviewed']}
-    })
-    if existing:
-        existing_subs = list(Submission.find({'assignment_id': assignment_id, 'status': {'$in': ['submitted', 'ai_reviewed', 'reviewed']}}))
-        return render_template('teacher_manual_submission.html',
-                             teacher=teacher,
-                             assignment=assignment,
-                             students=all_students,
-                             submitted_student_ids={s['student_id'] for s in existing_subs},
-                             error='This student already has a submission for this assignment.')
-    
-    submission_id = generate_submission_id()
+    # Allow manual submission for any student: new submission or overwrite existing (resubmit)
+    from bson import ObjectId
+    existing_sub = Submission.find_one(
+        {'assignment_id': assignment_id, 'student_id': student_id},
+        sort=[('submitted_at', -1), ('created_at', -1)]
+    )
     fs = GridFS(db.db)
+    if existing_sub:
+        submission_id = existing_sub['submission_id']
+        # Delete old files from GridFS so new upload overwrites
+        for old_fid in existing_sub.get('file_ids', []):
+            try:
+                fs.delete(ObjectId(old_fid))
+            except Exception as e:
+                logger.warning(f"Error deleting old submission file {old_fid}: {e}")
+    else:
+        submission_id = generate_submission_id()
+
     file_ids = []
     pages = []
-    
+
     for i, file in enumerate(files):
         if not file.filename:
             continue
@@ -2753,7 +2796,7 @@ def manual_submission(assignment_id):
         )
         file_ids.append(str(file_id))
         pages.append({'type': page_type, 'data': file_data, 'page_num': len(pages) + 1})
-    
+
     if not file_ids:
         return render_template('teacher_manual_submission.html',
                              teacher=teacher,
@@ -2761,8 +2804,8 @@ def manual_submission(assignment_id):
                              students=all_students,
                              submitted_student_ids=set(),
                              error='No valid files could be read. Please upload PDF or image files.')
-    
-    submission = {
+
+    submission_doc = {
         'submission_id': submission_id,
         'assignment_id': assignment_id,
         'student_id': student_id,
@@ -2774,9 +2817,17 @@ def manual_submission(assignment_id):
         'submitted_at': datetime.utcnow(),
         'submitted_via': 'manual',
         'submitted_by_teacher': session['teacher_id'],
-        'created_at': datetime.utcnow()
+        'created_at': existing_sub['created_at'] if existing_sub else datetime.utcnow()
     }
-    Submission.insert_one(submission)
+    if existing_sub:
+        # Unset rejection fields when resubmitting
+        Submission.update_one(
+            {'submission_id': submission_id},
+            {'$set': submission_doc,
+             '$unset': {'rejection_reason': '', 'rejected_at': '', 'rejected_by': ''}}
+        )
+    else:
+        Submission.insert_one(submission_doc)
     
     # Generate AI feedback (same as student submit)
     try:
@@ -3731,20 +3782,13 @@ def teacher_submissions():
                     # Treat manual+rejected as pending so teacher sees "Pending Review" and can still review.
                     if sub and sub.get('submitted_via') == 'manual' and status == 'rejected':
                         status = 'ai_reviewed'
-                    percentage = 0
-                    final_marks = None
-                    if sub and sub.get('final_marks') is not None:
-                        try:
-                            final_marks = float(sub['final_marks'])
-                            percentage = (final_marks / total_marks * 100) if total_marks > 0 else 0
-                        except (ValueError, TypeError):
-                            pass
+                    display_marks, percentage = _submission_display_marks(sub, total_marks) if sub else (None, 0)
                     row = {
                         'student': student,
                         'submission': sub,
                         'status': status,
                         'percentage': percentage,
-                        'final_marks': final_marks,
+                        'final_marks': display_marks,
                         'total_marks': int(total_marks)
                     }
                     if status_filter == 'all':
