@@ -2593,6 +2593,31 @@ def _get_students_for_assignment(assignment, teacher_id):
     return list(Student.find({'teachers': teacher_id}))
 
 
+def _get_teacher_accessible_student_ids(teacher_id):
+    """Get set of student_ids the teacher can access (for search, reset password, etc.)."""
+    teacher = Teacher.find_one({'teacher_id': teacher_id})
+    if not teacher:
+        return set()
+    teacher_classes = set(teacher.get('classes', []))
+    teacher_student_ids = set()
+    for student in Student.find({'teachers': teacher_id}):
+        teacher_student_ids.add(student.get('student_id'))
+        if student.get('class'):
+            teacher_classes.add(student.get('class'))
+    assignment_ids = [a['assignment_id'] for a in Assignment.find({'teacher_id': teacher_id})]
+    if assignment_ids:
+        for student_id in Submission.find({'assignment_id': {'$in': assignment_ids}}).distinct('student_id'):
+            teacher_student_ids.add(student_id)
+            s = Student.find_one({'student_id': student_id})
+            if s and s.get('class'):
+                teacher_classes.add(s.get('class'))
+    for group in TeachingGroup.find({'teacher_id': teacher_id}):
+        teacher_student_ids.update(group.get('student_ids', []))
+    for student in Student.find({'$or': [{'class': {'$in': list(teacher_classes)}}, {'classes': {'$in': list(teacher_classes)}}]}):
+        teacher_student_ids.add(student.get('student_id'))
+    return teacher_student_ids
+
+
 def _assignments_same_class_or_group(assignment, teacher_id):
     """Return assignments that target the same class or teaching group (for dropdown)."""
     target_type = assignment.get('target_type', 'class')
@@ -6178,6 +6203,46 @@ def mass_reset_student_passwords():
         logger.error(f"Error mass resetting passwords: {e}")
         return jsonify({'error': str(e)}), 500
 
+@app.route('/teacher/students/reset-password')
+@teacher_required
+def teacher_reset_student_password_page():
+    """Page for teachers to search students and reset a student's password."""
+    teacher = Teacher.find_one({'teacher_id': session['teacher_id']})
+    if not teacher:
+        return redirect(url_for('teacher_login'))
+    return render_template('teacher_reset_student_password.html', teacher=teacher)
+
+
+@app.route('/teacher/api/students/search')
+@teacher_required
+def teacher_search_students():
+    """Search students the teacher can access (by student_id or name)."""
+    q = (request.args.get('q') or '').strip()
+    if len(q) < 1:
+        return jsonify({'students': []})
+    accessible_ids = _get_teacher_accessible_student_ids(session['teacher_id'])
+    if not accessible_ids:
+        return jsonify({'students': []})
+    regex = {'$regex': q, '$options': 'i'}
+    students = list(Student.find({
+        'student_id': {'$in': list(accessible_ids)},
+        '$or': [
+            {'student_id': regex},
+            {'name': regex}
+        ]
+    }).sort('name', 1).limit(50))
+    return jsonify({
+        'students': [
+            {
+                'student_id': s.get('student_id'),
+                'name': s.get('name', ''),
+                'class': s.get('class') or s.get('classes', [None])[0] if s.get('classes') else ''
+            }
+            for s in students
+        ]
+    })
+
+
 @app.route('/teacher/reset_student_passwords', methods=['POST'])
 @teacher_required
 def teacher_reset_student_passwords():
@@ -6209,8 +6274,12 @@ def teacher_reset_student_passwords():
         if not valid_ids:
             return jsonify({'error': 'No valid students found'}), 400
         
-        # Default password if not specified
+        # Default password if not specified; validate custom password
         default_password = custom_password if custom_password else 'student123'
+        if custom_password:
+            ok, err = validate_password(custom_password)
+            if not ok:
+                return jsonify({'error': err}), 400
         hashed = hash_password(default_password)
         
         # Update valid students; require change on next login
