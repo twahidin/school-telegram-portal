@@ -86,7 +86,7 @@
                             </div>
                         </div>
                         
-                        {% if assignment.marking_type == 'standard' %}
+                        {% if assignment.marking_type != 'rubric' %}
                         <div class="mb-3" id="award-marks-container">
                             <label class="form-label">Grading display</label>
                             <div class="form-check">

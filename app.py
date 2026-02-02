@@ -3347,9 +3347,9 @@ def edit_assignment(assignment_id):
             target_class_id = data.get('target_class_id', '').strip() or None
             target_group_id = data.get('target_group_id', '').strip() or None
             
-            # Award marks: only for standard; rubric stays as-is
+            # Award marks: only for non-rubric (standard or legacy assignments); rubric stays as-is
             award_marks = assignment.get('award_marks', True)
-            if assignment.get('marking_type') == 'standard':
+            if assignment.get('marking_type') != 'rubric':
                 award_marks = data.get('award_marks', 'on') == 'on'
             
             send_ai_feedback_immediately = data.get('send_ai_feedback_immediately', 'off') == 'on'
