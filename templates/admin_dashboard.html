@@ -670,10 +670,24 @@
                 </div>
                 <div class="card-body">
                     <p class="text-muted mb-4">
-                        Choose which <strong>classes</strong> and <strong>teaching groups</strong> can use Python Lab. Students in at least one selected class or teaching group will see "Python Lab" and can run Python code. All other students will not see the feature.
+                        Choose which <strong>teachers</strong>, <strong>classes</strong>, and <strong>teaching groups</strong> can use Python Lab. Selected teachers will see "Python Lab" in the teacher portal. Students in at least one selected class or teaching group will see "Python Lab" in the student portal.
                     </p>
                     <div class="row">
-                        <div class="col-md-6">
+                        <div class="col-md-4">
+                            <h6 class="mb-2">Teachers allowed to use Python Lab</h6>
+                            <div class="border rounded p-3 mb-3" style="max-height: 280px; overflow-y: auto;">
+                                {% for t in teachers %}
+                                <div class="form-check">
+                                    <input class="form-check-input python-lab-access-teacher" type="checkbox" value="{{ t.teacher_id }}" id="pla-t-{{ t.teacher_id }}"
+                                        {% if t.teacher_id in python_lab_teacher_ids %}checked{% endif %}>
+                                    <label class="form-check-label" for="pla-t-{{ t.teacher_id }}">{{ t.name }} ({{ t.teacher_id }})</label>
+                                </div>
+                                {% else %}
+                                <p class="text-muted small mb-0">No teachers yet</p>
+                                {% endfor %}
+                            </div>
+                        </div>
+                        <div class="col-md-4">
                             <h6 class="mb-2">Classes allowed to use Python Lab</h6>
                             <div class="border rounded p-3 mb-3" style="max-height: 280px; overflow-y: auto;">
                                 {% for c in classes %}
@@ -687,7 +701,7 @@
                                 {% endfor %}
                             </div>
                         </div>
-                        <div class="col-md-6">
+                        <div class="col-md-4">
                             <h6 class="mb-2">Teaching groups allowed to use Python Lab</h6>
                             <div class="border rounded p-3 mb-3" style="max-height: 280px; overflow-y: auto;">
                                 {% for g in teaching_groups %}
@@ -2834,6 +2848,7 @@
     const pythonLabAccessStatus = document.getElementById('python-lab-access-status');
     if (savePythonLabAccessBtn) {
         savePythonLabAccessBtn.addEventListener('click', async () => {
+            const teacherIds = [...document.querySelectorAll('.python-lab-access-teacher:checked')].map(cb => cb.value);
             const classIds = [...document.querySelectorAll('.python-lab-access-class:checked')].map(cb => cb.value);
             const teachingGroupIds = [...document.querySelectorAll('.python-lab-access-group:checked')].map(cb => cb.value);
             savePythonLabAccessBtn.disabled = true;
@@ -2842,7 +2857,7 @@
                 const response = await fetch('{{ url_for("admin_save_python_lab_access") }}', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ class_ids: classIds, teaching_group_ids: teachingGroupIds })
+                    body: JSON.stringify({ teacher_ids: teacherIds, class_ids: classIds, teaching_group_ids: teachingGroupIds })
                 });
                 const data = await response.json();
                 if (data.success) {

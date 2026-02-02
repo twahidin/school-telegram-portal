@@ -1850,11 +1850,26 @@ def student_python_lab():
     return render_template('python_lab.html', execute_timeout=PYTHON_EXECUTE_TIMEOUT)
 
 
+@app.route('/teacher/python-lab')
+@teacher_required
+def teacher_python_lab():
+    """Python Lab page for teachers. Access controlled by admin (teachers allowed list)."""
+    if not _teacher_has_python_lab_access(session['teacher_id']):
+        return redirect(url_for('teacher_dashboard'))
+    return render_template('python_lab_teacher.html', execute_timeout=PYTHON_EXECUTE_TIMEOUT)
+
+
 @app.route('/api/python/execute', methods=['POST'])
 @login_required
 def student_python_execute():
-    """Execute Python code server-side. Only for students with Python Lab access."""
-    if not _student_has_python_lab_access(session['student_id']):
+    """Execute Python code server-side. For students or teachers with Python Lab access."""
+    if session.get('student_id'):
+        if not _student_has_python_lab_access(session['student_id']):
+            return jsonify({'error': 'Access denied'}), 403
+    elif session.get('teacher_id'):
+        if not _teacher_has_python_lab_access(session['teacher_id']):
+            return jsonify({'error': 'Access denied'}), 403
+    else:
         return jsonify({'error': 'Access denied'}), 403
     try:
         data = request.get_json() or {}
@@ -5159,27 +5174,34 @@ def _student_has_module_access(student_id):
 PYTHON_LAB_ACCESS_CONFIG_ID = 'default'
 
 def _get_python_lab_access_config():
-    """Return { class_ids: [], teaching_group_ids: [] } from admin allocation."""
+    """Return { teacher_ids: [], class_ids: [], teaching_group_ids: [] } from admin allocation."""
     doc = db.db.python_lab_access.find_one({'config_id': PYTHON_LAB_ACCESS_CONFIG_ID})
     if not doc:
-        return {'class_ids': [], 'teaching_group_ids': []}
+        return {'teacher_ids': [], 'class_ids': [], 'teaching_group_ids': []}
     return {
+        'teacher_ids': list(doc.get('teacher_ids') or []),
         'class_ids': list(doc.get('class_ids') or []),
         'teaching_group_ids': list(doc.get('teaching_group_ids') or []),
     }
 
-def _save_python_lab_access_config(class_ids, teaching_group_ids):
-    """Save which classes and teaching groups have access to Python Lab."""
+def _save_python_lab_access_config(teacher_ids, class_ids, teaching_group_ids):
+    """Save which teachers, classes and teaching groups have access to Python Lab."""
     db.db.python_lab_access.update_one(
         {'config_id': PYTHON_LAB_ACCESS_CONFIG_ID},
         {'$set': {
             'config_id': PYTHON_LAB_ACCESS_CONFIG_ID,
+            'teacher_ids': list(teacher_ids or []),
             'class_ids': list(class_ids or []),
             'teaching_group_ids': list(teaching_group_ids or []),
             'updated_at': datetime.utcnow(),
         }},
         upsert=True,
     )
+
+def _teacher_has_python_lab_access(teacher_id):
+    """True if this teacher is allocated access to Python Lab (admin-set)."""
+    config = _get_python_lab_access_config()
+    return teacher_id in (config.get('teacher_ids') or [])
 
 def _student_has_python_lab_access(student_id):
     """True if this student is in an allowed class OR in an allowed teaching group."""
@@ -5204,10 +5226,11 @@ def _student_has_python_lab_access(student_id):
 
 @app.context_processor
 def inject_module_access():
-    """Make teacher_has_module_access, student_has_module_access, student_has_python_lab_access available in all templates."""
-    out = {'teacher_has_module_access': False, 'student_has_module_access': False, 'student_has_python_lab_access': False}
+    """Make teacher_has_module_access, student_has_module_access, student_has_python_lab_access, teacher_has_python_lab_access available in all templates."""
+    out = {'teacher_has_module_access': False, 'student_has_module_access': False, 'student_has_python_lab_access': False, 'teacher_has_python_lab_access': False}
     if session.get('teacher_id'):
         out['teacher_has_module_access'] = _teacher_has_module_access(session['teacher_id'])
+        out['teacher_has_python_lab_access'] = _teacher_has_python_lab_access(session['teacher_id'])
     if session.get('student_id'):
         out['student_has_module_access'] = _student_has_module_access(session['student_id'])
         out['student_has_python_lab_access'] = _student_has_python_lab_access(session['student_id'])
@@ -6181,7 +6204,7 @@ def admin_dashboard():
 
     # Module access allocation (which teachers/classes can use learning modules)
     module_access = _get_module_access_config()
-    # Python Lab access (which classes/teaching groups can use Python Lab)
+    # Python Lab access (which teachers/classes/teaching groups can use Python Lab)
     python_lab_access = _get_python_lab_access_config()
     teaching_groups = list(TeachingGroup.find({}))
     for g in teaching_groups:
@@ -6194,6 +6217,7 @@ def admin_dashboard():
                          teaching_groups=teaching_groups,
                          module_access_teacher_ids=module_access['teacher_ids'],
                          module_access_class_ids=module_access['class_ids'],
+                         python_lab_teacher_ids=python_lab_access['teacher_ids'],
                          python_lab_class_ids=python_lab_access['class_ids'],
                          python_lab_teaching_group_ids=python_lab_access['teaching_group_ids'])
 
@@ -6216,12 +6240,13 @@ def admin_save_module_access():
 @app.route('/admin/python-lab-access', methods=['POST'])
 @admin_required
 def admin_save_python_lab_access():
-    """Save which classes and teaching groups have access to Python Lab."""
+    """Save which teachers, classes and teaching groups have access to Python Lab."""
     try:
         data = request.get_json()
+        teacher_ids = list(data.get('teacher_ids') or [])
         class_ids = list(data.get('class_ids') or [])
         teaching_group_ids = list(data.get('teaching_group_ids') or [])
-        _save_python_lab_access_config(class_ids, teaching_group_ids)
+        _save_python_lab_access_config(teacher_ids, class_ids, teaching_group_ids)
         return jsonify({'success': True, 'message': 'Python Lab access updated.'})
     except Exception as e:
         logger.error("Error saving Python Lab access: %s", e)

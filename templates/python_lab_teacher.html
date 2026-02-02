@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+
+{% block title %}Python Lab - Teacher Portal{% endblock %}
+
+{% block navbar %}
+<nav class="navbar navbar-expand-lg navbar-dark teacher-nav">
+    <div class="container">
+        <a class="navbar-brand" href="{{ url_for('teacher_dashboard') }}">
+            <i class="bi bi-mortarboard-fill me-2"></i>Teacher Portal
+        </a>
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+            <span class="navbar-toggler-icon"></span>
+        </button>
+        <div class="collapse navbar-collapse" id="navbarNav">
+            <ul class="navbar-nav me-auto">
+                <li class="nav-item"><a class="nav-link" href="{{ url_for('teacher_dashboard') }}"><i class="bi bi-speedometer2 me-1"></i>Dashboard</a></li>
+                <li class="nav-item"><a class="nav-link" href="{{ url_for('teacher_assignments') }}"><i class="bi bi-journal-text me-1"></i>Assignments</a></li>
+                <li class="nav-item"><a class="nav-link" href="{{ url_for('teacher_submissions') }}"><i class="bi bi-inbox me-1"></i>Submissions</a></li>
+                {% if teacher_has_module_access %}
+                <li class="nav-item"><a class="nav-link" href="{{ url_for('teacher_modules') }}"><i class="bi bi-diagram-3 me-1"></i>Modules</a></li>
+                {% endif %}
+                <li class="nav-item"><a class="nav-link active" href="{{ url_for('teacher_python_lab') }}"><i class="bi bi-code-slash me-1"></i>Python Lab</a></li>
+                <li class="nav-item"><a class="nav-link" href="{{ url_for('teacher_messages') }}"><i class="bi bi-chat-dots me-1"></i>Messages</a></li>
+                <li class="nav-item"><a class="nav-link" href="{{ url_for('teacher_settings') }}"><i class="bi bi-gear me-1"></i>Settings</a></li>
+            </ul>
+            <span class="navbar-text"><i class="bi bi-person-workspace me-1"></i>{{ session.teacher_name }}</span>
+        </div>
+    </div>
+</nav>
+{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4">
+        <div>
+            <h1 class="mb-1"><i class="bi bi-code-slash me-2"></i>Python Lab</h1>
+            <p class="text-muted mb-0">Write and run Python code. Output appears below each cell. Max {{ execute_timeout }}s per run.</p>
+        </div>
+        <div class="d-flex gap-2 flex-wrap">
+            <div class="dropdown">
+                <button class="btn btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown">Templates</button>
+                <ul class="dropdown-menu" id="templates-menu"></ul>
+            </div>
+            <button type="button" class="btn btn-outline-primary" id="add-code-cell"><i class="bi bi-plus-lg me-1"></i>Add code cell</button>
+        </div>
+    </div>
+
+    <div id="cells-container" class="mb-4"></div>
+
+    <div class="card border-0 bg-light">
+        <div class="card-body">
+            <h6 class="card-title text-muted"><i class="bi bi-info-circle me-1"></i>Quick reference</h6>
+            <div class="row g-2 small">
+                <div class="col-md-4"><code>int, float, bool, str, list, dict</code> — data types</div>
+                <div class="col-md-4"><code>.upper() .lower() .find() .split()</code> — strings</div>
+                <div class="col-md-4"><code>len() min() max() sum()</code> — built-ins</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+(function() {
+    const executeTimeout = {{ execute_timeout }};
+    const templates = [
+        { name: 'Hello World', code: '# Hello World\nprint("Hello, Python Lab!")' },
+        { name: 'Variables', code: '# Variables\nname = "Student"\nage = 16\nscore = 85.5\nprint(f"Name: {name}, Age: {age}, Score: {score}")' },
+        { name: 'List operations', code: '# List operations\nnumbers = [5, 2, 8, 1, 9, 3]\nminimum = numbers[0]\nmaximum = numbers[0]\nfor num in numbers:\n    if num < minimum: minimum = num\n    if num > maximum: maximum = num\nprint(f"List: {numbers}")\nprint(f"Min: {minimum}, Max: {maximum}")' },
+        { name: 'String manipulation', code: '# String manipulation\ntext = "Hello, Computing!"\nprint(f"Length: {len(text)}")\nprint(f"Upper: {text.upper()}")\nprint(f"Lower: {text.lower()}")\nprint(f"First 5: {text[:5]}")' },
+        { name: 'User-defined function', code: '# User-defined function\ndef average(nums):\n    total = 0\n    for n in nums:\n        total += n\n    return total / len(nums)\nscores = [75, 82, 90, 68, 95]\nprint(f"Average: {average(scores):.2f}")' },
+    ];
+
+    const container = document.getElementById('cells-container');
+    let cellId = 0;
+    let cells = [{ id: String(++cellId), type: 'code', content: '# Write your Python code here\nprint("Hello!")', output: '', running: false }];
+
+    function renderCells() {
+        container.innerHTML = cells.map(function(c) {
+            const running = c.running ? ' Running...' : '';
+            const out = (c.output || '').trim() ? '<pre class="mb-0 small bg-dark text-light rounded p-2 mt-2" style="max-height:200px;overflow:auto;">' + escapeHtml(c.output) + '</pre>' : '';
+            return '<div class="card mb-3 cell-card" data-id="' + c.id + '">' +
+                '<div class="card-header py-2 d-flex justify-content-between align-items-center">' +
+                '<span class="badge bg-success">code</span>' +
+                '<div>' +
+                '<button type="button" class="btn btn-sm btn-outline-success run-cell" title="Run">' +
+                '<i class="bi bi-play-fill"></i></button> ' +
+                '<button type="button" class="btn btn-sm btn-outline-danger delete-cell" title="Delete">' +
+                '<i class="bi bi-trash"></i></button>' +
+                '</div></div>' +
+                '<div class="card-body p-2">' +
+                '<textarea class="form-control font-monospace small" rows="6" data-id="' + c.id + '" placeholder="# Python code...">' + escapeHtml(c.content) + '</textarea>' +
+                (c.running ? '<p class="text-muted small mt-2 mb-0"><i class="bi bi-hourglass-split me-1"></i>' + running + '</p>' : '') +
+                out +
+                '</div></div>';
+        }).join('');
+
+        container.querySelectorAll('.run-cell').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                const card = this.closest('.cell-card');
+                const id = card.getAttribute('data-id');
+                runCell(id);
+            });
+        });
+        container.querySelectorAll('.delete-cell').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                const card = this.closest('.cell-card');
+                const id = card.getAttribute('data-id');
+                if (cells.length <= 1) return;
+                cells = cells.filter(function(c) { return c.id !== id; });
+                renderCells();
+            });
+        });
+        container.querySelectorAll('textarea[data-id]').forEach(function(ta) {
+            ta.addEventListener('input', function() {
+                const id = this.getAttribute('data-id');
+                const c = cells.find(function(x) { return x.id === id; });
+                if (c) c.content = this.value;
+            });
+        });
+    }
+
+    function escapeHtml(s) {
+        const div = document.createElement('div');
+        div.textContent = s;
+        return div.innerHTML;
+    }
+
+    function runCell(id) {
+        const c = cells.find(function(x) { return x.id === id; });
+        if (!c || c.running) return;
+        c.running = true;
+        c.output = '';
+        renderCells();
+
+        fetch('{{ url_for("student_python_execute") }}', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code: c.content }),
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            c.running = false;
+            c.output = data.output || data.error || '(no output)';
+            renderCells();
+        })
+        .catch(function() {
+            c.running = false;
+            c.output = 'Request failed. Try again.';
+            renderCells();
+        });
+    }
+
+    document.getElementById('add-code-cell').addEventListener('click', function() {
+        cells.push({ id: String(++cellId), type: 'code', content: '# New cell\n', output: '', running: false });
+        renderCells();
+    });
+
+    document.querySelector('#templates-menu').innerHTML = templates.map(function(t, i) {
+        return '<li><button class="dropdown-item template-btn" type="button" data-index="' + i + '">' + escapeHtml(t.name) + '</button></li>';
+    }).join('');
+    document.querySelector('#templates-menu').addEventListener('click', function(e) {
+        const btn = e.target.closest('.template-btn');
+        if (!btn) return;
+        const t = templates[parseInt(btn.getAttribute('data-index'), 10)];
+        if (t) {
+            cells.push({ id: String(++cellId), type: 'code', content: t.code, output: '', running: false });
+            renderCells();
+        }
+    });
+
+    renderCells();
+})();
+</script>
+{% endblock %}
+
+{% block head %}
+<style>
+.cell-card textarea { font-family: var(--bs-font-monospace); font-size: 0.9rem; }
+</style>
+{% endblock %}
