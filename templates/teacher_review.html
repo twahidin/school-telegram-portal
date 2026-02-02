@@ -133,7 +133,7 @@
                                     <th style="width: 20%;">AI Extracted<br>Student Answer</th>
                                     <th style="width: 20%;">Answer Key</th>
                                     <th style="width: 30%;">Feedback</th>
-                                    <th style="width: 80px;">Marks</th>
+                                    <th style="width: 80px;">{% if assignment.marking_type == 'rubric' or assignment.get('award_marks', True) %}Marks{% else %}Result{% endif %}</th>
                                 </tr>
                             </thead>
                             <tbody id="feedback-tbody">
@@ -142,6 +142,7 @@
                                     {% set question_count = ai_feedback.questions|length %}
                                     {% set default_marks_per_question = (total_marks / question_count)|round|int if question_count > 0 else 0 %}
                                     {% set teacher_feedback = submission.get('teacher_feedback', {}) %}
+                                    {% set show_marks_column = assignment.marking_type == 'rubric' or assignment.get('award_marks', True) %}
                                     {% for q in ai_feedback.questions %}
                                     {% set teacher_q = teacher_feedback.get('questions', {}).get(q.question_num|string, {}) %}
                                     {% set q_marks_total = teacher_q.get('marks_total') or (q.marks_total if q.marks_total else default_marks_per_question) %}
@@ -154,6 +155,9 @@
                                     {% else %}
                                         {% set q_marks_awarded = 0 %}
                                     {% endif %}
+                                    {% set q_marks_num = q_marks_awarded|float if (q_marks_awarded is not none and q_marks_awarded != '') else None %}
+                                    {% set q_pct = (q_marks_num / (q_marks_total|float) * 100) if (q_marks_num is not none and q_marks_total and (q_marks_total|float) > 0) else None %}
+                                    {% set q_result = 'correct' if (q_pct is not none and q_pct >= 99.9) else ('incorrect' if (q_pct is not none and q_pct <= 0.01) else 'partial') %}
                                     <tr class="{% if q.needs_review %}table-warning{% elif q.is_correct %}table-success{% elif q.is_correct == false %}table-danger{% endif %}"
                                         data-question="{{ q.question_num }}">
                                         <td class="text-center fw-bold">
@@ -178,7 +182,7 @@
                                                 <div class="position-relative d-inline-block">
                                                     <img src="{{ teacher_q.get('answer_key_image') }}" class="img-thumbnail" style="max-height: 80px;">
                                                     <button type="button" class="btn btn-sm btn-danger position-absolute top-0 end-0" 
-                                                            onclick="removeAnswerKeyImage({{ q.question_num }})" style="padding: 0 4px; font-size: 10px;">×</button>
+                                                            onclick="removeAnswerKeyImage('{{ q.question_num }}')" style="padding: 0 4px; font-size: 10px;">×</button>
                                                 </div>
                                                 <input type="hidden" name="answer_key_image_{{ q.question_num }}" value="{{ teacher_q.get('answer_key_image') }}">
                                                 {% endif %}
@@ -187,7 +191,7 @@
                                                 <label class="btn btn-outline-secondary btn-sm py-0 px-1" style="font-size: 11px;">
                                                     <i class="bi bi-image"></i> Add Image
                                                     <input type="file" class="d-none" accept="image/*" 
-                                                           onchange="handleAnswerKeyImage(this, {{ q.question_num }})">
+                                                           onchange="handleAnswerKeyImage(this, '{{ q.question_num }}')">
                                                 </label>
                                             </div>
                                         </td>
@@ -200,6 +204,7 @@
                                             {% endif %}
                                         </td>
                                         <td class="marks-cell">
+                                            {% if show_marks_column %}
                                             <div class="input-group input-group-sm">
                                                 <input type="number" class="form-control marks-input" 
                                                        name="marks_{{ q.question_num }}" 
@@ -213,6 +218,18 @@
                                                        min="0"
                                                        placeholder="?">
                                             </div>
+                                            {% else %}
+                                            {% set derived_marks = q_marks_awarded if (q_marks_awarded is not none and q_marks_awarded != '') else (q_marks_total if q_result == 'correct' else (0 if q_result == 'incorrect' else ((q_marks_total|float / 2)|round|int))) %}
+                                            <input type="hidden" class="marks-hidden" name="marks_{{ q.question_num }}" value="{{ derived_marks }}">
+                                            <input type="hidden" name="marks_total_{{ q.question_num }}" value="{{ q_marks_total }}">
+                                            <select class="form-select form-select-sm result-select" name="result_{{ q.question_num }}" 
+                                                    data-question="{{ q.question_num }}" data-marks-total="{{ q_marks_total }}"
+                                                    title="Result">
+                                                <option value="correct" {% if q_result == 'correct' %}selected{% endif %}>Correct</option>
+                                                <option value="partial" {% if q_result == 'partial' %}selected{% endif %}>Partial correct</option>
+                                                <option value="incorrect" {% if q_result == 'incorrect' %}selected{% endif %}>Incorrect</option>
+                                            </select>
+                                            {% endif %}
                                         </td>
                                     </tr>
                                     {% endfor %}
@@ -229,14 +246,19 @@
                                 <tr>
                                     <td colspan="3"></td>
                                     <td class="fw-bold">
+                                        {% if show_marks_column %}
                                         <div class="d-flex align-items-center gap-2">
                                             <button type="button" class="btn btn-outline-secondary btn-sm" onclick="recalculateTotal()" title="Sum marks from all questions">
                                                 <i class="bi bi-calculator me-1"></i>Recalculate
                                             </button>
                                             <span>Total:</span>
                                         </div>
+                                        {% else %}
+                                        <span>—</span>
+                                        {% endif %}
                                     </td>
                                     <td>
+                                        {% if show_marks_column %}
                                         <div class="input-group input-group-sm">
                                             <input type="number" class="form-control fw-bold" id="total-marks" 
                                                    name="total_marks"
@@ -248,6 +270,11 @@
                                                    value="{{ assignment.total_marks or 100 }}"
                                                    min="0">
                                         </div>
+                                        {% else %}
+                                        <input type="hidden" id="total-marks" name="total_marks" value="{{ ai_feedback.total_marks if ai_feedback and ai_feedback.total_marks else '' }}">
+                                        <input type="hidden" id="total-marks-max" name="total_marks_max" value="{{ assignment.total_marks or 100 }}">
+                                        <span class="text-muted">—</span>
+                                        {% endif %}
                                     </td>
                                 </tr>
                             </tfoot>
@@ -602,30 +629,33 @@
         }
     });
     
-    // Update mark box colors based on marks
+    // Update mark box colors based on marks (or Result dropdown)
     function updateMarkBoxColors() {
         document.querySelectorAll('.marks-cell').forEach(cell => {
             const marksInput = cell.querySelector('.marks-input');
             const marksTotalInput = cell.querySelector('.marks-total-input');
+            const resultSelect = cell.querySelector('.result-select');
+            const hiddenMarks = cell.querySelector('.marks-hidden');
             
-            if (!marksInput || !marksTotalInput) return;
-            
-            const marks = parseFloat(marksInput.value) || 0;
-            const marksTotal = parseFloat(marksTotalInput.value) || 0;
-            
-            // Remove all color classes
-            cell.classList.remove('marks-zero', 'marks-partial', 'marks-full');
-            
-            // Apply appropriate color class
-            if (marksTotal === 0) {
-                // No total marks set, no color
-                return;
-            } else if (marks === 0) {
-                cell.classList.add('marks-zero'); // Red
-            } else if (marks === marksTotal) {
-                cell.classList.add('marks-full'); // Green
+            let marks = 0, marksTotal = 0;
+            if (marksInput && marksTotalInput) {
+                marks = parseFloat(marksInput.value) || 0;
+                marksTotal = parseFloat(marksTotalInput.value) || 0;
+            } else if (resultSelect && hiddenMarks) {
+                marks = parseFloat(hiddenMarks.value) || 0;
+                marksTotal = parseFloat(resultSelect.dataset.marksTotal) || 0;
             } else {
-                cell.classList.add('marks-partial'); // Yellow
+                return;
+            }
+            
+            cell.classList.remove('marks-zero', 'marks-partial', 'marks-full');
+            if (marksTotal === 0) return;
+            if (marks === 0) {
+                cell.classList.add('marks-zero');
+            } else if (marks >= marksTotal) {
+                cell.classList.add('marks-full');
+            } else {
+                cell.classList.add('marks-partial');
             }
         });
     }
@@ -659,6 +689,10 @@
             const val = parseFloat(input.value) || 0;
             total += val;
         });
+        document.querySelectorAll('.marks-hidden').forEach(input => {
+            const val = parseFloat(input.value) || 0;
+            total += val;
+        });
         const totalMarksInput = document.getElementById('total-marks');
         if (totalMarksInput) {
             // Only auto-update if empty, otherwise let user edit manually
@@ -674,12 +708,34 @@
             const val = parseFloat(input.value) || 0;
             total += val;
         });
+        document.querySelectorAll('.marks-hidden').forEach(input => {
+            const val = parseFloat(input.value) || 0;
+            total += val;
+        });
         const totalMarksInput = document.getElementById('total-marks');
         if (totalMarksInput) {
             totalMarksInput.value = total;
         }
         updateMarkBoxColors();
     }
+    
+    // When assignment uses Result (Correct/Partial/Incorrect), update hidden marks from dropdown
+    document.querySelectorAll('.result-select').forEach(select => {
+        select.addEventListener('change', function() {
+            const qNum = this.dataset.question;
+            const total = parseFloat(this.dataset.marksTotal) || 0;
+            const val = this.value;
+            let marks = 0;
+            if (val === 'correct') marks = total;
+            else if (val === 'incorrect') marks = 0;
+            else if (val === 'partial') marks = Math.round(total / 2);
+            const hiddenMarks = document.querySelector(`input.marks-hidden[name="marks_${qNum}"]`);
+            if (hiddenMarks) {
+                hiddenMarks.value = marks;
+                recalculateTotal();
+            }
+        });
+    });
     
     // Handle answer key image upload
     function handleAnswerKeyImage(input, qNum) {
@@ -691,7 +747,7 @@
                     <div class="position-relative d-inline-block">
                         <img src="${e.target.result}" class="img-thumbnail" style="max-height: 80px;">
                         <button type="button" class="btn btn-sm btn-danger position-absolute top-0 end-0" 
-                                onclick="removeAnswerKeyImage(${qNum})" style="padding: 0 4px; font-size: 10px;">×</button>
+                                onclick="removeAnswerKeyImage('${qNum}')" style="padding: 0 4px; font-size: 10px;">×</button>
                     </div>
                     <input type="hidden" name="answer_key_image_${qNum}" value="${e.target.result}">
                 `;
