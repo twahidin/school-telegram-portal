@@ -158,8 +158,7 @@
                                     {% set q_marks_num = q_marks_awarded|float if (q_marks_awarded is not none and q_marks_awarded != '') else None %}
                                     {% set q_pct = (q_marks_num / (q_marks_total|float) * 100) if (q_marks_num is not none and q_marks_total and (q_marks_total|float) > 0) else None %}
                                     {% set q_result = 'correct' if (q_pct is not none and q_pct >= 99.9) else ('incorrect' if (q_pct is not none and q_pct <= 0.01) else 'partial') %}
-                                    <tr class="{% if q.needs_review %}table-warning{% elif q.is_correct %}table-success{% elif q.is_correct == false %}table-danger{% endif %}"
-                                        data-question="{{ q.question_num }}">
+                                    <tr class="feedback-row" data-question="{{ q.question_num }}">
                                         <td class="text-center fw-bold">
                                             {{ q.question_num }}
                                             {% if q.needs_review %}
@@ -629,9 +628,11 @@
         }
     });
     
-    // Update mark box colors based on marks (or Result dropdown)
+    // Update row color from current marks/result: green = full/correct, yellow = partial, red = zero/incorrect (consistent across whole row)
     function updateMarkBoxColors() {
-        document.querySelectorAll('.marks-cell').forEach(cell => {
+        document.querySelectorAll('#feedback-tbody tr.feedback-row').forEach(row => {
+            const cell = row.querySelector('.marks-cell');
+            if (!cell) return;
             const marksInput = cell.querySelector('.marks-input');
             const marksTotalInput = cell.querySelector('.marks-total-input');
             const resultSelect = cell.querySelector('.result-select');
@@ -648,13 +649,17 @@
                 return;
             }
             
+            row.classList.remove('table-success', 'table-warning', 'table-danger');
             cell.classList.remove('marks-zero', 'marks-partial', 'marks-full');
             if (marksTotal === 0) return;
             if (marks === 0) {
+                row.classList.add('table-danger');
                 cell.classList.add('marks-zero');
             } else if (marks >= marksTotal) {
+                row.classList.add('table-success');
                 cell.classList.add('marks-full');
             } else {
+                row.classList.add('table-warning');
                 cell.classList.add('marks-partial');
             }
         });

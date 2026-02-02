@@ -364,13 +364,16 @@ def dashboard():
     feedback_received_count = 0
     
     for a in assignments:
-        submission = Submission.find_one({
-            'assignment_id': a['assignment_id'],
-            'student_id': session['student_id']
-        })
+        # Use latest submission so resubmission after rejection shows new status
+        submission = Submission.find_one(
+            {'assignment_id': a['assignment_id'], 'student_id': session['student_id']},
+            sort=[('submitted_at', -1), ('created_at', -1)]
+        )
         
         if not submission:
             not_submitted_count += 1
+        elif submission.get('status') == 'rejected':
+            not_submitted_count += 1  # Rejected with no newer submission = can resubmit
         elif submission.get('status') in ['submitted', 'ai_reviewed']:
             pending_review_count += 1
         elif submission.get('feedback_sent', False) or submission.get('status') in ['reviewed', 'approved']:
@@ -570,13 +573,13 @@ def assignments_list():
         subjects[subject]['assignments'].append(a)
         subjects[subject]['total'] += 1
         
-        # Check if student has submitted
-        submission = Submission.find_one({
-            'assignment_id': a['assignment_id'],
-            'student_id': session['student_id']
-        })
+        # Check if student has submitted (use latest so resubmission after rejection counts)
+        submission = Submission.find_one(
+            {'assignment_id': a['assignment_id'], 'student_id': session['student_id']},
+            sort=[('submitted_at', -1), ('created_at', -1)]
+        )
         
-        if submission:
+        if submission and submission.get('status') != 'rejected':
             # Check if feedback has been received
             if submission.get('feedback_sent', False) or submission.get('status') == 'reviewed':
                 subjects[subject]['feedback'] += 1
@@ -610,22 +613,22 @@ def assignments_by_subject(subject):
     # Count submitted assignments
     submitted_count = 0
     
-    # Add submission status and teacher info for each
+    # Add submission status and teacher info for each (use latest submission so resubmission after rejection shows new status)
     for a in assignments:
-        submission = Submission.find_one({
-            'assignment_id': a['assignment_id'],
-            'student_id': session['student_id']
-        })
+        submission = Submission.find_one(
+            {'assignment_id': a['assignment_id'], 'student_id': session['student_id']},
+            sort=[('submitted_at', -1), ('created_at', -1)]
+        )
         a['submission'] = submission
         
-        # Determine status for display
+        # Determine status for display from latest submission
         if not submission:
             a['status_display'] = 'Not Submitted'
             a['status_class'] = 'secondary'
         elif submission.get('status') == 'rejected':
             a['status_display'] = 'Rejected'
             a['status_class'] = 'danger'
-            submitted_count += 1  # Rejected still counts as submitted
+            submitted_count += 1  # Rejected still counts as submitted (can resubmit)
         elif submission.get('status') in ['submitted', 'ai_reviewed']:
             a['status_display'] = 'Pending Review'
             a['status_class'] = 'warning'
@@ -3711,14 +3714,23 @@ def teacher_submissions():
                 student_rows = []
             else:
                 all_students = _get_students_for_assignment(selected_assignment, session['teacher_id'])
-                submissions_for_assignment = list(Submission.find({
-                    'assignment_id': assignment_filter
-                }))
-                sub_by_student = {s['student_id']: s for s in submissions_for_assignment}
+                # Latest submission per student (so resubmit or manual submission after rejection shows current status, not Rejected)
+                submissions_for_assignment = list(Submission.find(
+                    {'assignment_id': assignment_filter}
+                ).sort('submitted_at', -1))
+                sub_by_student = {}
+                for s in submissions_for_assignment:
+                    sid = s['student_id']
+                    if sid not in sub_by_student:
+                        sub_by_student[sid] = s
                 total_marks = float(selected_assignment.get('total_marks', 100) or 100)
                 for student in sorted(all_students, key=lambda x: x.get('name', '')):
                     sub = sub_by_student.get(student['student_id'])
                     status = (sub.get('status') or 'submitted') if sub else 'not_submitted'
+                    # Don't show "Rejected" for manual submissions or when student has resubmitted (we use latest only).
+                    # Treat manual+rejected as pending so teacher sees "Pending Review" and can still review.
+                    if sub and sub.get('submitted_via') == 'manual' and status == 'rejected':
+                        status = 'ai_reviewed'
                     percentage = 0
                     final_marks = None
                     if sub and sub.get('final_marks') is not None:
