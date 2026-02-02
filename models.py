@@ -206,8 +206,8 @@ class Assignment:
 
 class Submission:
     @staticmethod
-    def find_one(query):
-        return db.db.submissions.find_one(query)
+    def find_one(query, **kwargs):
+        return db.db.submissions.find_one(query, **kwargs)
     
     @staticmethod
     def find(query):
