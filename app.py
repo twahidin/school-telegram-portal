@@ -2308,12 +2308,15 @@ def assignment_summary(assignment_id):
     pass_rate = (pass_count / len(scores) * 100) if scores else 0
     
     # For no-marks mode (standard only): correct (100%), incorrect (0%), partial (else)
+    # Use same percentage as student rows so summary counts match the table.
     award_marks = assignment.get('award_marks', True)
     no_marks_mode = assignment.get('marking_type') == 'standard' and not award_marks
     correct_count = partial_count = incorrect_count = 0
-    if no_marks_mode and total_marks > 0:
-        for s in scores:
-            pct = (s / total_marks * 100)
+    if no_marks_mode:
+        # Use a denominator when total_marks is 0 so we can still classify from final_marks
+        denom = total_marks if total_marks > 0 else 100.0
+        for s in submissions:
+            _, pct = _submission_display_marks(s, denom)
             if pct >= 99.9:
                 correct_count += 1
             elif pct <= 0.01:
