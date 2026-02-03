@@ -1,12 +1,11 @@
 """
 RAG (Retrieval-Augmented Generation) service for storing and querying textbook content
 per module tree. Enables the learning agent to ground responses in uploaded textbook PDFs.
+
+Uses Pinecone (hosted vector DB) to avoid memory issues on Railway/limited environments.
 """
 
 import os
-
-# Disable ChromaDB anonymized telemetry to avoid PostHog errors in logs (e.g. capture() argument mismatch)
-os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
 import re
 import io
 import logging
@@ -19,8 +18,11 @@ logger = logging.getLogger(__name__)
 CHUNK_SIZE = 800
 CHUNK_OVERLAP = 150
 MAX_CHUNKS_QUERY = 5
-# Add to ChromaDB in batches to avoid OOM on large PDFs (e.g. Railway)
 INGEST_BATCH_SIZE = 50
+
+# OpenAI embedding model (1536 dimensions)
+EMBEDDING_MODEL = "text-embedding-3-small"
+EMBEDDING_DIMENSION = 1536
 
 
 def _extract_text_from_pdf(pdf_bytes: bytes) -> str:
@@ -64,41 +66,56 @@ def _chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OV
     return [c for c in chunks if c]
 
 
-def _get_embedding_function():
-    """Return OpenAI embedding function for ChromaDB if available."""
+def _get_openai_client():
+    """Return OpenAI client if API key is available."""
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        return None
     try:
-        import chromadb.utils.embedding_functions as ef
-        api_key = os.getenv("OPENAI_API_KEY", "").strip()
-        if not api_key:
-            return None
-        # ChromaDB version compatibility: newer uses model_name, older may only accept api_key
-        try:
-            return ef.OpenAIEmbeddingFunction(api_key=api_key, model_name="text-embedding-3-small")
-        except TypeError:
-            return ef.OpenAIEmbeddingFunction(api_key=api_key)
+        from openai import OpenAI
+        return OpenAI(api_key=api_key)
     except Exception as e:
-        logger.warning("OpenAI embedding function not available: %s", e)
+        logger.warning("OpenAI client not available: %s", e)
         return None
 
 
-def _get_chroma_client():
-    """Return persistent ChromaDB client. Data stored under data/chromadb."""
+def _get_embeddings(texts: List[str], openai_client) -> List[List[float]]:
+    """Get embeddings for a list of texts using OpenAI."""
+    if not texts:
+        return []
     try:
-        import chromadb
-        from chromadb.config import Settings
-    except ImportError:
-        logger.warning("chromadb not installed; run: pip install chromadb")
+        response = openai_client.embeddings.create(
+            model=EMBEDDING_MODEL,
+            input=texts,
+        )
+        return [item.embedding for item in response.data]
+    except Exception as e:
+        logger.error("Error getting embeddings: %s", e)
+        return []
+
+
+def _get_pinecone_index():
+    """Return Pinecone index if configured, else None."""
+    api_key = os.getenv("PINECONE_API_KEY", "").strip()
+    index_name = os.getenv("PINECONE_INDEX_NAME", "").strip()
+    
+    if not api_key or not index_name:
         return None
-    data_dir = os.getenv("CHROMA_DATA_PATH", os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "chromadb"))
-    os.makedirs(data_dir, exist_ok=True)
-    return chromadb.PersistentClient(
-        path=data_dir,
-        settings=Settings(anonymized_telemetry=False),
-    )
+    
+    try:
+        from pinecone import Pinecone
+        pc = Pinecone(api_key=api_key)
+        return pc.Index(index_name)
+    except ImportError:
+        logger.warning("pinecone-client not installed; run: pip install pinecone-client")
+        return None
+    except Exception as e:
+        logger.warning("Pinecone not available: %s", e)
+        return None
 
 
-def _collection_name(module_id: str) -> str:
-    """ChromaDB collection name for a module's textbook. Sanitize for Chroma."""
+def _namespace_name(module_id: str) -> str:
+    """Pinecone namespace for a module's textbook. Sanitize for Pinecone."""
     safe = re.sub(r"[^a-zA-Z0-9_-]", "_", module_id)
     return f"textbook_{safe}"[:63]
 
@@ -110,7 +127,7 @@ def ingest_textbook(
     append: bool = True,
 ) -> Dict[str, Any]:
     """
-    Ingest a textbook PDF for a module tree: extract text, chunk, embed, store in ChromaDB.
+    Ingest a textbook PDF for a module tree: extract text, chunk, embed, store in Pinecone.
     By default appends to existing content so you can upload chapters one at a time.
 
     Args:
@@ -122,12 +139,12 @@ def ingest_textbook(
     Returns:
         Dict with success, chunk_count (this upload), total_chunk_count (total in RAG), error.
     """
-    client = _get_chroma_client()
-    if not client:
-        return {"success": False, "error": "Vector store not available (install chromadb)."}
+    index = _get_pinecone_index()
+    if not index:
+        return {"success": False, "error": "Vector store not available (set PINECONE_API_KEY and PINECONE_INDEX_NAME)."}
 
-    emb_fn = _get_embedding_function()
-    if not emb_fn:
+    openai_client = _get_openai_client()
+    if not openai_client:
         return {"success": False, "error": "Embeddings not available (set OPENAI_API_KEY)."}
 
     text = _extract_text_from_pdf(pdf_bytes)
@@ -138,38 +155,61 @@ def ingest_textbook(
     if not chunks:
         return {"success": False, "error": "No text chunks produced from PDF."}
 
-    coll_name = _collection_name(module_id)
+    namespace = _namespace_name(module_id)
+    upload_title = (title or "Textbook").strip()[:200]
+
     try:
+        # Delete existing content if not appending
         if not append:
             try:
-                client.delete_collection(coll_name)
+                index.delete(delete_all=True, namespace=namespace)
             except Exception:
                 pass
-        try:
-            collection = client.get_collection(name=coll_name, embedding_function=emb_fn)
-        except Exception:
-            collection = client.create_collection(
-                name=coll_name,
-                embedding_function=emb_fn,
-                metadata={"hnsw:space": "cosine"},
-            )
-        upload_title = (title or "Textbook").strip()[:200]
-        # Add in batches to avoid OOM on large PDFs (e.g. Railway limited memory)
+
+        # Process in batches
         batch_size = INGEST_BATCH_SIZE
+        total_upserted = 0
+        
         for start in range(0, len(chunks), batch_size):
             end = min(start + batch_size, len(chunks))
             batch_chunks = chunks[start:end]
-            batch_ids = [str(uuid.uuid4()) for _ in batch_chunks]
-            batch_metadatas = [
-                {"page_chunk": start + i + 1, "batch_chunks": len(chunks), "upload_title": upload_title}
-                for i in range(len(batch_chunks))
-            ]
-            collection.add(ids=batch_ids, documents=batch_chunks, metadatas=batch_metadatas)
-        total = collection.count()
+            
+            # Get embeddings for this batch
+            embeddings = _get_embeddings(batch_chunks, openai_client)
+            if not embeddings or len(embeddings) != len(batch_chunks):
+                return {"success": False, "error": "Failed to generate embeddings for chunks."}
+            
+            # Prepare vectors for Pinecone
+            vectors = []
+            for i, (chunk, embedding) in enumerate(zip(batch_chunks, embeddings)):
+                vector_id = str(uuid.uuid4())
+                vectors.append({
+                    "id": vector_id,
+                    "values": embedding,
+                    "metadata": {
+                        "text": chunk,
+                        "page_chunk": start + i + 1,
+                        "total_chunks": len(chunks),
+                        "upload_title": upload_title,
+                    }
+                })
+            
+            # Upsert to Pinecone
+            index.upsert(vectors=vectors, namespace=namespace)
+            total_upserted += len(vectors)
+
+        # Get total count in namespace
+        try:
+            stats = index.describe_index_stats()
+            ns_stats = stats.namespaces.get(namespace, {})
+            total_count = getattr(ns_stats, 'vector_count', total_upserted)
+        except Exception:
+            total_count = total_upserted
+
         return {
             "success": True,
             "chunk_count": len(chunks),
-            "total_chunk_count": total,
+            "total_chunk_count": total_count,
             "title": title or "Textbook",
         }
     except Exception as e:
@@ -196,30 +236,41 @@ def query_textbook(
     if not query or not query.strip():
         return {"success": True, "chunks": []}
 
-    client = _get_chroma_client()
-    if not client:
+    index = _get_pinecone_index()
+    if not index:
         return {"success": False, "chunks": [], "error": "Vector store not available."}
 
-    emb_fn = _get_embedding_function()
-    if not emb_fn:
+    openai_client = _get_openai_client()
+    if not openai_client:
         return {"success": False, "chunks": [], "error": "Embeddings not available."}
 
-    coll_name = _collection_name(module_id)
-    try:
-        collection = client.get_collection(name=coll_name, embedding_function=emb_fn)
-    except Exception:
-        return {"success": True, "chunks": []}
+    namespace = _namespace_name(module_id)
 
     try:
-        results = collection.query(query_texts=[query.strip()], n_results=min(k, 10))
-        if not results or not results.get("documents") or not results["documents"][0]:
+        # Get query embedding
+        embeddings = _get_embeddings([query.strip()], openai_client)
+        if not embeddings:
+            return {"success": False, "chunks": [], "error": "Failed to generate query embedding."}
+        
+        query_embedding = embeddings[0]
+
+        # Query Pinecone
+        results = index.query(
+            vector=query_embedding,
+            top_k=min(k, 10),
+            namespace=namespace,
+            include_metadata=True,
+        )
+
+        if not results.matches:
             return {"success": True, "chunks": []}
-        docs = results["documents"][0]
-        metadatas = (results.get("metadatas") or [[]])[0]
+
         chunks = []
-        for i, doc in enumerate(docs):
-            meta = metadatas[i] if i < len(metadatas) else {}
-            chunks.append({"content": doc, "metadata": meta})
+        for match in results.matches:
+            metadata = match.metadata or {}
+            content = metadata.pop("text", "")
+            chunks.append({"content": content, "metadata": metadata})
+
         return {"success": True, "chunks": chunks}
     except Exception as e:
         logger.warning("Error querying textbook for module %s: %s", module_id, e)
@@ -228,25 +279,29 @@ def query_textbook(
 
 def textbook_has_content(module_id: str) -> bool:
     """Return True if this module has a textbook ingested in the vector store."""
-    client = _get_chroma_client()
-    if not client:
+    index = _get_pinecone_index()
+    if not index:
         return False
-    coll_name = _collection_name(module_id)
+    
+    namespace = _namespace_name(module_id)
     try:
-        coll = client.get_collection(coll_name)
-        return coll.count() > 0
+        stats = index.describe_index_stats()
+        ns_stats = stats.namespaces.get(namespace, {})
+        count = getattr(ns_stats, 'vector_count', 0)
+        return count > 0
     except Exception:
         return False
 
 
 def delete_textbook(module_id: str) -> Dict[str, Any]:
-    """Remove textbook collection for this module."""
-    client = _get_chroma_client()
-    if not client:
+    """Remove textbook content for this module."""
+    index = _get_pinecone_index()
+    if not index:
         return {"success": False, "error": "Vector store not available."}
-    coll_name = _collection_name(module_id)
+    
+    namespace = _namespace_name(module_id)
     try:
-        client.delete_collection(coll_name)
+        index.delete(delete_all=True, namespace=namespace)
         return {"success": True}
     except Exception as e:
         logger.warning("Error deleting textbook for module %s: %s", module_id, e)

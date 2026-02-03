@@ -1,4 +1,4 @@
 # Optional: install for textbook RAG (upload PDF per module, AI tutor queries it).
 # pip install -r requirements-rag.txt
-# Not included in main requirements because chromadb can fail in minimal build environments (e.g. Railway/Nixpacks).
-chromadb>=0.4.0
+# Now uses Pinecone (hosted) instead of ChromaDB to avoid memory issues on Railway.
+pinecone-client>=3.0.0

@@ -82,18 +82,37 @@ This guide walks you through deploying the School Portal to Railway with MongoDB
 | `WEB_URL` | Your Railway app URL | `https://your-app.up.railway.app` |
 | `ANTHROPIC_API_KEY` | (Optional) For AI marking | `sk-ant-api03-...` |
 | `OPENAI_API_KEY` | (Optional) For textbook RAG embeddings | `sk-...` |
+| `PINECONE_API_KEY` | (Optional) For textbook RAG vector storage | `pcsk_...` |
+| `PINECONE_INDEX_NAME` | (Optional) Your Pinecone index name | `school-portal` |
 
-### Textbook RAG (ChromaDB) on Railway
+### Textbook RAG (Pinecone) on Railway
 
-The app can store a textbook PDF per module (RAG) so the AI tutor can answer from it. To enable this on Railway:
+The app can store a textbook PDF per module (RAG) so the AI tutor can answer from it. This uses **Pinecone** (a hosted vector database) to avoid memory issues on Railway.
 
-1. **Build**: The repo includes `nixpacks.toml` so Nixpacks installs GCC/gnumake before `pip install`. That allows `chromadb` to compile and the build to succeed. No extra step needed.
-2. **Env**: Set `OPENAI_API_KEY` in your web service variables (used for embedding textbook chunks). Without it, textbook upload will show "Embeddings not available (set OPENAI_API_KEY)".
-3. **Storage (optional, for persistent textbooks)**: ChromaDB data is written under `data/chromadb` by default. On Railway the filesystem is ephemeral, so textbook data may be lost on redeploy. To persist it using a [Railway Volume](https://docs.railway.app/guides/volumes):
-   - In your project, create a **Volume** (e.g. via **⌘K** or right‑click on the canvas → Add Volume) and attach it to your **web service**.
-   - When Railway asks for the **mount path**, choose a path where the volume will appear in the container, e.g. **`/data`**. (Railway will then set `RAILWAY_VOLUME_MOUNT_PATH` to this value automatically.)
-   - In your web service → **Variables**, add **`CHROMA_DATA_PATH`** = **`/data/chromadb`** (i.e. the same path you used as the mount path, plus `/chromadb`). The app will then store ChromaDB data on the volume, and it will survive redeploys.
-   - If you mounted the volume at a different path (e.g. `/app/data`), set `CHROMA_DATA_PATH` to that path plus `/chromadb` (e.g. `/app/data/chromadb`).
+**Setup steps:**
+
+1. **Create a free Pinecone account** at [pinecone.io](https://www.pinecone.io/)
+
+2. **Create an index:**
+   - In the Pinecone console, click **Create Index**
+   - **Name**: e.g. `school-portal` (you'll use this as `PINECONE_INDEX_NAME`)
+   - **Dimensions**: `1536` (required for OpenAI text-embedding-3-small)
+   - **Metric**: `cosine`
+   - **Serverless** (free tier available) or **Pod-based**
+   - Click **Create Index**
+
+3. **Get your API key:**
+   - In Pinecone console → **API Keys** → copy your key
+
+4. **Set environment variables** in Railway:
+   - `PINECONE_API_KEY` = your Pinecone API key
+   - `PINECONE_INDEX_NAME` = your index name (e.g. `school-portal`)
+   - `OPENAI_API_KEY` = your OpenAI key (for generating embeddings)
+
+**Notes:**
+- Pinecone free tier includes 1 index with 100K vectors (plenty for textbooks)
+- Data persists in Pinecone cloud (no Railway volume needed)
+- Each module's textbook is stored in a separate namespace within the index
 
 ### To Link MongoDB:
 1. Click on your web service
@@ -257,6 +276,33 @@ Railway offers:
 - **Pro Plan**: $20/month
 
 MongoDB on Railway is included in these plans based on usage.
+
+---
+
+## Auto-deploy from GitHub (pushes not triggering deploys)
+
+If pushing to GitHub does **not** trigger a Railway deploy:
+
+1. **Confirm the service is from GitHub**
+   - In Railway, open your **web service** (or the service you expect to deploy).
+   - In **Settings**, check that **Source** is **GitHub** and the correct repo/branch is shown.
+
+2. **Turn on deployments from GitHub**
+   - In the service, go to **Settings** → **Source** (or **Deploy**).
+   - Ensure **Deploy on push** (or **Auto-deploy**) is **enabled** for your branch (e.g. `main`).
+
+3. **Reconnect GitHub if needed**
+   - If the repo was connected long ago or you see "Disconnected" / webhook errors:
+     - **Settings** → **Source** → **Disconnect**, then **Connect Repo** again and choose the same GitHub repo and branch.
+   - Railway will reinstall its GitHub App / webhook; new pushes should trigger builds.
+
+4. **Check branch**
+   - Railway only auto-deploys the branch you connected (usually `main`). Pushes to other branches will not deploy unless you add them or use a different service.
+
+5. **Verify in GitHub**
+   - Repo → **Settings** → **Integrations** (or **Webhooks**): you should see **Railway** or a webhook pointing to Railway. If it’s missing, reconnect the repo from Railway (step 3).
+
+After fixing, push a small commit to `main`; a new deployment should appear in Railway’s **Deployments** tab.
 
 ---
 

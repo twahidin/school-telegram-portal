@@ -1,11 +1,8 @@
-# Disable ChromaDB telemetry before any import can load chromadb (avoids PostHog capture() errors)
-import os
-os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
-
 from flask import Flask, render_template, request, jsonify, session, redirect, url_for, send_file, Response
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from functools import wraps
+import os
 import io
 from datetime import datetime, timedelta, timezone
 from models import db, Student, Teacher, Message, Class, TeachingGroup, Assignment, Submission, Module, ModuleResource, ModuleTextbook, StudentModuleMastery, StudentLearningProfile, LearningSession

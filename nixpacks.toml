@@ -1,4 +1,2 @@
-# Build deps for ChromaDB (textbook RAG). ChromaDB's hnswlib needs GCC/C++ to compile.
-# Without this, pip install chromadb can fail on Railway/Nixpacks.
-[phases.setup]
-nixPkgs = ["...", "gcc", "gnumake"]
+# Nixpacks build configuration for Railway
+# No special build dependencies needed (Pinecone is a hosted service, no native compilation)
