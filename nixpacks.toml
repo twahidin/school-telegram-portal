@@ -1,0 +1,4 @@
+# Build deps for ChromaDB (textbook RAG). ChromaDB's hnswlib needs GCC/C++ to compile.
+# Without this, pip install chromadb can fail on Railway/Nixpacks.
+[phases.setup]
+nixPkgs = ["...", "gcc", "gnumake"]

@@ -81,6 +81,15 @@ This guide walks you through deploying the School Portal to Railway with MongoDB
 | `ENCRYPTION_KEY` | Fernet key for API key encryption | Generate with: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
 | `WEB_URL` | Your Railway app URL | `https://your-app.up.railway.app` |
 | `ANTHROPIC_API_KEY` | (Optional) For AI marking | `sk-ant-api03-...` |
+| `OPENAI_API_KEY` | (Optional) For textbook RAG embeddings | `sk-...` |
+
+### Textbook RAG (ChromaDB) on Railway
+
+The app can store a textbook PDF per module (RAG) so the AI tutor can answer from it. To enable this on Railway:
+
+1. **Build**: The repo includes `nixpacks.toml` so Nixpacks installs GCC/gnumake before `pip install`. That allows `chromadb` to compile and the build to succeed. No extra step needed.
+2. **Env**: Set `OPENAI_API_KEY` in your web service variables (used for embedding textbook chunks). Without it, textbook upload will show "Embeddings not available (set OPENAI_API_KEY)".
+3. **Storage**: ChromaDB data is written under `data/chromadb`. On Railway the filesystem is ephemeral by default, so textbook data may be lost on redeploy unless you attach a [Railway Volume](https://docs.railway.app/reference/volumes) and set `CHROMA_DATA_PATH` to a path inside that volume.
 
 ### To Link MongoDB:
 1. Click on your web service
