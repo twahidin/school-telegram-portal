@@ -22,7 +22,7 @@
                 <li class="nav-item">
                     <a class="nav-link {{ 'active' if active_nav == 'submissions' else '' }}" href="{{ url_for('teacher_submissions') }}">
                         <i class="bi bi-inbox me-1"></i>Submissions
-                        {% if (stats.pending_submissions|default(0)) > 0 %}
+                        {% if stats is defined and (stats.pending_submissions|default(0)) > 0 %}
                         <span class="badge bg-danger">{{ stats.pending_submissions }}</span>
                         {% endif %}
                     </a>
@@ -45,7 +45,7 @@
                 <li class="nav-item">
                     <a class="nav-link {{ 'active' if active_nav == 'messages' else '' }}" href="{{ url_for('teacher_messages') }}">
                         <i class="bi bi-chat-dots me-1"></i>Messages
-                        {% if (stats.unread_messages|default(0)) > 0 %}
+                        {% if stats is defined and (stats.unread_messages|default(0)) > 0 %}
                         <span class="badge bg-danger">{{ stats.unread_messages }}</span>
                         {% endif %}
                     </a>
