@@ -126,10 +126,12 @@ def login_required(f):
     return decorated_function
 
 def teacher_required(f):
-    """Require teacher login"""
+    """Require teacher login. For /teacher/api/* return JSON 401 so fetch() gets JSON, not redirect HTML."""
     @wraps(f)
     def decorated_function(*args, **kwargs):
         if 'teacher_id' not in session:
+            if request.path.startswith('/teacher/api/'):
+                return jsonify({'success': False, 'error': 'Session expired. Please refresh the page.'}), 401
             return redirect(url_for('teacher_login'))
         return f(*args, **kwargs)
     return decorated_function
@@ -2429,7 +2431,8 @@ def get_student_statuses():
     """Get submission statuses for students by assignment"""
     try:
         assignment_id = request.args.get('assignment_id')
-        student_ids = request.args.getlist('student_ids[]')
+        # Support both student_ids[] (JS) and student_ids (some proxies normalize)
+        student_ids = request.args.getlist('student_ids[]') or request.args.getlist('student_ids')
         
         if not assignment_id or not student_ids:
             return jsonify({'success': False, 'error': 'Missing parameters'}), 400

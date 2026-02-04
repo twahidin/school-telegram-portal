@@ -241,22 +241,22 @@
             params.append('assignment_id', assignmentId);
             studentIds.forEach(id => params.append('student_ids[]', id));
             
-            const response = await fetch(`/teacher/api/student-statuses?${params.toString()}`);
+            const response = await fetch(`/teacher/api/student-statuses?${params.toString()}`, { credentials: 'same-origin' });
             const text = await response.text();
             let data = null;
             try {
-                data = text ? JSON.parse(text) : {};
+                data = (text && text.trim().startsWith('{')) ? JSON.parse(text) : {};
             } catch (parseErr) {
-                console.error('Invalid JSON from student-statuses:', parseErr);
+                console.error('Invalid JSON from student-statuses:', parseErr, 'Response:', text ? text.slice(0, 200) : '');
                 document.querySelectorAll('.student-status').forEach(cell => {
-                    cell.innerHTML = '<span class="badge bg-danger">Error loading</span>';
+                    cell.innerHTML = '<span class="badge bg-danger" title="Server returned invalid response">Error loading</span>';
                 });
                 return;
             }
             if (!response.ok) {
-                const errMsg = (data && data.error) ? data.error : 'Error loading';
+                const errMsg = (data && data.error) ? data.error : (response.status === 401 ? 'Session expired. Please refresh the page.' : 'Error loading');
                 document.querySelectorAll('.student-status').forEach(cell => {
-                    cell.innerHTML = '<span class="badge bg-danger">' + (errMsg.length > 30 ? 'Error loading' : errMsg) + '</span>';
+                    cell.innerHTML = '<span class="badge bg-danger">' + (errMsg.length > 40 ? 'Error loading' : errMsg) + '</span>';
                 });
                 return;
             }
