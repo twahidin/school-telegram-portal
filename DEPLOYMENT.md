@@ -117,6 +117,11 @@ The app can store a textbook PDF per module (RAG) so the AI tutor can answer fro
 - **PDF extraction uses PyPDF2 by default** - lightweight and works on Railway. Best for text-based PDFs (digital documents, typed content).
 - **502 / Upload failed / SIGKILL (OOM):** If you get worker SIGKILL, try a smaller PDF (e.g. one chapter, < 5 MB) or upgrade Railway memory.
 - **Anthropic Vision extraction (NOT recommended for Railway):** Setting `USE_ANTHROPIC_VISION_FOR_PDF=true` enables image-based extraction for scanned PDFs, BUT this uses `pdf2image` which is very memory-intensive and will likely cause OOM on Railway's limited memory. Only enable this if you have upgraded Railway resources or are running locally. Note: AI marking (reading student handwriting) is separate and works fine - it sends images directly to Claude without local conversion.
+- **Upload pre-computed embeddings (recommended if PDF upload OOMs):** Generate embeddings on your machine, then upload the file to Railway so no embedding runs on the server.
+  1. On your computer (with `OPENAI_API_KEY` set):  
+     `python scripts/generate_textbook_embeddings.py --pdf path/to/textbook.pdf --output textbook_embeddings.jsonl`
+  2. In the app: open the module → **Textbook (RAG)** → under "Or upload pre-computed embeddings", choose the `.jsonl` file and click **Upload embeddings**.
+  3. File format: JSONL with one object per line: `{"text": "chunk text...", "embedding": [float, ...]}`. Embeddings must be 1536-dimensional (OpenAI `text-embedding-3-small`). You can also upload a single JSON array of such objects (`.json`).
 
 ### To Link MongoDB:
 1. Click on your web service

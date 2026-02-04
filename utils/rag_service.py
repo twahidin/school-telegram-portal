@@ -414,6 +414,108 @@ def ingest_textbook(
         return {"success": False, "error": str(e), "chunk_count": 0, "total_chunk_count": 0}
 
 
+def ingest_precomputed_embeddings(
+    module_id: str,
+    items: List[Dict[str, Any]],
+    title: Optional[str] = None,
+    append: bool = True,
+) -> Dict[str, Any]:
+    """
+    Ingest pre-computed (text, embedding) pairs into Pinecone for a module.
+    No OpenAI call—use this when embeddings were generated outside Railway (e.g. locally)
+    to avoid OOM on memory-constrained deploys.
+
+    Args:
+        module_id: Root module_id of the module tree.
+        items: List of {"text": str, "embedding": [float, ...]} (embedding must be 1536-dim).
+        title: Optional display name for this upload.
+        append: If True (default), add to existing content. If False, replace all.
+
+    Returns:
+        Dict with success, chunk_count, total_chunk_count, error.
+    """
+    index, pinecone_err = _get_pinecone_index()
+    if not index:
+        if pinecone_err == "index_not_found":
+            return {"success": False, "error": _pinecone_index_not_found_message()}
+        return {"success": False, "error": "Vector store not available (set PINECONE_API_KEY and PINECONE_INDEX_NAME)."}
+
+    if not items:
+        return {"success": False, "error": "No items provided."}
+
+    # Validate first item
+    first = items[0]
+    if not isinstance(first.get("embedding"), (list, tuple)) or not first.get("text"):
+        return {"success": False, "error": "Each item must have 'text' (str) and 'embedding' (list of 1536 floats)."}
+    emb = first["embedding"]
+    if len(emb) != EMBEDDING_DIMENSION:
+        return {
+            "success": False,
+            "error": f"Embedding dimension must be {EMBEDDING_DIMENSION} (OpenAI text-embedding-3-small). Got {len(emb)}.",
+        }
+
+    namespace = _namespace_name(module_id)
+    upload_title = (title or "Textbook").strip()[:200]
+    batch_size = min(INGEST_BATCH_SIZE * 2, 50)  # Slightly larger batches since no API call
+
+    try:
+        if not append:
+            try:
+                index.delete(delete_all=True, namespace=namespace)
+            except Exception:
+                pass
+
+        total_upserted = 0
+        total_items = len(items)
+        num_batches = (total_items + batch_size - 1) // batch_size
+        logger.info(f"Ingesting {total_items} pre-computed vectors in {num_batches} batches")
+
+        for start in range(0, total_items, batch_size):
+            end = min(start + batch_size, total_items)
+            batch = items[start:end]
+            vectors = []
+            for i, item in enumerate(batch):
+                text = item.get("text") or ""
+                embedding = item.get("embedding")
+                if not text or not isinstance(embedding, (list, tuple)) or len(embedding) != EMBEDDING_DIMENSION:
+                    return {"success": False, "error": f"Invalid item at index {start + i}: need 'text' and 1536-dim 'embedding'."}
+                vectors.append({
+                    "id": str(uuid.uuid4()),
+                    "values": list(embedding),
+                    "metadata": {
+                        "text": text[:100_000],
+                        "page_chunk": start + i + 1,
+                        "total_chunks": total_items,
+                        "upload_title": upload_title,
+                    },
+                })
+            index.upsert(vectors=vectors, namespace=namespace)
+            total_upserted += len(vectors)
+            logger.info(f"Precomputed ingest: {total_upserted}/{total_items} vectors uploaded")
+            del batch, vectors
+            gc.collect()
+
+        try:
+            stats = index.describe_index_stats()
+            ns_stats = stats.namespaces.get(namespace, {})
+            total_count = getattr(ns_stats, "vector_count", total_upserted)
+        except Exception:
+            total_count = total_upserted
+
+        return {
+            "success": True,
+            "chunk_count": total_upserted,
+            "total_chunk_count": total_count,
+            "title": title or "Textbook",
+        }
+    except Exception as e:
+        err_str = str(e).lower()
+        if "404" in err_str or "not found" in err_str:
+            return {"success": False, "error": _pinecone_index_not_found_message(), "chunk_count": 0, "total_chunk_count": 0}
+        logger.exception("Error ingesting precomputed embeddings for module %s: %s", module_id, e)
+        return {"success": False, "error": str(e), "chunk_count": 0, "total_chunk_count": 0}
+
+
 def query_textbook(
     module_id: str,
     query: str,

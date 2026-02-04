@@ -75,6 +75,25 @@
                     </button>
                 </form>
                 <p class="form-text small mb-0">Upload as many PDFs as you like—each upload is added to the RAG (e.g. chapter by chapter). Requires OPENAI_API_KEY.</p>
+                <hr class="my-3">
+                <p class="small text-muted mb-2"><strong>Or upload pre-computed embeddings</strong> (if PDF upload fails on Railway due to memory):</p>
+                <form id="textbook-embeddings-form" enctype="multipart/form-data">
+                    <div class="mb-2">
+                        <label class="form-label small">Title (optional)</label>
+                        <input type="text" class="form-control form-control-sm" id="textbook-embeddings-title" name="title" placeholder="e.g. Chapter 1">
+                    </div>
+                    <div class="mb-2">
+                        <input type="file" class="form-control form-control-sm" id="textbook-embeddings-file" name="embeddings_file" accept=".json,.jsonl" required>
+                    </div>
+                    <div class="mb-2 form-check">
+                        <input type="checkbox" class="form-check-input" id="textbook-embeddings-append" name="append" checked>
+                        <label class="form-check-label small" for="textbook-embeddings-append">Append to existing (uncheck to replace)</label>
+                    </div>
+                    <button type="submit" class="btn btn-outline-primary btn-sm" id="textbook-embeddings-btn">
+                        <i class="bi bi-file-earmark-arrow-up me-1"></i>Upload embeddings (.json / .jsonl)
+                    </button>
+                </form>
+                <p class="form-text small mb-0">Generate the file locally with <code>scripts/generate_textbook_embeddings.py</code> (see DEPLOYMENT.md).</p>
             </div>
             <div id="textbook-delete-area" style="display: none;">
                 <button type="button" class="btn btn-outline-danger btn-sm" id="textbook-delete-btn">
@@ -650,6 +669,41 @@
                 btn.disabled = false;
                 textbookUploadArea.style.opacity = '';
                 textbookUploadArea.style.pointerEvents = '';
+            });
+    });
+
+    document.getElementById('textbook-embeddings-form') && document.getElementById('textbook-embeddings-form').addEventListener('submit', function(e) {
+        e.preventDefault();
+        const file = document.getElementById('textbook-embeddings-file').files[0];
+        if (!file) { showTextbookMessage('Please select a .json or .jsonl file', true); return; }
+        const formData = new FormData();
+        formData.append('embeddings_file', file);
+        formData.append('title', document.getElementById('textbook-embeddings-title').value.trim());
+        formData.append('append', document.getElementById('textbook-embeddings-append').checked ? 'true' : 'false');
+        const btn = document.getElementById('textbook-embeddings-btn');
+        btn.disabled = true;
+        hideTextbookMessage();
+        textbookStatus.innerHTML = '<span class="d-inline-flex align-items-center"><span class="spinner-border spinner-border-sm text-primary me-2"></span><strong>Uploading embeddings…</strong></span>';
+        textbookUploadArea.style.opacity = '0.6';
+        textbookUploadArea.style.pointerEvents = 'none';
+        fetch('/teacher/modules/' + encodeURIComponent(moduleId) + '/textbook/embeddings', { method: 'POST', body: formData })
+            .then(function(r) { return r.json().catch(function() { return {}; }); })
+            .then(function(d) {
+                if (d.success) {
+                    var msg = (d.total_chunk_count != null ? 'Added ' + (d.chunk_count || 0) + ' chunks; total ' + d.total_chunk_count + ' chunks.' : 'Uploaded ' + (d.chunk_count || 0) + ' chunks.');
+                    showTextbookMessage(msg);
+                    loadTextbookStatus();
+                    document.getElementById('textbook-embeddings-file').value = '';
+                } else {
+                    showTextbookMessage(d.error || 'Upload failed', true);
+                }
+            })
+            .catch(function() { showTextbookMessage('Network error', true); })
+            .finally(function() {
+                btn.disabled = false;
+                textbookUploadArea.style.opacity = '';
+                textbookUploadArea.style.pointerEvents = '';
+                loadTextbookStatus();
             });
     });
 

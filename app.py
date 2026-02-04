@@ -5935,6 +5935,90 @@ def module_textbook(module_id):
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/teacher/modules/<module_id>/textbook/embeddings', methods=['POST'])
+@teacher_required
+def module_textbook_embeddings(module_id):
+    """Upload pre-computed embeddings (JSON or JSONL) for RAG. No OpenAI call on Railway."""
+    if not _teacher_has_module_access(session['teacher_id']):
+        return jsonify({'error': 'Access denied'}), 403
+    root = Module.find_one({'module_id': module_id, 'teacher_id': session['teacher_id']})
+    if not root:
+        return jsonify({'error': 'Module not found'}), 404
+
+    if 'embeddings_file' not in request.files:
+        return jsonify({'error': 'No file provided. Use form field "embeddings_file".'}), 400
+    f = request.files['embeddings_file']
+    if not f or not f.filename:
+        return jsonify({'error': 'Please select an embeddings file (.json or .jsonl)'}), 400
+    fn = (f.filename or '').lower()
+    if not (fn.endswith('.json') or fn.endswith('.jsonl')):
+        return jsonify({'error': 'File must be .json or .jsonl (array of {"text": "...", "embedding": [float, ...]}).'}), 400
+
+    title = (request.form.get('title') or f.filename or 'Textbook').strip()[:200]
+    append = request.form.get('append', 'true').strip().lower() in ('1', 'true', 'yes')
+
+    try:
+        raw = f.read()
+        if len(raw) < 10:
+            return jsonify({'error': 'File is too small or empty'}), 400
+        # 50 MB max for embeddings file
+        if len(raw) > 50 * 1024 * 1024:
+            return jsonify({'error': 'Embeddings file must be 50 MB or smaller.'}), 400
+
+        items = []
+        if fn.endswith('.jsonl'):
+            import json as json_mod
+            for line in raw.decode('utf-8').splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    items.append(json_mod.loads(line))
+                except Exception as e:
+                    return jsonify({'error': f'Invalid JSONL line: {e}'}), 400
+        else:
+            import json as json_mod
+            try:
+                data = json_mod.loads(raw.decode('utf-8'))
+            except Exception as e:
+                return jsonify({'error': f'Invalid JSON: {e}'}), 400
+            if not isinstance(data, list):
+                return jsonify({'error': 'JSON must be an array of {"text": "...", "embedding": [...]}.'}), 400
+            items = data
+
+        if not items:
+            return jsonify({'error': 'No items in file.'}), 400
+
+        result = rag_service.ingest_precomputed_embeddings(module_id, items, title=title, append=append)
+        if not result.get('success'):
+            return jsonify({'error': result.get('error', 'Ingest failed')}), 500
+
+        total_chunks = result.get('total_chunk_count', result.get('chunk_count', 0))
+        ModuleTextbook.update_one(
+            {'module_id': module_id},
+            {
+                '$set': {
+                    'module_id': module_id,
+                    'name': title,
+                    'file_name': f.filename,
+                    'chunk_count': total_chunks,
+                    'updated_at': datetime.utcnow(),
+                },
+                '$inc': {'upload_count': 1},
+            },
+            upsert=True,
+        )
+        return jsonify({
+            'success': True,
+            'chunk_count': result.get('chunk_count', 0),
+            'total_chunk_count': total_chunks,
+            'name': title,
+        })
+    except Exception as e:
+        logger.exception("Error uploading embeddings: %s", e)
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/teacher/modules/<module_id>/mastery')
 @teacher_required
 def module_class_mastery(module_id):
