@@ -19,6 +19,20 @@ from typing import Optional, List, Dict, Any, Tuple
 
 logger = logging.getLogger(__name__)
 
+
+def _log_memory_usage(label: str = ""):
+    """Log current memory usage (helps debug OOM on Railway)."""
+    try:
+        import resource
+        # Get memory in MB
+        mem_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024 / 1024
+        # On macOS, ru_maxrss is in bytes; on Linux it's in KB
+        if mem_mb > 1000:  # Likely macOS (bytes)
+            mem_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024 / 1024 / 1024
+        logger.info(f"[MEMORY] {label}: ~{mem_mb:.1f} MB")
+    except Exception:
+        pass  # Don't fail if resource module unavailable
+
 # Chunking defaults (smaller = less memory on Railway's limited RAM)
 CHUNK_SIZE = 600  # Smaller chunks = less memory per batch
 CHUNK_OVERLAP = 100
@@ -263,6 +277,9 @@ def ingest_textbook(
     Returns:
         Dict with success, chunk_count (this upload), total_chunk_count (total in RAG), error.
     """
+    logger.info(f"=== Starting textbook ingest: {len(pdf_bytes)} bytes ===")
+    _log_memory_usage("Start of ingest")
+    
     index, pinecone_err = _get_pinecone_index()
     if not index:
         if pinecone_err == "index_not_found":
@@ -273,6 +290,8 @@ def ingest_textbook(
     if not openai_client:
         return {"success": False, "error": "Embeddings not available (set OPENAI_API_KEY)."}
 
+    _log_memory_usage("Before PDF extraction")
+    
     # PDF text extraction method selection
     # PyPDF2 (default): Low memory, works for text-based PDFs
     # Anthropic Vision (optional): Memory-intensive, better for scanned PDFs
@@ -290,10 +309,13 @@ def ingest_textbook(
         logger.info("PDF extraction: Using PyPDF2 (lightweight, recommended for Railway)")
         text = _extract_text_from_pdf(pdf_bytes)
     
+    _log_memory_usage("After PDF extraction")
+    
     # Free PDF bytes from memory immediately after extraction
     del pdf_bytes
     gc.collect()
-    logger.info(f"Extracted {len(text)} characters, freed PDF from memory")
+    _log_memory_usage("After freeing PDF bytes")
+    logger.info(f"Extracted {len(text)} characters")
     
     if not text or len(text.strip()) < 100:
         return {"success": False, "error": "Could not extract enough text from the PDF (may be image-only or corrupted)."}
@@ -302,6 +324,7 @@ def ingest_textbook(
     # Free full text after chunking
     del text
     gc.collect()
+    _log_memory_usage(f"After chunking ({len(chunks)} chunks)")
     
     if not chunks:
         return {"success": False, "error": "No text chunks produced from PDF."}
