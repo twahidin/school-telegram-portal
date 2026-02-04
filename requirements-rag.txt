@@ -1,4 +1,5 @@
 # Optional: install for textbook RAG (upload PDF per module, AI tutor queries it).
 # pip install -r requirements-rag.txt
 # Now uses Pinecone (hosted) instead of ChromaDB to avoid memory issues on Railway.
-pinecone-client>=3.0.0
+# Package was renamed from pinecone-client to pinecone.
+pinecone>=5.0.0

@@ -107,7 +107,7 @@ def _get_pinecone_index():
         pc = Pinecone(api_key=api_key)
         return pc.Index(index_name)
     except ImportError:
-        logger.warning("pinecone-client not installed; run: pip install pinecone-client")
+        logger.warning("pinecone not installed; run: pip install pinecone")
         return None
     except Exception as e:
         logger.warning("Pinecone not available: %s", e)
