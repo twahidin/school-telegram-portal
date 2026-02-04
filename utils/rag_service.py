@@ -18,11 +18,11 @@ from typing import Optional, List, Dict, Any, Tuple
 
 logger = logging.getLogger(__name__)
 
-# Chunking defaults
+# Chunking defaults (smaller batch = less memory on Railway)
 CHUNK_SIZE = 800
 CHUNK_OVERLAP = 150
 MAX_CHUNKS_QUERY = 5
-INGEST_BATCH_SIZE = 50
+INGEST_BATCH_SIZE = 20
 
 # OpenAI embedding model (1536 dimensions)
 EMBEDDING_MODEL = "text-embedding-3-small"
@@ -63,7 +63,7 @@ def _get_anthropic_client():
 
 def _extract_text_from_pdf_via_anthropic(pdf_bytes: bytes) -> str:
     """Extract text from PDF using Anthropic Vision (PDF → images → Claude).
-    Better for scanned PDFs, images, tables. Requires ANTHROPIC_API_KEY and pdf2image."""
+    Better for scanned PDFs, images, tables. Processes one page at a time to avoid OOM."""
     client = _get_anthropic_client()
     if not client:
         return ""
@@ -73,32 +73,37 @@ def _extract_text_from_pdf_via_anthropic(pdf_bytes: bytes) -> str:
     except ImportError:
         logger.warning("pdf2image or PIL not available for Anthropic Vision extraction")
         return ""
-    try:
-        images = convert_from_bytes(
-            pdf_bytes,
-            first_page=1,
-            last_page=min(MAX_PAGES_ANTHROPIC_VISION, 100),
-            dpi=150,
-        )
-    except Exception as e:
-        logger.error("Error converting PDF to images for Vision: %s", e)
-        return ""
-    if not images:
-        return ""
+    max_pages = min(MAX_PAGES_ANTHROPIC_VISION, 100)
     parts = []
-    for i, img in enumerate(images):
-        # Resize if very large to stay within API limits
+    for page_one_indexed in range(1, max_pages + 1):
+        try:
+            images = convert_from_bytes(
+                pdf_bytes,
+                first_page=page_one_indexed,
+                last_page=page_one_indexed,
+                dpi=100,
+            )
+        except Exception as e:
+            if page_one_indexed == 1:
+                logger.error("Error converting PDF to images for Vision: %s", e)
+            break
+        if not images:
+            break
+        img = images[0]
+        del images
         w, h = img.size
-        max_dim = 1600
+        max_dim = 1400
         if w > max_dim or h > max_dim:
             ratio = min(max_dim / w, max_dim / h)
             img = img.resize((int(w * ratio), int(h * ratio)), Image.LANCZOS)
         if img.mode in ("RGBA", "P"):
             img = img.convert("RGB")
         buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=85)
+        img.save(buf, format="JPEG", quality=80)
+        del img
         buf.seek(0)
         b64 = base64.b64encode(buf.read()).decode("utf-8")
+        del buf
         try:
             resp = client.messages.create(
                 model="claude-sonnet-4-5-20250929",
@@ -123,9 +128,9 @@ def _extract_text_from_pdf_via_anthropic(pdf_bytes: bytes) -> str:
             )
             text = (resp.content[0].text if resp.content else "").strip()
             if text:
-                parts.append(f"--- Page {i + 1} ---\n{text}")
+                parts.append(f"--- Page {page_one_indexed} ---\n{text}")
         except Exception as e:
-            logger.warning("Anthropic Vision extraction failed for page %s: %s", i + 1, e)
+            logger.warning("Anthropic Vision extraction failed for page %s: %s", page_one_indexed, e)
     return "\n\n".join(parts) if parts else ""
 
 

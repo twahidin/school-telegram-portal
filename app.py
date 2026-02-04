@@ -5901,7 +5901,7 @@ def module_textbook(module_id):
         if len(pdf_bytes) < 100:
             return jsonify({'error': 'File is too small or empty'}), 400
         # Limit size to reduce OOM risk on memory-constrained deploys (e.g. Railway)
-        max_textbook_mb = 15
+        max_textbook_mb = 8
         if len(pdf_bytes) > max_textbook_mb * 1024 * 1024:
             return jsonify({'error': f'PDF must be {max_textbook_mb} MB or smaller. Upload chapters separately.'}), 400
         result = rag_service.ingest_textbook(module_id, pdf_bytes, title=title, append=True)
