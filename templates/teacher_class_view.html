@@ -37,30 +37,32 @@
         </span>
     </div>
 
-    <!-- Assignment Filter Card -->
+    <!-- Assignment Filter Card: form submit loads statuses server-side (no API) -->
     <div class="card mb-4">
         <div class="card-body">
-            <div class="row align-items-center">
-                <div class="col-md-6">
-                    <label class="form-label fw-bold mb-2">
-                        <i class="bi bi-filter me-1"></i>View Assignment Status
-                    </label>
-                    <select class="form-select" id="assignment-filter">
-                        <option value="">-- Select an assignment --</option>
-                        {% for a in assignments %}
-                        <option value="{{ a.assignment_id }}">{{ a.title }} ({{ a.subject }})</option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <div class="col-md-6">
-                    <div class="d-flex gap-2 flex-wrap mt-3 mt-md-4">
-                        <span class="badge bg-warning text-dark"><i class="bi bi-clock me-1"></i>Pending Review</span>
-                        <span class="badge bg-info"><i class="bi bi-robot me-1"></i>AI Feedback Sent</span>
-                        <span class="badge bg-success"><i class="bi bi-check-circle me-1"></i>Returned</span>
-                        <span class="badge bg-light text-muted"><i class="bi bi-dash me-1"></i>No Submission</span>
+            <form method="get" action="{{ request.path }}" id="assignment-status-form">
+                <div class="row align-items-center">
+                    <div class="col-md-6">
+                        <label class="form-label fw-bold mb-2">
+                            <i class="bi bi-filter me-1"></i>View Assignment Status
+                        </label>
+                        <select class="form-select" name="assignment_id" id="assignment-filter" onchange="this.form.submit()">
+                            <option value="">-- Select an assignment --</option>
+                            {% for a in assignments %}
+                            <option value="{{ a.assignment_id }}" {% if selected_assignment_id == a.assignment_id %}selected{% endif %}>{{ a.title }} ({{ a.subject }})</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="d-flex gap-2 flex-wrap mt-3 mt-md-4">
+                            <span class="badge bg-warning text-dark"><i class="bi bi-clock me-1"></i>Pending Review</span>
+                            <span class="badge bg-info"><i class="bi bi-robot me-1"></i>AI Feedback Sent</span>
+                            <span class="badge bg-success"><i class="bi bi-check-circle me-1"></i>Returned</span>
+                            <span class="badge bg-light text-muted"><i class="bi bi-dash me-1"></i>No Submission</span>
+                        </div>
                     </div>
                 </div>
-            </div>
+            </form>
         </div>
     </div>
 
@@ -89,21 +91,43 @@
                             <td><strong>{{ student.name }}</strong></td>
                             <td><code>{{ student.student_id }}</code></td>
                             <td class="text-center student-status">
+                                {% if selected_assignment_id and student_statuses.get(student.student_id) %}
+                                {% set st = student_statuses[student.student_id] %}
+                                <span class="badge bg-{{ st.class }}{% if st.status == 'pending' %} text-dark{% endif %}">
+                                    {% if st.status == 'pending' %}<i class="bi bi-clock me-1"></i>{% elif st.status == 'ai_feedback_sent' %}<i class="bi bi-robot me-1"></i>{% elif st.status == 'returned' %}<i class="bi bi-check-circle me-1"></i>{% elif st.status == 'none' %}<i class="bi bi-dash me-1"></i>{% endif %}
+                                    {{ st.label }}
+                                </span>
+                                {% else %}
                                 <span class="badge bg-light text-muted">Select an assignment</span>
+                                {% endif %}
                             </td>
                             <td class="text-end">
-                                <a href="{{ url_for('teacher_submissions', student=student.student_id) }}" 
+                                {% if selected_assignment_id %}
+                                <a href="{{ url_for('assignment_summary', assignment_id=selected_assignment_id) }}" 
                                    class="btn btn-sm btn-outline-primary action-btn" 
-                                   data-submissions-url="{{ url_for('teacher_submissions', student=student.student_id) }}"
                                    title="Assignment summary">
                                     <i class="bi bi-bar-chart"></i>
                                 </a>
+                                {% else %}
                                 <a href="{{ url_for('teacher_submissions', student=student.student_id) }}" 
+                                   class="btn btn-sm btn-outline-primary action-btn" 
+                                   title="Submissions">
+                                    <i class="bi bi-bar-chart"></i>
+                                </a>
+                                {% endif %}
+                                {% if selected_assignment_id and student_statuses.get(student.student_id) and student_statuses[student.student_id].submission_id %}
+                                <a href="{{ url_for('review_submission', submission_id=student_statuses[student.student_id].submission_id) }}" 
                                    class="btn btn-sm btn-outline-secondary view-submission-btn ms-1" 
-                                   data-submissions-url="{{ url_for('teacher_submissions', student=student.student_id) }}"
                                    title="View student submission">
                                     <i class="bi bi-eye"></i>
                                 </a>
+                                {% else %}
+                                <a href="{{ url_for('teacher_submissions', student=student.student_id) }}" 
+                                   class="btn btn-sm btn-outline-secondary view-submission-btn ms-1 {% if selected_assignment_id %}disabled{% endif %}" 
+                                   title="{% if selected_assignment_id %}No submission{% else %}View student submission{% endif %}">
+                                    <i class="bi bi-eye"></i>
+                                </a>
+                                {% endif %}
                                 <button type="button" class="btn btn-sm btn-outline-warning ms-1 reset-password-btn"
                                         data-student-id="{{ student.student_id }}"
                                         data-student-name="{{ student.name }}"
@@ -180,141 +204,8 @@
 
 {% block scripts %}
 <script>
-    // Update action buttons: when an assignment is selected, summary -> assignment summary; view-submission -> set when statuses load
-    function updateActionButtons(assignmentId) {
-        document.querySelectorAll('.action-btn').forEach(btn => {
-            if (assignmentId) {
-                btn.href = '/teacher/assignment/' + assignmentId + '/summary';
-                btn.title = 'Assignment summary';
-            } else {
-                btn.href = btn.dataset.submissionsUrl || btn.href;
-                btn.title = 'View submissions';
-            }
-        });
-        document.querySelectorAll('.view-submission-btn').forEach(btn => {
-            if (!assignmentId) {
-                btn.href = btn.dataset.submissionsUrl || btn.href;
-                btn.title = 'View submissions';
-                btn.classList.remove('disabled');
-                btn.removeAttribute('aria-disabled');
-            }
-        });
-    }
-
-    // Assignment filter - load student statuses when assignment selected
-    document.getElementById('assignment-filter').addEventListener('change', async function() {
-        const assignmentId = this.value;
-        
-        // Update action buttons to go to assignment summary when an assignment is selected
-        updateActionButtons(assignmentId);
-        
-        // Reset all statuses and view-submission links if no assignment selected
-        if (!assignmentId) {
-            document.querySelectorAll('.student-status').forEach(cell => {
-                cell.innerHTML = '<span class="badge bg-light text-muted">Select an assignment</span>';
-            });
-            document.querySelectorAll('.view-submission-btn').forEach(btn => {
-                btn.href = btn.dataset.submissionsUrl || '#';
-                btn.title = 'View submissions';
-                btn.classList.remove('disabled');
-                btn.removeAttribute('aria-disabled');
-            });
-            return;
-        }
-        
-        // Collect all student IDs
-        const studentIds = [];
-        document.querySelectorAll('[data-student-id]').forEach(row => {
-            studentIds.push(row.dataset.studentId);
-        });
-        
-        if (studentIds.length === 0) return;
-        
-        // Show loading state
-        document.querySelectorAll('.student-status').forEach(cell => {
-            cell.innerHTML = '<span class="spinner-border spinner-border-sm text-primary"></span>';
-        });
-        
-        try {
-            // Build query string
-            const params = new URLSearchParams();
-            params.append('assignment_id', assignmentId);
-            studentIds.forEach(id => params.append('student_ids[]', id));
-            
-            const response = await fetch(`/teacher/api/student-statuses?${params.toString()}`, { credentials: 'same-origin' });
-            const text = await response.text();
-            let data = null;
-            try {
-                data = (text && text.trim().startsWith('{')) ? JSON.parse(text) : {};
-            } catch (parseErr) {
-                console.error('Invalid JSON from student-statuses:', parseErr, 'Response:', text ? text.slice(0, 200) : '');
-                document.querySelectorAll('.student-status').forEach(cell => {
-                    cell.innerHTML = '<span class="badge bg-danger" title="Server returned invalid response">Error loading</span>';
-                });
-                return;
-            }
-            if (!response.ok) {
-                const errMsg = (data && data.error) ? data.error : (response.status === 401 ? 'Session expired. Please refresh the page.' : 'Error loading');
-                document.querySelectorAll('.student-status').forEach(cell => {
-                    cell.innerHTML = '<span class="badge bg-danger">' + (errMsg.length > 40 ? 'Error loading' : errMsg) + '</span>';
-                });
-                return;
-            }
-            if (data.success && data.statuses) {
-                const assignmentIdCur = document.getElementById('assignment-filter').value;
-                document.querySelectorAll('[data-student-id]').forEach(row => {
-                    const studentId = row.dataset.studentId;
-                    const statusCell = row.querySelector('.student-status');
-                    const status = data.statuses[studentId];
-                    const viewSubmissionBtn = row.querySelector('.view-submission-btn');
-                    
-                    if (status) {
-                        let icon = '';
-                        let textClass = '';
-                        if (status.status === 'pending') {
-                            icon = '<i class="bi bi-clock me-1"></i>';
-                            textClass = ' text-dark';
-                        } else if (status.status === 'ai_feedback_sent') {
-                            icon = '<i class="bi bi-robot me-1"></i>';
-                        } else if (status.status === 'returned') {
-                            icon = '<i class="bi bi-check-circle me-1"></i>';
-                        } else if (status.status === 'none') {
-                            icon = '<i class="bi bi-dash me-1"></i>';
-                        }
-                        
-                        statusCell.innerHTML = `<span class="badge bg-${status.class}${textClass}">${icon}${status.label}</span>`;
-                        
-                        if (viewSubmissionBtn && assignmentIdCur) {
-                            if (status.submission_id) {
-                                viewSubmissionBtn.href = '/teacher/submissions/' + status.submission_id + '/review';
-                                viewSubmissionBtn.title = 'View student submission';
-                                viewSubmissionBtn.classList.remove('disabled');
-                                viewSubmissionBtn.removeAttribute('aria-disabled');
-                            } else {
-                                viewSubmissionBtn.removeAttribute('href');
-                                viewSubmissionBtn.href = '#';
-                                viewSubmissionBtn.title = 'No submission';
-                                viewSubmissionBtn.classList.add('disabled');
-                                viewSubmissionBtn.setAttribute('aria-disabled', 'true');
-                            }
-                        }
-                    } else {
-                        statusCell.innerHTML = '<span class="badge bg-secondary">—</span>';
-                    }
-                });
-            } else {
-                const errMsg = (data && data.error) ? data.error : 'Error loading';
-                document.querySelectorAll('.student-status').forEach(cell => {
-                    cell.innerHTML = '<span class="badge bg-danger">' + (errMsg.length > 30 ? 'Error loading' : errMsg) + '</span>';
-                });
-            }
-        } catch (e) {
-            console.error('Error loading statuses:', e);
-            document.querySelectorAll('.student-status').forEach(cell => {
-                cell.innerHTML = '<span class="badge bg-danger">Error loading</span>';
-            });
-        }
-    });
+    // Assignment status is loaded server-side when you select an assignment (form submit).
+    // No API fetch — avoids "Error loading" from session/JSON issues.
 
     // Reset password modal
     const resetPasswordModal = document.getElementById('reset-password-modal');

@@ -2342,6 +2342,21 @@ def view_class(class_id):
     title = class_id
     subtitle = class_info.get('name') if class_info.get('name') and class_info.get('name') != class_id else None
     
+    # Optional: assignment statuses server-side (no API) when assignment_id in query
+    selected_assignment_id = request.args.get('assignment_id')
+    student_statuses = {}
+    if selected_assignment_id and selected_assignment_id in assignment_ids:
+        for student in students:
+            sid = student['student_id']
+            submission = Submission.find_one(
+                {'assignment_id': selected_assignment_id, 'student_id': sid},
+                sort=[('submitted_at', -1), ('created_at', -1)]
+            )
+            if submission:
+                student_statuses[sid] = _build_student_status_for_submission(submission)
+            else:
+                student_statuses[sid] = {'status': 'none', 'label': 'No Submission', 'class': 'light', 'submission_id': None}
+    
     return render_template('teacher_class_view.html',
                          teacher=teacher,
                          title=title,
@@ -2349,7 +2364,9 @@ def view_class(class_id):
                          students=students,
                          assignments=assignments,
                          teaching_groups=teaching_groups,
-                         is_teaching_group=False)
+                         is_teaching_group=False,
+                         selected_assignment_id=selected_assignment_id,
+                         student_statuses=student_statuses)
 
 @app.route('/teacher/group/<group_id>')
 @teacher_required
@@ -2378,9 +2395,25 @@ def view_teaching_group(group_id):
         'target_type': 'teaching_group',
         'target_group_id': group_id
     }).sort('created_at', -1))
+    assignment_ids = [a['assignment_id'] for a in assignments]
     
     title = group.get('name', group_id)
     subtitle = f"Teaching Group from {group.get('class_id', 'Unknown Class')}"
+    
+    # Optional: assignment statuses server-side when assignment_id in query
+    selected_assignment_id = request.args.get('assignment_id')
+    student_statuses = {}
+    if selected_assignment_id and selected_assignment_id in assignment_ids:
+        for student in students:
+            sid = student['student_id']
+            submission = Submission.find_one(
+                {'assignment_id': selected_assignment_id, 'student_id': sid},
+                sort=[('submitted_at', -1), ('created_at', -1)]
+            )
+            if submission:
+                student_statuses[sid] = _build_student_status_for_submission(submission)
+            else:
+                student_statuses[sid] = {'status': 'none', 'label': 'No Submission', 'class': 'light', 'submission_id': None}
     
     return render_template('teacher_class_view.html',
                          teacher=teacher,
@@ -2389,7 +2422,9 @@ def view_teaching_group(group_id):
                          students=students,
                          assignments=assignments,
                          teaching_groups=[],
-                         is_teaching_group=True)
+                         is_teaching_group=True,
+                         selected_assignment_id=selected_assignment_id,
+                         student_statuses=student_statuses)
 
 @app.route('/teacher/assignments')
 @teacher_required
@@ -2425,56 +2460,45 @@ def teacher_assignments():
                          teacher=teacher,
                          assignments=assignments)
 
+def _build_student_status_for_submission(submission):
+    """Build display status dict for one submission (for class view and API)."""
+    status = submission.get('status', 'submitted')
+    sub_id = submission.get('submission_id')
+    feedback_sent = submission.get('feedback_sent', False)
+    if status == 'ai_reviewed' and feedback_sent:
+        return {'status': 'ai_feedback_sent', 'label': 'AI Feedback Sent', 'class': 'info', 'submission_id': sub_id}
+    if status in ['submitted', 'ai_reviewed']:
+        return {'status': 'pending', 'label': 'Pending Review', 'class': 'warning', 'submission_id': sub_id}
+    if status in ['reviewed', 'approved']:
+        return {'status': 'returned', 'label': 'Returned', 'class': 'success', 'submission_id': sub_id}
+    return {'status': status, 'label': status.title(), 'class': 'secondary', 'submission_id': sub_id}
+
+
 @app.route('/teacher/api/student-statuses')
 @teacher_required
 def get_student_statuses():
-    """Get submission statuses for students by assignment"""
+    """Get submission statuses for students by assignment (API fallback)."""
     try:
         assignment_id = request.args.get('assignment_id')
-        # Support both student_ids[] (JS) and student_ids (some proxies normalize)
         student_ids = request.args.getlist('student_ids[]') or request.args.getlist('student_ids')
-        
         if not assignment_id or not student_ids:
             return jsonify({'success': False, 'error': 'Missing parameters'}), 400
-        
-        # Verify teacher owns this assignment
         assignment = Assignment.find_one({
             'assignment_id': assignment_id,
             'teacher_id': session['teacher_id']
         })
-        
         if not assignment:
             return jsonify({'success': False, 'error': 'Assignment not found'}), 404
-        
-        # Get latest submission per student (rubric may have multiple versions)
         statuses = {}
         for student_id in student_ids:
             submission = Submission.find_one(
-                {
-                    'assignment_id': assignment_id,
-                    'student_id': student_id
-                },
+                {'assignment_id': assignment_id, 'student_id': student_id},
                 sort=[('submitted_at', -1), ('created_at', -1)]
             )
-            
             if submission:
-                status = submission.get('status', 'submitted')
-                sub_id = submission.get('submission_id')
-                feedback_sent = submission.get('feedback_sent', False)
-                # AI Feedback Sent: AI reviewed and feedback already sent to student
-                if status == 'ai_reviewed' and feedback_sent:
-                    statuses[student_id] = {'status': 'ai_feedback_sent', 'label': 'AI Feedback Sent', 'class': 'info', 'submission_id': sub_id}
-                # Pending Review: waiting for teacher (submitted or ai_reviewed but not sent)
-                elif status in ['submitted', 'ai_reviewed']:
-                    statuses[student_id] = {'status': 'pending', 'label': 'Pending Review', 'class': 'warning', 'submission_id': sub_id}
-                # Returned: teacher has reviewed and returned
-                elif status in ['reviewed', 'approved']:
-                    statuses[student_id] = {'status': 'returned', 'label': 'Returned', 'class': 'success', 'submission_id': sub_id}
-                else:
-                    statuses[student_id] = {'status': status, 'label': status.title(), 'class': 'secondary', 'submission_id': sub_id}
+                statuses[student_id] = _build_student_status_for_submission(submission)
             else:
                 statuses[student_id] = {'status': 'none', 'label': 'No Submission', 'class': 'light', 'submission_id': None}
-        
         return jsonify({'success': True, 'statuses': statuses})
     except Exception as e:
         logger.error(f"Error in get_student_statuses: {e}", exc_info=True)
