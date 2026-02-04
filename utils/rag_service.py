@@ -24,14 +24,16 @@ def _log_memory_usage(label: str = ""):
     """Log current memory usage (helps debug OOM on Railway)."""
     try:
         import resource
-        # Get memory in MB
-        mem_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024 / 1024
-        # On macOS, ru_maxrss is in bytes; on Linux it's in KB
-        if mem_mb > 1000:  # Likely macOS (bytes)
-            mem_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024 / 1024 / 1024
-        logger.info(f"[MEMORY] {label}: ~{mem_mb:.1f} MB")
-    except Exception:
-        pass  # Don't fail if resource module unavailable
+        import platform
+        # ru_maxrss is in KB on Linux, bytes on macOS
+        ru_maxrss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        if platform.system() == 'Darwin':  # macOS: bytes
+            mem_mb = ru_maxrss / 1024 / 1024
+        else:  # Linux: KB
+            mem_mb = ru_maxrss / 1024
+        logger.info(f"[MEMORY] {label}: ~{mem_mb:.0f} MB (peak RSS)")
+    except Exception as e:
+        logger.info(f"[MEMORY] {label}: (unable to measure: {e})")
 
 # Chunking defaults (smaller = less memory on Railway's limited RAM)
 CHUNK_SIZE = 600  # Smaller chunks = less memory per batch
@@ -320,7 +322,10 @@ def ingest_textbook(
     if not text or len(text.strip()) < 100:
         return {"success": False, "error": "Could not extract enough text from the PDF (may be image-only or corrupted)."}
 
+    logger.info("Starting text chunking...")
     chunks = _chunk_text(text)
+    logger.info(f"Chunking complete: {len(chunks)} chunks created")
+    
     # Free full text after chunking
     del text
     gc.collect()
@@ -328,6 +333,8 @@ def ingest_textbook(
     
     if not chunks:
         return {"success": False, "error": "No text chunks produced from PDF."}
+    
+    logger.info("Preparing to process embeddings...")
 
     namespace = _namespace_name(module_id)
     upload_title = (title or "Textbook").strip()[:200]
@@ -343,15 +350,23 @@ def ingest_textbook(
         # Process in batches
         batch_size = INGEST_BATCH_SIZE
         total_upserted = 0
+        total_batches = (len(chunks) + batch_size - 1) // batch_size
+        logger.info(f"Will process {len(chunks)} chunks in {total_batches} batches of {batch_size}")
         
         for start in range(0, len(chunks), batch_size):
+            batch_num = start // batch_size + 1
             end = min(start + batch_size, len(chunks))
             batch_chunks = chunks[start:end]
+            
+            logger.info(f"Batch {batch_num}/{total_batches}: Getting embeddings for {len(batch_chunks)} chunks...")
+            _log_memory_usage(f"Before batch {batch_num} embeddings")
             
             # Get embeddings for this batch
             embeddings = _get_embeddings(batch_chunks, openai_client)
             if not embeddings or len(embeddings) != len(batch_chunks):
                 return {"success": False, "error": "Failed to generate embeddings for chunks."}
+            
+            logger.info(f"Batch {batch_num}/{total_batches}: Embeddings received, preparing vectors...")
             
             # Prepare vectors for Pinecone
             vectors = []
