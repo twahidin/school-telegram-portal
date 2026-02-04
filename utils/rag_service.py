@@ -9,6 +9,7 @@ and ANTHROPIC_API_KEY is set (better for scanned PDFs, images, tables).
 """
 
 import base64
+import gc
 import os
 import re
 import io
@@ -18,11 +19,11 @@ from typing import Optional, List, Dict, Any, Tuple
 
 logger = logging.getLogger(__name__)
 
-# Chunking defaults (smaller batch = less memory on Railway)
-CHUNK_SIZE = 800
-CHUNK_OVERLAP = 150
+# Chunking defaults (smaller = less memory on Railway's limited RAM)
+CHUNK_SIZE = 600  # Smaller chunks = less memory per batch
+CHUNK_OVERLAP = 100
 MAX_CHUNKS_QUERY = 5
-INGEST_BATCH_SIZE = 20
+INGEST_BATCH_SIZE = 5  # Very small batches to avoid OOM
 
 # OpenAI embedding model (1536 dimensions)
 EMBEDDING_MODEL = "text-embedding-3-small"
@@ -288,10 +289,20 @@ def ingest_textbook(
     else:
         logger.info("PDF extraction: Using PyPDF2 (lightweight, recommended for Railway)")
         text = _extract_text_from_pdf(pdf_bytes)
+    
+    # Free PDF bytes from memory immediately after extraction
+    del pdf_bytes
+    gc.collect()
+    logger.info(f"Extracted {len(text)} characters, freed PDF from memory")
+    
     if not text or len(text.strip()) < 100:
         return {"success": False, "error": "Could not extract enough text from the PDF (may be image-only or corrupted)."}
 
     chunks = _chunk_text(text)
+    # Free full text after chunking
+    del text
+    gc.collect()
+    
     if not chunks:
         return {"success": False, "error": "No text chunks produced from PDF."}
 
@@ -337,6 +348,11 @@ def ingest_textbook(
             # Upsert to Pinecone
             index.upsert(vectors=vectors, namespace=namespace)
             total_upserted += len(vectors)
+            
+            # Free batch memory immediately
+            del batch_chunks, embeddings, vectors
+            gc.collect()
+            logger.info(f"Batch complete: {total_upserted}/{len(chunks)} chunks uploaded")
 
         # Get total count in namespace
         try:
