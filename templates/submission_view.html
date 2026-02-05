@@ -215,8 +215,63 @@
                         {% set questions = ai_feedback.get('questions', []) %}
                         {% set criteria = ai_feedback.get('criteria', []) %}
                         {% set is_rubric = assignment.marking_type == 'rubric' or (criteria and not questions) %}
+                        {% set spreadsheet_feedback = ai_feedback.get('spreadsheet_feedback', {}) %}
                         
-                        {% if questions %}
+                        {% if assignment.marking_type == 'spreadsheet' and spreadsheet_feedback.get('questions') %}
+                        <!-- Spreadsheet: show feedback comments on page -->
+                        <div class="mb-3">
+                            <p class="mb-2">{{ spreadsheet_feedback.get('summary', '') }}</p>
+                            <a href="{{ url_for('view_excel_feedback', submission_id=submission.submission_id) }}" class="btn btn-outline-success btn-sm">
+                                <i class="bi bi-file-earmark-spreadsheet me-1"></i>View full spreadsheet feedback
+                            </a>
+                        </div>
+                        <div class="table-responsive">
+                            <table class="table table-sm table-bordered feedback-table">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th style="width: 50px;">Q#</th>
+                                        <th style="width: 32%;">Description</th>
+                                        <th style="width: 80px;">Marks</th>
+                                        <th>Feedback</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for q in spreadsheet_feedback.questions %}
+                                    {% set teacher_q = teacher_feedback.get('spreadsheet_questions', {}).get(q.question_num|string, {}) %}
+                                    {% set display_feedback = teacher_q.get('feedback') or q.get('feedback', '') %}
+                                    <tr>
+                                        <td class="text-center fw-bold">{{ q.question_num }}</td>
+                                        <td class="small">{{ q.get('description', '') }}</td>
+                                        <td class="text-center">
+                                            <span class="badge {% if q.get('marks_awarded') == q.get('total_marks') %}bg-success{% elif q.get('marks_awarded', 0) > 0 %}bg-warning text-dark{% else %}bg-danger{% endif %}">
+                                                {{ q.get('marks_awarded', 0) }}/{{ q.get('total_marks', 0) }}
+                                            </span>
+                                        </td>
+                                        <td class="small">
+                                            {{ display_feedback or '—' }}
+                                            {% if q.get('cells') %}
+                                            <ul class="mb-0 mt-1 ps-3 small text-muted">
+                                                {% for c in q.cells %}
+                                                {% if not c.get('formula_correct') or not c.get('value_correct') %}
+                                                <li><strong>{{ c.get('cell_ref', '') }}</strong>: {{ c.get('feedback', '') }}</li>
+                                                {% endif %}
+                                                {% endfor %}
+                                            </ul>
+                                            {% endif %}
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                        {% set overall = teacher_feedback.get('spreadsheet_overall_feedback', '') %}
+                        {% if overall %}
+                        <div class="overall-feedback mt-3">
+                            <h6><i class="bi bi-chat-quote me-2"></i>Overall feedback</h6>
+                            <div class="alert alert-secondary mb-0">{{ overall }}</div>
+                        </div>
+                        {% endif %}
+                        {% elif questions %}
                         {% set include_answer_key = submission.get('include_answer_key', False) %}
                         {% set show_marks_column = assignment.marking_type == 'rubric' or assignment.get('award_marks', True) %}
                         <!-- Standard: Feedback Table by Question -->
@@ -395,7 +450,7 @@
                         
                         <!-- Overall Feedback (standard view only; rubric already has overall in table) -->
                         {% set overall = teacher_feedback.get('overall_feedback') or ai_feedback.get('overall_feedback', '') %}
-                        {% if overall and not is_rubric %}
+                        {% if overall and not is_rubric and assignment.marking_type != 'spreadsheet' %}
                         <div class="overall-feedback mt-4">
                             <h6><i class="bi bi-chat-quote me-2"></i>Overall Comments</h6>
                             <div class="alert alert-secondary">

@@ -101,7 +101,25 @@
                 </div>
                 <div class="card-body p-0" style="height: calc(100vh - 180px); overflow: auto; background: #f0f0f0;" id="submission-body">
                     <div id="submission-viewer" style="display: flex; justify-content: center; align-items: flex-start; padding: 10px;">
-                        {% if submission.file_type == 'pdf' %}
+                        {% if submission.file_type == 'excel' %}
+                        <div class="p-4 text-center w-100">
+                            <i class="bi bi-file-earmark-excel text-success" style="font-size: 4rem;"></i>
+                            <p class="mt-2 mb-3">Excel spreadsheet submission</p>
+                            <div class="d-flex flex-wrap gap-2 justify-content-center">
+                                <a href="{{ url_for('view_submission_file', submission_id=submission.submission_id, file_index=0) }}" class="btn btn-outline-success" download>
+                                    <i class="bi bi-download me-1"></i>Download original Excel
+                                </a>
+                                {% if submission.get('spreadsheet_feedback_excel_id') %}
+                                <a href="{{ url_for('teacher_download_feedback_excel', submission_id=submission.submission_id) }}" class="btn btn-outline-primary" download>
+                                    <i class="bi bi-file-earmark-excel me-1"></i>Download Excel with comments
+                                </a>
+                                {% endif %}
+                                <a href="{{ url_for('view_excel_feedback', submission_id=submission.submission_id) }}" class="btn btn-primary">
+                                    <i class="bi bi-chat-left-text me-1"></i>View spreadsheet feedback
+                                </a>
+                            </div>
+                        </div>
+                        {% elif submission.file_type == 'pdf' %}
                         <iframe id="pdf-viewer" src="{{ url_for('view_submission_file', submission_id=submission.submission_id, file_index=0) }}" 
                                 style="width: 100%; height: calc(100vh - 200px); border: none;"></iframe>
                         {% else %}
@@ -247,6 +265,15 @@
                                         </td>
                                     </tr>
                                     {% endfor %}
+                                {% elif assignment.marking_type == 'spreadsheet' and ai_feedback.get('spreadsheet_feedback') %}
+                                    <tr>
+                                        <td colspan="6" class="text-center py-4">
+                                            <p class="mb-2">Spreadsheet has been evaluated. View and edit feedback (including cell-level comments) on the dedicated page.</p>
+                                            <a href="{{ url_for('view_excel_feedback', submission_id=submission.submission_id) }}" class="btn btn-primary">
+                                                <i class="bi bi-file-earmark-spreadsheet me-1"></i>View / Edit spreadsheet feedback
+                                            </a>
+                                        </td>
+                                    </tr>
                                 {% else %}
                                     <tr>
                                         <td colspan="6" class="text-center text-muted py-4">

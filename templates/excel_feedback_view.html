@@ -1,0 +1,240 @@
+{% extends "base.html" %}
+
+{% block title %}Spreadsheet feedback - {{ assignment.title }}{% endblock %}
+
+{% block navbar %}
+{% if is_teacher %}
+{% set active_nav = 'submissions' %}
+{% include 'partials/teacher_navbar.html' %}
+{% else %}
+<nav class="navbar navbar-expand-lg navbar-dark">
+    <div class="container">
+        <a class="navbar-brand" href="{{ url_for('dashboard') }}">
+            <i class="bi bi-mortarboard-fill me-2"></i>School Portal
+        </a>
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+            <span class="navbar-toggler-icon"></span>
+        </button>
+        <div class="collapse navbar-collapse" id="navbarNav">
+            <ul class="navbar-nav me-auto">
+                <li class="nav-item">
+                    <a class="nav-link" href="{{ url_for('dashboard') }}">Dashboard</a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" href="{{ url_for('assignments_list') }}">Assignments</a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link active" href="{{ url_for('student_submissions') }}">Submissions</a>
+                </li>
+            </ul>
+            <div class="navbar-nav">
+                <span class="navbar-text me-3">{{ session.student_name }}</span>
+                <a class="nav-link" href="{{ url_for('logout') }}">Logout</a>
+            </div>
+        </div>
+    </div>
+</nav>
+{% endif %}
+{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <nav aria-label="breadcrumb" class="mb-3">
+        <ol class="breadcrumb">
+            {% if is_teacher %}
+            <li class="breadcrumb-item"><a href="{{ url_for('teacher_submissions') }}">Submissions</a></li>
+            <li class="breadcrumb-item"><a href="{{ url_for('review_submission', submission_id=submission.submission_id) }}">Review</a></li>
+            {% else %}
+            <li class="breadcrumb-item"><a href="{{ url_for('student_submissions') }}">My Submissions</a></li>
+            <li class="breadcrumb-item"><a href="{{ url_for('view_submission', submission_id=submission.submission_id) }}">{{ assignment.title }}</a></li>
+            {% endif %}
+            <li class="breadcrumb-item active">Spreadsheet feedback</li>
+        </ol>
+    </nav>
+
+    <div class="card border-success mb-4">
+        <div class="card-header bg-success text-white">
+            <h5 class="mb-0"><i class="bi bi-file-earmark-excel me-2"></i>Spreadsheet feedback</h5>
+            <small>{% if is_teacher %}View and edit feedback for {{ student.name if student else 'student' }}{% else %}View your feedback and download reports{% endif %}.</small>
+        </div>
+        <div class="card-body">
+            <div class="row align-items-center mb-4">
+                <div class="col-md-6">
+                    <h6 class="text-muted mb-1">{% if is_teacher %}Student{% else %}Your score{% endif %}</h6>
+                    <p class="mb-0">
+                        <strong>{{ spreadsheet_feedback.get('student_name', 'Student') }}</strong>
+                        <span class="ms-2 badge bg-primary">{{ spreadsheet_feedback.get('marks_awarded', 0) }}/{{ spreadsheet_feedback.get('total_marks', 0) }}</span>
+                        <span class="ms-2">{{ "%.1f"|format(spreadsheet_feedback.get('percentage', 0)) }}%</span>
+                    </p>
+                </div>
+                <div class="col-md-6">
+                    <div class="d-flex flex-wrap gap-2 justify-content-md-end">
+                        {% if submission.get('spreadsheet_feedback_pdf_id') %}
+                        {% if is_teacher %}
+                        <a href="{{ url_for('teacher_download_feedback_pdf', submission_id=submission.submission_id) }}" class="btn btn-outline-danger btn-sm" download>
+                            <i class="bi bi-file-pdf me-1"></i>Download PDF report
+                        </a>
+                        {% else %}
+                        <a href="{{ url_for('download_submission_pdf', submission_id=submission.submission_id) }}" class="btn btn-outline-danger btn-sm" download>
+                            <i class="bi bi-file-pdf me-1"></i>Download PDF report
+                        </a>
+                        {% endif %}
+                        {% endif %}
+                        {% if submission.get('spreadsheet_feedback_excel_id') %}
+                        {% if is_teacher %}
+                        <a href="{{ url_for('teacher_download_feedback_excel', submission_id=submission.submission_id) }}" class="btn btn-outline-success btn-sm" download>
+                            <i class="bi bi-file-earmark-excel me-1"></i>Download Excel with comments
+                        </a>
+                        {% else %}
+                        <a href="{{ url_for('download_submission_feedback_excel', submission_id=submission.submission_id) }}" class="btn btn-outline-success btn-sm" download>
+                            <i class="bi bi-file-earmark-excel me-1"></i>Download Excel with comments
+                        </a>
+                        {% endif %}
+                        {% endif %}
+                        {% if submission.get('file_ids') %}
+                        {% if is_teacher %}
+                        <a href="{{ url_for('view_submission_file', submission_id=submission.submission_id, file_index=0) }}" class="btn btn-outline-secondary btn-sm" download>
+                            <i class="bi bi-download me-1"></i>Download original Excel
+                        </a>
+                        {% else %}
+                        <a href="{{ url_for('view_student_submission_file', submission_id=submission.submission_id, file_index=0) }}" class="btn btn-outline-secondary btn-sm" download>
+                            <i class="bi bi-download me-1"></i>Download your spreadsheet
+                        </a>
+                        {% endif %}
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+
+            {% if is_teacher %}
+            <form id="excel-feedback-form">
+                <div class="mb-4">
+                    <label class="form-label fw-bold">Overall feedback (optional; visible to student on this page)</label>
+                    <textarea class="form-control" name="overall_feedback" id="overall-feedback" rows="3" placeholder="Overall comments and suggestions...">{{ teacher_feedback.get('spreadsheet_overall_feedback', '') }}</textarea>
+                </div>
+            </form>
+            {% else %}
+            {% set overall = teacher_feedback.get('spreadsheet_overall_feedback', '') %}
+            {% if overall %}
+            <div class="alert alert-secondary mb-4">
+                <h6 class="alert-heading"><i class="bi bi-chat-quote me-2"></i>Overall feedback</h6>
+                <p class="mb-0">{{ overall }}</p>
+            </div>
+            {% endif %}
+            {% endif %}
+
+            <h6 class="fw-bold mb-2"><i class="bi bi-list-check me-2"></i>Question breakdown and comments</h6>
+            <div class="table-responsive">
+                <table class="table table-bordered table-sm">
+                    <thead class="table-light">
+                        <tr>
+                            <th style="width: 60px;">Q#</th>
+                            <th style="width: 28%;">Description</th>
+                            <th style="width: 80px;">Marks</th>
+                            <th>Feedback</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for q in spreadsheet_feedback.get('questions', []) %}
+                        {% set teacher_q = teacher_feedback.get('spreadsheet_questions', {}).get(q.question_num|string, {}) %}
+                        {% set display_feedback = teacher_q.get('feedback') or q.get('feedback', '') %}
+                        <tr>
+                            <td class="text-center fw-bold">{{ q.question_num }}</td>
+                            <td class="small">{{ q.get('description', '') }}</td>
+                            <td class="text-center">
+                                <span class="badge {% if q.get('marks_awarded') == q.get('total_marks') %}bg-success{% elif q.get('marks_awarded', 0) > 0 %}bg-warning text-dark{% else %}bg-danger{% endif %}">
+                                    {{ q.get('marks_awarded', 0) }}/{{ q.get('total_marks', 0) }}
+                                </span>
+                            </td>
+                            <td>
+                                {% if is_teacher %}
+                                <textarea class="form-control form-control-sm feedback-q-input" name="feedback_{{ q.question_num }}" data-q="{{ q.question_num }}" rows="2" placeholder="Feedback for this question...">{{ teacher_q.get('feedback') or q.get('feedback', '') }}</textarea>
+                                {% else %}
+                                <div class="small">{{ display_feedback or '—' }}</div>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% if q.get('cells') %}
+                        <tr class="table-light">
+                            <td></td>
+                            <td colspan="3" class="small py-2">
+                                <span class="text-muted">Cell-level feedback:</span>
+                                <ul class="mb-0 mt-1 ps-3">
+                                    {% set ns = namespace(any_incorrect=false) %}
+                                    {% for c in q.cells %}
+                                    {% if not c.get('formula_correct') or not c.get('value_correct') %}
+                                    {% set ns.any_incorrect = true %}
+                                    <li><strong>{{ c.get('cell_ref', '') }}</strong>: {{ c.get('feedback', '') }}</li>
+                                    {% endif %}
+                                    {% endfor %}
+                                    {% if not ns.any_incorrect %}
+                                    <li class="text-muted">All cells correct for this question.</li>
+                                    {% endif %}
+                                </ul>
+                            </td>
+                        </tr>
+                        {% endif %}
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            {% if is_teacher %}
+            <div class="mt-3">
+                <button type="button" class="btn btn-primary" id="btn-save-excel-feedback">
+                    <i class="bi bi-save me-1"></i>Save feedback
+                </button>
+                <a href="{{ url_for('review_submission', submission_id=submission.submission_id) }}" class="btn btn-outline-secondary ms-2">Back to review</a>
+            </div>
+            {% else %}
+            <div class="mt-3">
+                <a href="{{ url_for('view_submission', submission_id=submission.submission_id) }}" class="btn btn-outline-primary">Back to submission</a>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+{% if is_teacher %}
+<script>
+(function() {
+    var form = document.getElementById('excel-feedback-form');
+    var btnSave = document.getElementById('btn-save-excel-feedback');
+    if (!btnSave || !form) return;
+
+    btnSave.addEventListener('click', function() {
+        var overall = document.getElementById('overall-feedback');
+        var payload = {
+            overall_feedback: overall ? overall.value : '',
+            questions: {}
+        };
+        document.querySelectorAll('.feedback-q-input').forEach(function(t) {
+            var q = t.getAttribute('data-q');
+            if (q) payload.questions[q] = { feedback: (t.value || '').trim() };
+        });
+
+        btnSave.disabled = true;
+        btnSave.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Saving...';
+        fetch('{{ url_for("save_excel_feedback", submission_id=submission.submission_id) }}', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+            body: JSON.stringify(payload)
+        }).then(function(r) { return r.json(); }).then(function(data) {
+            btnSave.disabled = false;
+            btnSave.innerHTML = '<i class="bi bi-save me-1"></i>Save feedback';
+            if (data.success) {
+                if (typeof showToast === 'function') showToast('Feedback saved.', 'success');
+                else alert('Feedback saved.');
+            } else {
+                alert(data.error || 'Failed to save.');
+            }
+        }).catch(function() {
+            btnSave.disabled = false;
+            btnSave.innerHTML = '<i class="bi bi-save me-1"></i>Save feedback';
+            alert('Network error. Please try again.');
+        });
+    });
+})();
+</script>
+{% endif %}
+{% endblock %}

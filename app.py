@@ -1274,6 +1274,139 @@ def download_submission_feedback_excel(submission_id):
         return redirect(url_for('view_submission', submission_id=submission_id))
 
 
+def _get_submission_and_assignment_for_excel_feedback(submission_id):
+    """Resolve submission and assignment; allow student (own) or teacher (assigned). Returns (submission, assignment, student, is_teacher) or (None, None, None, None)."""
+    submission = Submission.find_one({'submission_id': submission_id})
+    if not submission:
+        return None, None, None, None
+    assignment = Assignment.find_one({'assignment_id': submission.get('assignment_id')})
+    if not assignment or assignment.get('marking_type') != 'spreadsheet':
+        return None, None, None, None
+    student = Student.find_one({'student_id': submission['student_id']})
+    if session.get('teacher_id'):
+        if assignment.get('teacher_id') != session['teacher_id']:
+            return None, None, None, None
+        return submission, assignment, student, True
+    if session.get('student_id'):
+        if submission.get('student_id') != session['student_id']:
+            return None, None, None, None
+        return submission, assignment, student, False
+    return None, None, None, None
+
+
+@app.route('/submissions/<submission_id>/excel-feedback')
+@student_or_teacher_required
+def view_excel_feedback(submission_id):
+    """View spreadsheet feedback (comments) on the page. Student: own submission; Teacher: any submission they teach."""
+    submission, assignment, student, is_teacher = _get_submission_and_assignment_for_excel_feedback(submission_id)
+    if not submission or not assignment:
+        if session.get('teacher_id'):
+            return redirect(url_for('teacher_submissions'))
+        return redirect(url_for('student_submissions'))
+    sf = submission.get('ai_feedback', {}).get('spreadsheet_feedback') or {}
+    if not sf or not sf.get('questions'):
+        if session.get('teacher_id'):
+            return redirect(url_for('review_submission', submission_id=submission_id))
+        return redirect(url_for('view_submission', submission_id=submission_id))
+    teacher_feedback = submission.get('teacher_feedback', {})
+    return render_template(
+        'excel_feedback_view.html',
+        submission=submission,
+        assignment=assignment,
+        student=student,
+        spreadsheet_feedback=sf,
+        teacher_feedback=teacher_feedback,
+        is_teacher=is_teacher,
+    )
+
+
+@app.route('/submissions/<submission_id>/excel-feedback/save', methods=['POST'])
+@teacher_required
+def save_excel_feedback(submission_id):
+    """Save teacher-edited spreadsheet feedback (overall and per-question feedback text)."""
+    submission = Submission.find_one({'submission_id': submission_id})
+    if not submission:
+        return jsonify({'success': False, 'error': 'Submission not found'}), 404
+    assignment = Assignment.find_one({'assignment_id': submission.get('assignment_id')})
+    if not assignment or assignment.get('teacher_id') != session['teacher_id']:
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+    if assignment.get('marking_type') != 'spreadsheet':
+        return jsonify({'success': False, 'error': 'Not a spreadsheet assignment'}), 400
+    try:
+        data = request.get_json() or {}
+        teacher_feedback = dict(submission.get('teacher_feedback', {}))
+        teacher_feedback['spreadsheet_overall_feedback'] = data.get('overall_feedback', '')
+        teacher_feedback['spreadsheet_questions'] = data.get('questions', {})
+        teacher_feedback['spreadsheet_edited_at'] = datetime.utcnow()
+        teacher_feedback['spreadsheet_edited_by'] = session['teacher_id']
+        Submission.update_one(
+            {'submission_id': submission_id},
+            {'$set': {'teacher_feedback': teacher_feedback, 'updated_at': datetime.utcnow()}}
+        )
+        return jsonify({'success': True})
+    except Exception as e:
+        logger.exception("Error saving excel feedback")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/teacher/submissions/<submission_id>/feedback-excel')
+@teacher_required
+def teacher_download_feedback_excel(submission_id):
+    """Download spreadsheet feedback Excel (commented file) for a submission. Teacher only."""
+    submission = Submission.find_one({'submission_id': submission_id})
+    if not submission or not submission.get('spreadsheet_feedback_excel_id'):
+        return redirect(url_for('teacher_submissions'))
+    assignment = Assignment.find_one({'assignment_id': submission.get('assignment_id')})
+    if not assignment or assignment.get('teacher_id') != session['teacher_id']:
+        return redirect(url_for('teacher_submissions'))
+    from gridfs import GridFS
+    from bson import ObjectId
+    fs = GridFS(db.db)
+    try:
+        file_id = submission['spreadsheet_feedback_excel_id']
+        if isinstance(file_id, str):
+            file_id = ObjectId(file_id)
+        excel_content = fs.get(file_id).read()
+        return send_file(
+            io.BytesIO(excel_content),
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            as_attachment=True,
+            download_name=f"feedback_commented_{submission_id}.xlsx"
+        )
+    except Exception as e:
+        logger.error(f"Error downloading feedback Excel for teacher: {e}")
+        return redirect(url_for('review_submission', submission_id=submission_id))
+
+
+@app.route('/teacher/submissions/<submission_id>/feedback-pdf')
+@teacher_required
+def teacher_download_feedback_pdf(submission_id):
+    """Download spreadsheet feedback PDF for a submission. Teacher only."""
+    submission = Submission.find_one({'submission_id': submission_id})
+    if not submission or not submission.get('spreadsheet_feedback_pdf_id'):
+        return redirect(url_for('review_submission', submission_id=submission_id))
+    assignment = Assignment.find_one({'assignment_id': submission.get('assignment_id')})
+    if not assignment or assignment.get('teacher_id') != session['teacher_id']:
+        return redirect(url_for('teacher_submissions'))
+    from gridfs import GridFS
+    from bson import ObjectId
+    fs = GridFS(db.db)
+    try:
+        file_id = submission['spreadsheet_feedback_pdf_id']
+        if isinstance(file_id, str):
+            file_id = ObjectId(file_id)
+        pdf_content = fs.get(file_id).read()
+        return send_file(
+            io.BytesIO(pdf_content),
+            mimetype='application/pdf',
+            as_attachment=True,
+            download_name=f"feedback_report_{submission_id}.pdf"
+        )
+    except Exception as e:
+        logger.error(f"Error downloading feedback PDF for teacher: {e}")
+        return redirect(url_for('review_submission', submission_id=submission_id))
+
+
 @app.route('/student/submit', methods=['POST'])
 @login_required
 @limiter.limit("10 per hour")
