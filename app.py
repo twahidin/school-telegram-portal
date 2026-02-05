@@ -4731,6 +4731,8 @@ def regenerate_ai_feedback(submission_id):
                 content_type = (file_data.content_type or '').lower()
                 if 'pdf' in content_type:
                     page_type = 'pdf'
+                elif 'spreadsheet' in content_type or 'excel' in content_type or content_type.endswith('xlsx') or content_type.endswith('xls'):
+                    page_type = 'excel'
                 else:
                     page_type = 'image'
                 pages.append({'type': page_type, 'data': raw, 'page_num': i + 1})
@@ -4742,6 +4744,84 @@ def regenerate_ai_feedback(submission_id):
             return jsonify({'success': False, 'error': 'Could not read any submission files'}), 400
         
         marking_type = assignment.get('marking_type', 'standard')
+        
+        if marking_type == 'spreadsheet':
+            # Re-run spreadsheet evaluation (answer key vs student Excel); do not call image AI
+            answer_key_bytes = None
+            if assignment.get('spreadsheet_answer_key_id'):
+                try:
+                    oid = assignment['spreadsheet_answer_key_id']
+                    if isinstance(oid, str):
+                        oid = ObjectId(oid)
+                    ans_file = fs.get(oid)
+                    answer_key_bytes = ans_file.read()
+                except Exception as e:
+                    logger.warning(f"Could not read spreadsheet answer key: {e}")
+            student_bytes = None
+            for p in pages:
+                if p.get('type') == 'excel':
+                    student_bytes = p['data']
+                    break
+            if not student_bytes:
+                student_bytes = pages[0]['data']
+            if not answer_key_bytes or not student_bytes:
+                return jsonify({
+                    'success': False,
+                    'error': 'Missing answer key or Excel file. Ensure the assignment has an answer key and the submission is an Excel file.'
+                }), 400
+            try:
+                from utils.spreadsheet_evaluator import (
+                    evaluate_spreadsheet_submission,
+                    generate_pdf_report as generate_spreadsheet_pdf,
+                    generate_commented_excel,
+                )
+            except ImportError as e:
+                logger.exception("Spreadsheet evaluator import failed")
+                return jsonify({'success': False, 'error': f'Spreadsheet evaluator unavailable: {e}'}), 500
+            student = Student.find_one({'student_id': submission['student_id']})
+            student_name = (student.get('name') or 'Student') if student else 'Student'
+            result_dict = evaluate_spreadsheet_submission(
+                answer_key_bytes=answer_key_bytes,
+                student_bytes=student_bytes,
+                student_name=student_name,
+                student_filename='submission.xlsx',
+            )
+            if result_dict is None:
+                return jsonify({'success': False, 'error': 'Spreadsheet evaluation failed. Check that the file is a valid Excel workbook.'}), 400
+            pdf_bytes = generate_spreadsheet_pdf(result_dict)
+            excel_bytes = generate_commented_excel(student_bytes, result_dict)
+            pdf_id = fs.put(
+                pdf_bytes,
+                filename=f"{submission_id}_feedback_report.pdf",
+                content_type='application/pdf',
+                submission_id=submission_id,
+                file_type='spreadsheet_feedback_pdf',
+            )
+            excel_id = fs.put(
+                excel_bytes,
+                filename=f"{submission_id}_feedback_commented.xlsx",
+                content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                submission_id=submission_id,
+                file_type='spreadsheet_feedback_excel',
+            )
+            ai_result = {
+                'spreadsheet_feedback': result_dict,
+                'marks_awarded': result_dict.get('marks_awarded'),
+                'total_marks': result_dict.get('total_marks'),
+                'percentage': result_dict.get('percentage'),
+            }
+            Submission.update_one(
+                {'submission_id': submission_id},
+                {'$set': {
+                    'ai_feedback': ai_result,
+                    'status': 'ai_reviewed',
+                    'final_marks': result_dict.get('marks_awarded'),
+                    'spreadsheet_feedback_pdf_id': str(pdf_id),
+                    'spreadsheet_feedback_excel_id': str(excel_id),
+                    'updated_at': datetime.utcnow(),
+                }}
+            )
+            return jsonify({'success': True, 'message': 'Spreadsheet evaluated successfully. View feedback via "View spreadsheet feedback".'})
         
         if marking_type == 'rubric':
             rubrics_content = None
