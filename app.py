@@ -1203,6 +1203,25 @@ def download_submission_pdf(submission_id):
             logger.error(f"Assignment not found for submission {submission_id}, assignment_id: {assignment_id}")
             return redirect(url_for('student_submissions'))
         
+        # For spreadsheet assignments, serve the stored feedback PDF if available
+        if assignment.get('marking_type') == 'spreadsheet' and submission.get('spreadsheet_feedback_pdf_id'):
+            from gridfs import GridFS
+            from bson import ObjectId
+            fs = GridFS(db.db)
+            try:
+                file_id = submission['spreadsheet_feedback_pdf_id']
+                if isinstance(file_id, str):
+                    file_id = ObjectId(file_id)
+                pdf_content = fs.get(file_id).read()
+                return send_file(
+                    io.BytesIO(pdf_content),
+                    mimetype='application/pdf',
+                    as_attachment=True,
+                    download_name=f"feedback_report_{submission_id}.pdf"
+                )
+            except Exception as e:
+                logger.warning(f"Could not read spreadsheet feedback PDF: {e}")
+        
         pdf_content = generate_feedback_pdf(submission, assignment, student)
         
         if not pdf_content:
@@ -1218,6 +1237,42 @@ def download_submission_pdf(submission_id):
     except Exception as e:
         logger.error(f"Error downloading PDF for submission {submission_id}: {e}", exc_info=True)
         return redirect(url_for('view_submission', submission_id=submission_id))
+
+
+@app.route('/submissions/<submission_id>/feedback-excel')
+@login_required
+def download_submission_feedback_excel(submission_id):
+    """Download spreadsheet feedback Excel (commented student file) for spreadsheet assignments."""
+    try:
+        student = Student.find_one({'student_id': session['student_id']})
+        if not student:
+            return redirect(url_for('student_submissions'))
+        submission = Submission.find_one({
+            'submission_id': submission_id,
+            'student_id': session['student_id']
+        })
+        if not submission or not submission.get('spreadsheet_feedback_excel_id'):
+            return redirect(url_for('view_submission', submission_id=submission_id))
+        assignment = Assignment.find_one({'assignment_id': submission.get('assignment_id')})
+        if not assignment or assignment.get('marking_type') != 'spreadsheet':
+            return redirect(url_for('view_submission', submission_id=submission_id))
+        from gridfs import GridFS
+        from bson import ObjectId
+        fs = GridFS(db.db)
+        file_id = submission['spreadsheet_feedback_excel_id']
+        if isinstance(file_id, str):
+            file_id = ObjectId(file_id)
+        excel_content = fs.get(file_id).read()
+        return send_file(
+            io.BytesIO(excel_content),
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            as_attachment=True,
+            download_name=f"feedback_commented_{submission_id}.xlsx"
+        )
+    except Exception as e:
+        logger.error(f"Error downloading feedback Excel for submission {submission_id}: {e}", exc_info=True)
+        return redirect(url_for('view_submission', submission_id=submission_id))
+
 
 @app.route('/student/submit', methods=['POST'])
 @login_required
@@ -1284,18 +1339,23 @@ def student_submit_files():
         for i, file in enumerate(files):
             file_data = file.read()
             
-            # Determine content type
-            if file.filename.lower().endswith('.pdf'):
+            # Determine content type (support Excel for spreadsheet assignments)
+            fn_lower = (file.filename or '').lower()
+            if fn_lower.endswith('.pdf'):
                 content_type = 'application/pdf'
                 page_type = 'pdf'
+            elif fn_lower.endswith(('.xlsx', '.xls')) and assignment.get('marking_type') == 'spreadsheet':
+                content_type = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                page_type = 'excel'
             else:
                 content_type = 'image/jpeg'
                 page_type = 'image'
             
             # Store in GridFS
+            ext = file.filename.split('.')[-1] if file.filename else ('xlsx' if page_type == 'excel' else 'jpg')
             file_id = fs.put(
                 file_data,
-                filename=f"{submission_id}_page_{i+1}.{file.filename.split('.')[-1]}",
+                filename=f"{submission_id}_page_{i+1}.{ext}",
                 content_type=content_type,
                 submission_id=submission_id,
                 page_num=i + 1
@@ -1314,7 +1374,7 @@ def student_submit_files():
             'student_id': session['student_id'],
             'teacher_id': assignment['teacher_id'],
             'file_ids': file_ids,
-            'file_type': 'pdf' if file_type == 'pdf' else 'image',
+            'file_type': 'excel' if (file_type == 'excel' or (pages and pages[0].get('type') == 'excel')) else ('pdf' if file_type == 'pdf' else 'image'),
             'page_count': len(files),
             'status': 'submitted',
             'submitted_at': datetime.utcnow(),
@@ -1331,11 +1391,80 @@ def student_submit_files():
         else:
             Submission.insert_one(submission)
         
-        # Generate AI feedback
+        # Generate AI feedback (or spreadsheet evaluation)
         try:
             marking_type = assignment.get('marking_type', 'standard')
             
-            if marking_type == 'rubric':
+            if marking_type == 'spreadsheet':
+                # Evaluate Excel submission against answer key; generate PDF report and commented Excel
+                answer_key_bytes = None
+                if assignment.get('spreadsheet_answer_key_id'):
+                    try:
+                        ans_file = fs.get(assignment['spreadsheet_answer_key_id'])
+                        answer_key_bytes = ans_file.read()
+                    except Exception as e:
+                        logger.warning(f"Could not read spreadsheet answer key: {e}")
+                student_bytes = pages[0]['data'] if pages and pages[0].get('type') == 'excel' else None
+                if not answer_key_bytes or not student_bytes:
+                    ai_result = {'error': 'Missing answer key or Excel submission'}
+                else:
+                    from utils.spreadsheet_evaluator import (
+                        evaluate_spreadsheet_submission,
+                        generate_pdf_report as generate_spreadsheet_pdf,
+                        generate_commented_excel,
+                    )
+                    student_name = student.get('name') or session.get('student_name') or 'Student'
+                    result_dict = evaluate_spreadsheet_submission(
+                        answer_key_bytes=answer_key_bytes,
+                        student_bytes=student_bytes,
+                        student_name=student_name,
+                        student_filename=(files[0].filename if files else 'submission.xlsx'),
+                    )
+                    if result_dict is None:
+                        ai_result = {'error': 'Spreadsheet evaluation failed'}
+                    else:
+                        pdf_bytes = generate_spreadsheet_pdf(result_dict)
+                        excel_bytes = generate_commented_excel(student_bytes, result_dict)
+                        pdf_id = fs.put(
+                            pdf_bytes,
+                            filename=f"{submission_id}_feedback_report.pdf",
+                            content_type='application/pdf',
+                            submission_id=submission_id,
+                            file_type='spreadsheet_feedback_pdf',
+                        )
+                        excel_id = fs.put(
+                            excel_bytes,
+                            filename=f"{submission_id}_feedback_commented.xlsx",
+                            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                            submission_id=submission_id,
+                            file_type='spreadsheet_feedback_excel',
+                        )
+                        ai_result = {
+                            'spreadsheet_feedback': result_dict,
+                            'marks_awarded': result_dict.get('marks_awarded'),
+                            'total_marks': result_dict.get('total_marks'),
+                            'percentage': result_dict.get('percentage'),
+                        }
+                        update_fields = {
+                            'ai_feedback': ai_result,
+                            'status': 'ai_reviewed',
+                            'final_marks': result_dict.get('marks_awarded'),
+                            'spreadsheet_feedback_pdf_id': str(pdf_id),
+                            'spreadsheet_feedback_excel_id': str(excel_id),
+                        }
+                        if assignment.get('send_ai_feedback_immediately'):
+                            update_fields['feedback_sent'] = True
+                        Submission.update_one(
+                            {'submission_id': submission_id},
+                            {'$set': update_fields}
+                        )
+                        if update_fields.get('feedback_sent'):
+                            submission_after = Submission.find_one({'submission_id': submission_id})
+                            if submission_after:
+                                _update_profile_and_mastery_from_assignment(session['student_id'], assignment, submission_after)
+                        # Skip the common 413 / update block below for spreadsheet
+                        marking_type = None  # signal we already updated
+            elif marking_type == 'rubric':
                 # For rubric-based essays, use the essay analysis function
                 rubrics_content = None
                 if assignment.get('rubrics_id'):
@@ -1358,43 +1487,45 @@ def student_submit_files():
                 
                 ai_result = analyze_submission_images(pages, assignment, answer_key_content, teacher)
             
-            # If AI returned 413 (request too large), auto-reject so student can resubmit with smaller/fewer images
-            is_413 = ai_result.get('error_code') == 'request_too_large' or (
-                ai_result.get('error') and ('413' in str(ai_result.get('error')) or 'request_too_large' in str(ai_result.get('error')).lower())
-            )
-            if is_413:
-                rejection_reason = (
-                    "Your submission was too large to process. Please resubmit with fewer or smaller images: "
-                    "e.g. one photo per page, lower resolution, or fewer pages. This helps the system process your work."
+            # If already handled (e.g. spreadsheet), skip standard/rubric update
+            if marking_type is not None:
+                # If AI returned 413 (request too large), auto-reject so student can resubmit with smaller/fewer images
+                is_413 = ai_result.get('error_code') == 'request_too_large' or (
+                    ai_result.get('error') and ('413' in str(ai_result.get('error')) or 'request_too_large' in str(ai_result.get('error')).lower())
                 )
-                Submission.update_one(
-                    {'submission_id': submission_id},
-                    {'$set': {
+                if is_413:
+                    rejection_reason = (
+                        "Your submission was too large to process. Please resubmit with fewer or smaller images: "
+                        "e.g. one photo per page, lower resolution, or fewer pages. This helps the system process your work."
+                    )
+                    Submission.update_one(
+                        {'submission_id': submission_id},
+                        {'$set': {
+                            'ai_feedback': ai_result,
+                            'status': 'rejected',
+                            'rejection_reason': rejection_reason,
+                            'rejected_at': datetime.utcnow(),
+                            'rejected_by': 'system_413'
+                        }}
+                    )
+                    logger.info(f"Auto-rejected submission {submission_id} due to 413 request_too_large; student can resubmit.")
+                else:
+                    update_fields = {
                         'ai_feedback': ai_result,
-                        'status': 'rejected',
-                        'rejection_reason': rejection_reason,
-                        'rejected_at': datetime.utcnow(),
-                        'rejected_by': 'system_413'
-                    }}
-                )
-                logger.info(f"Auto-rejected submission {submission_id} due to 413 request_too_large; student can resubmit.")
-            else:
-                update_fields = {
-                    'ai_feedback': ai_result,
-                    'status': 'ai_reviewed'
-                }
-                # If assignment is set to send AI feedback straight away, student can see feedback without teacher review
-                if assignment.get('send_ai_feedback_immediately') and not ai_result.get('error'):
-                    update_fields['feedback_sent'] = True
-                Submission.update_one(
-                    {'submission_id': submission_id},
-                    {'$set': update_fields}
-                )
-                # Update profile/mastery when assignment is linked to module and feedback is sent
-                if update_fields.get('feedback_sent'):
-                    submission_after = Submission.find_one({'submission_id': submission_id})
-                    if submission_after:
-                        _update_profile_and_mastery_from_assignment(session['student_id'], assignment, submission_after)
+                        'status': 'ai_reviewed'
+                    }
+                    # If assignment is set to send AI feedback straight away, student can see feedback without teacher review
+                    if assignment.get('send_ai_feedback_immediately') and not ai_result.get('error'):
+                        update_fields['feedback_sent'] = True
+                    Submission.update_one(
+                        {'submission_id': submission_id},
+                        {'$set': update_fields}
+                    )
+                    # Update profile/mastery when assignment is linked to module and feedback is sent
+                    if update_fields.get('feedback_sent'):
+                        submission_after = Submission.find_one({'submission_id': submission_id})
+                        if submission_after:
+                            _update_profile_and_mastery_from_assignment(session['student_id'], assignment, submission_after)
         except Exception as e:
             logger.error(f"AI feedback error: {e}")
         
@@ -1637,11 +1768,18 @@ def download_student_assignment_file(assignment_id, file_type):
         
         logger.info(f"Attempting to get file {file_id} from GridFS")
         file_data = fs.get(file_id)
+        # Use correct mimetype for spreadsheet files
+        if file_type in ('spreadsheet_student_template', 'spreadsheet_answer_key'):
+            mimetype = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            default_name = 'template.xlsx'
+        else:
+            mimetype = 'application/pdf'
+            default_name = 'document.pdf'
         return Response(
             file_data.read(),
-            mimetype='application/pdf',
+            mimetype=mimetype,
             headers={
-                'Content-Disposition': f'inline; filename="{assignment.get(file_name_field, "document.pdf")}"'
+                'Content-Disposition': f'inline; filename="{assignment.get(file_name_field, default_name)}"'
             }
         )
     except Exception as e:
@@ -3411,7 +3549,32 @@ def create_assignment():
                 return None, None
             
             # Validate required files based on marking type
-            if marking_type == 'rubric':
+            if marking_type == 'spreadsheet':
+                spreadsheet_student_template = request.files.get('spreadsheet_student_template')
+                spreadsheet_answer_key = request.files.get('spreadsheet_answer_key')
+                spreadsheet_question_paper = request.files.get('spreadsheet_question_paper')
+                if not spreadsheet_student_template or not spreadsheet_student_template.filename:
+                    return render_template('teacher_create_assignment.html',
+                                         teacher=teacher,
+                                         classes=classes,
+                                         teaching_groups=teaching_groups,
+                                         teacher_modules=teacher_modules,
+                                         error='Excel student template is required for spreadsheet assignments')
+                if not spreadsheet_answer_key or not spreadsheet_answer_key.filename:
+                    return render_template('teacher_create_assignment.html',
+                                         teacher=teacher,
+                                         classes=classes,
+                                         teaching_groups=teaching_groups,
+                                         teacher_modules=teacher_modules,
+                                         error='Excel answer key (template with correct answers) is required')
+                if not spreadsheet_question_paper or not spreadsheet_question_paper.filename:
+                    return render_template('teacher_create_assignment.html',
+                                         teacher=teacher,
+                                         classes=classes,
+                                         teaching_groups=teaching_groups,
+                                         teacher_modules=teacher_modules,
+                                         error='Question paper (PDF) is required for spreadsheet assignments')
+            elif marking_type == 'rubric':
                 # For rubric-based: question paper and rubrics are required
                 if not question_paper_drive_id and (not question_paper or not question_paper.filename):
                     return render_template('teacher_create_assignment.html',
@@ -3448,75 +3611,107 @@ def create_assignment():
             total_marks = int(data.get('total_marks', 100))
             assignment_title = data.get('title', 'Untitled')
             
-            # Get file contents from Drive or uploads
-            # For Drive files, we download temporarily only for text extraction
-            try:
-                question_paper_content, question_paper_name = get_file_content(question_paper, question_paper_drive_id, 'question paper')
-                answer_key_content, answer_key_name = get_file_content(answer_key, answer_key_drive_id, 'answer key')
-                reference_materials = request.files.get('reference_materials')
-                reference_materials_content, reference_materials_name = get_file_content(reference_materials, reference_materials_drive_id, 'reference materials')
-                rubrics_content, rubrics_name = get_file_content(rubrics, rubrics_drive_id, 'rubrics')
-            except Exception as e:
-                return render_template('teacher_create_assignment.html',
-                                     teacher=teacher,
-                                     classes=classes,
-                                     teaching_groups=teaching_groups,
-                                     teacher_modules=teacher_modules,
-                                     error=str(e))
-            
-            # Extract text from PDFs for cost-effective AI processing
-            question_paper_text = extract_text_from_pdf(question_paper_content) if question_paper_content else ""
-            answer_key_text = extract_text_from_pdf(answer_key_content) if answer_key_content else ""
-            reference_materials_text = extract_text_from_pdf(reference_materials_content) if reference_materials_content else ""
-            rubrics_text = extract_text_from_pdf(rubrics_content) if rubrics_content else ""
-            
-            # Store files in GridFS (only for uploaded files, not Drive files)
             from gridfs import GridFS
             fs = GridFS(db.db)
-            
-            # Save question paper (only if uploaded, not from Drive)
             question_paper_id = None
-            if question_paper_content and not question_paper_name.startswith('DRIVE:'):
+            answer_key_id = None
+            spreadsheet_student_template_id = None
+            spreadsheet_answer_key_id = None
+            reference_materials_id = None
+            rubrics_id = None
+            question_paper_text = ""
+            answer_key_text = ""
+            reference_materials_text = ""
+            rubrics_text = ""
+            question_paper_name = None
+            answer_key_name = None
+            
+            if marking_type == 'spreadsheet':
+                spreadsheet_student_template = request.files.get('spreadsheet_student_template')
+                spreadsheet_answer_key = request.files.get('spreadsheet_answer_key')
+                spreadsheet_question_paper = request.files.get('spreadsheet_question_paper')
+                spreadsheet_student_template_id = fs.put(
+                    spreadsheet_student_template.read(),
+                    filename=f"{assignment_id}_spreadsheet_template.xlsx",
+                    content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                    assignment_id=assignment_id,
+                    file_type='spreadsheet_student_template'
+                )
+                spreadsheet_answer_key_id = fs.put(
+                    spreadsheet_answer_key.read(),
+                    filename=f"{assignment_id}_spreadsheet_answer.xlsx",
+                    content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                    assignment_id=assignment_id,
+                    file_type='spreadsheet_answer_key'
+                )
+                spreadsheet_question_paper_content = spreadsheet_question_paper.read()
                 question_paper_id = fs.put(
-                    question_paper_content,
+                    spreadsheet_question_paper_content,
                     filename=f"{assignment_id}_question.pdf",
                     content_type='application/pdf',
                     assignment_id=assignment_id,
                     file_type='question_paper'
                 )
+                question_paper_text = extract_text_from_pdf(spreadsheet_question_paper_content) if spreadsheet_question_paper_content else ""
+                question_paper_name = spreadsheet_question_paper.filename
+                spreadsheet_student_template_name = spreadsheet_student_template.filename
+                spreadsheet_answer_key_name = spreadsheet_answer_key.filename
+            else:
+                spreadsheet_student_template_name = None
+                spreadsheet_answer_key_name = None
+                # Get file contents from Drive or uploads (standard / rubric)
+                try:
+                    question_paper_content, question_paper_name = get_file_content(question_paper, question_paper_drive_id, 'question paper')
+                    answer_key_content, answer_key_name = get_file_content(answer_key, answer_key_drive_id, 'answer key')
+                    reference_materials = request.files.get('reference_materials')
+                    reference_materials_content, reference_materials_name = get_file_content(reference_materials, reference_materials_drive_id, 'reference materials')
+                    rubrics_content, rubrics_name = get_file_content(rubrics, rubrics_drive_id, 'rubrics')
+                except Exception as e:
+                    return render_template('teacher_create_assignment.html',
+                                         teacher=teacher,
+                                         classes=classes,
+                                         teaching_groups=teaching_groups,
+                                         teacher_modules=teacher_modules,
+                                         error=str(e))
+                
+                # Extract text from PDFs for cost-effective AI processing
+                question_paper_text = extract_text_from_pdf(question_paper_content) if question_paper_content else ""
+                answer_key_text = extract_text_from_pdf(answer_key_content) if answer_key_content else ""
+                reference_materials_text = extract_text_from_pdf(reference_materials_content) if reference_materials_content else ""
+                rubrics_text = extract_text_from_pdf(rubrics_content) if rubrics_content else ""
             
-            # Save answer key (only if uploaded, not from Drive)
-            answer_key_id = None
-            if answer_key_content and not answer_key_name.startswith('DRIVE:'):
-                answer_key_id = fs.put(
-                    answer_key_content,
-                    filename=f"{assignment_id}_answer.pdf",
-                    content_type='application/pdf',
-                    assignment_id=assignment_id,
-                    file_type='answer_key'
-                )
-            
-            # Save reference materials (only if uploaded, not from Drive)
-            reference_materials_id = None
-            if reference_materials_content and not (reference_materials_name and reference_materials_name.startswith('DRIVE:')):
-                reference_materials_id = fs.put(
-                    reference_materials_content,
-                    filename=f"{assignment_id}_reference.pdf",
-                    content_type='application/pdf',
-                    assignment_id=assignment_id,
-                    file_type='reference_materials'
-                )
-            
-            # Save rubrics (only if uploaded, not from Drive)
-            rubrics_id = None
-            if rubrics_content and not (rubrics_name and rubrics_name.startswith('DRIVE:')):
-                rubrics_id = fs.put(
-                    rubrics_content,
-                    filename=f"{assignment_id}_rubrics.pdf",
-                    content_type='application/pdf',
-                    assignment_id=assignment_id,
-                    file_type='rubrics'
-                )
+                if question_paper_content and not question_paper_name.startswith('DRIVE:'):
+                    question_paper_id = fs.put(
+                        question_paper_content,
+                        filename=f"{assignment_id}_question.pdf",
+                        content_type='application/pdf',
+                        assignment_id=assignment_id,
+                        file_type='question_paper'
+                    )
+                if answer_key_content and not answer_key_name.startswith('DRIVE:'):
+                    answer_key_id = fs.put(
+                        answer_key_content,
+                        filename=f"{assignment_id}_answer.pdf",
+                        content_type='application/pdf',
+                        assignment_id=assignment_id,
+                        file_type='answer_key'
+                    )
+                if reference_materials_content and not (reference_materials_name and reference_materials_name.startswith('DRIVE:')):
+                    reference_materials_id = fs.put(
+                        reference_materials_content,
+                        filename=f"{assignment_id}_reference.pdf",
+                        content_type='application/pdf',
+                        assignment_id=assignment_id,
+                        file_type='reference_materials'
+                    )
+                if rubrics_content and not (rubrics_name and rubrics_name.startswith('DRIVE:')):
+                    rubrics_id = fs.put(
+                        rubrics_content,
+                        filename=f"{assignment_id}_rubrics.pdf",
+                        content_type='application/pdf',
+                        assignment_id=assignment_id,
+                        file_type='rubrics'
+                    )
             
             # Initialize Google Drive folder IDs and file references
             drive_folders = None
@@ -3573,18 +3768,22 @@ def create_assignment():
                 'subject': data.get('subject', 'General'),
                 'instructions': data.get('instructions', ''),
                 'total_marks': total_marks,
-                'marking_type': marking_type,  # 'standard' or 'rubric'
+                'marking_type': marking_type,  # 'standard', 'rubric', or 'spreadsheet'
                 'award_marks': award_marks,  # True = show marks; False = show Correct/Partial/Incorrect only (standard only)
                 'send_ai_feedback_immediately': send_ai_feedback_immediately,  # True = student sees AI feedback right after submit; False = teacher reviews first
                 'question_paper_id': question_paper_id,
                 'answer_key_id': answer_key_id,
-                'question_paper_name': question_paper.filename if question_paper and question_paper.filename else (question_paper_name.replace('DRIVE:', '') if question_paper_name and question_paper_name.startswith('DRIVE:') else None),
-                'answer_key_name': answer_key.filename if answer_key and answer_key.filename else (answer_key_name.replace('DRIVE:', '') if answer_key_name and answer_key_name.startswith('DRIVE:') else None),
+                'question_paper_name': question_paper.filename if (marking_type != 'spreadsheet' and question_paper and question_paper.filename) else (question_paper_name.replace('DRIVE:', '') if question_paper_name and str(question_paper_name).startswith('DRIVE:') else question_paper_name),
+                'answer_key_name': answer_key.filename if (marking_type != 'spreadsheet' and answer_key and answer_key.filename) else (answer_key_name.replace('DRIVE:', '') if answer_key_name and str(answer_key_name).startswith('DRIVE:') else answer_key_name),
+                'spreadsheet_student_template_id': spreadsheet_student_template_id,
+                'spreadsheet_answer_key_id': spreadsheet_answer_key_id,
+                'spreadsheet_student_template_name': spreadsheet_student_template_name if marking_type == 'spreadsheet' else None,
+                'spreadsheet_answer_key_name': spreadsheet_answer_key_name if marking_type == 'spreadsheet' else None,
                 # New optional document fields
                 'reference_materials_id': reference_materials_id,
-                'reference_materials_name': reference_materials.filename if reference_materials and reference_materials.filename else (reference_materials_name.replace('DRIVE:', '') if reference_materials_name and reference_materials_name.startswith('DRIVE:') else None),
+                'reference_materials_name': (reference_materials.filename if reference_materials and reference_materials.filename else (reference_materials_name.replace('DRIVE:', '') if reference_materials_name and str(reference_materials_name).startswith('DRIVE:') else None)) if marking_type != 'spreadsheet' else None,
                 'rubrics_id': rubrics_id,
-                'rubrics_name': rubrics.filename if rubrics and rubrics.filename else (rubrics_name.replace('DRIVE:', '') if rubrics_name and rubrics_name.startswith('DRIVE:') else None),
+                'rubrics_name': (rubrics.filename if rubrics and rubrics.filename else (rubrics_name.replace('DRIVE:', '') if rubrics_name and str(rubrics_name).startswith('DRIVE:') else None)) if marking_type != 'spreadsheet' else None,
                 # Extracted text for cost-effective AI processing
                 'question_paper_text': question_paper_text,
                 'answer_key_text': answer_key_text,

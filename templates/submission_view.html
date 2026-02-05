@@ -107,6 +107,35 @@
         </div>
     </div>
     
+    <!-- Spreadsheet assignment: PDF report and commented Excel download -->
+    {% if assignment.marking_type == 'spreadsheet' and submission.get('feedback_sent', False) and (submission.get('spreadsheet_feedback_pdf_id') or submission.get('spreadsheet_feedback_excel_id')) %}
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card border-success">
+                <div class="card-header bg-success text-white">
+                    <h5 class="mb-0"><i class="bi bi-file-earmark-excel me-2"></i>Spreadsheet feedback</h5>
+                    <small>Download your feedback report and your spreadsheet with comments showing where to improve.</small>
+                </div>
+                <div class="card-body">
+                    <div class="d-flex flex-wrap gap-3 align-items-center">
+                        {% if submission.get('spreadsheet_feedback_pdf_id') %}
+                        <a href="{{ url_for('download_submission_pdf', submission_id=submission.submission_id) }}" class="btn btn-outline-danger" download>
+                            <i class="bi bi-file-pdf me-2"></i>Download PDF report
+                        </a>
+                        {% endif %}
+                        {% if submission.get('spreadsheet_feedback_excel_id') %}
+                        <a href="{{ url_for('download_submission_feedback_excel', submission_id=submission.submission_id) }}" class="btn btn-outline-success" download>
+                            <i class="bi bi-file-earmark-excel me-2"></i>Download Excel with comments
+                        </a>
+                        {% endif %}
+                    </div>
+                    <p class="text-muted small mb-0 mt-2">The PDF report summarises where you went wrong. The Excel file is your submission with comments on each cell that needs correction.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+    
     <div class="row">
         <!-- Left: Your Submission (reduced by 1/4 for correction column) -->
         <div class="col-lg-4 mb-4">
@@ -115,7 +144,9 @@
                     <h5 class="mb-0"><i class="bi bi-file-earmark me-2"></i>Your Submission</h5>
                     {% if submission.file_ids %}
                     <small class="text-muted">
-                        {% if submission.file_type == 'pdf' %}
+                        {% if submission.file_type == 'excel' %}
+                        <i class="bi bi-file-earmark-excel me-1"></i>Excel spreadsheet
+                        {% elif submission.file_type == 'pdf' %}
                         <i class="bi bi-file-pdf me-1"></i>PDF Document
                         {% else %}
                         <i class="bi bi-images me-1"></i>{{ submission.page_count }} page(s)
@@ -126,7 +157,15 @@
                 <div class="card-body p-0">
                     {% if submission.file_ids %}
                     <div class="submission-viewer-container" style="height: calc(100vh - 350px); min-height: 320px; overflow: auto; background: #f5f5f5;">
-                        {% if submission.file_type == 'pdf' %}
+                        {% if submission.file_type == 'excel' %}
+                        <div class="p-4 text-center">
+                            <i class="bi bi-file-earmark-excel text-success" style="font-size: 4rem;"></i>
+                            <p class="mt-2 mb-2">Excel submission</p>
+                            <a href="{{ url_for('view_student_submission_file', submission_id=submission.submission_id, file_index=0) }}" class="btn btn-outline-success" download>
+                                <i class="bi bi-download me-1"></i>Download your spreadsheet
+                            </a>
+                        </div>
+                        {% elif submission.file_type == 'pdf' %}
                         <!-- PDF Viewer - Full scrollable document -->
                         <iframe id="submission-viewer" 
                                 src="{{ url_for('view_student_submission_file', submission_id=submission.submission_id, file_index=0) }}"

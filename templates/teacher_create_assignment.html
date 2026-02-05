@@ -89,6 +89,13 @@
                                     </label>
                                     <small class="text-muted d-block ms-4">For essays and written compositions graded using rubric criteria</small>
                                 </div>
+                                <div class="form-check mt-2">
+                                    <input class="form-check-input" type="radio" name="marking_type" id="marking_spreadsheet" value="spreadsheet">
+                                    <label class="form-check-label" for="marking_spreadsheet">
+                                        <i class="bi bi-file-earmark-excel me-1"></i>Spreadsheet assignment
+                                    </label>
+                                    <small class="text-muted d-block ms-4">For Excel-based tasks; students submit a spreadsheet and receive a PDF report and commented Excel with feedback</small>
+                                </div>
                             </div>
                         </div>
                         
@@ -195,7 +202,8 @@
                             </div>
                         </div>
                         {% endif %}
-                        <div class="row">
+                        <!-- Standard/Rubric uploads (question paper + answer key or rubrics) -->
+                        <div id="upload-docs-standard-rubric" class="row">
                             <!-- Question Paper -->
                             <div class="col-md-6 mb-3">
                                 <div class="upload-zone" id="question-zone">
@@ -226,6 +234,52 @@
                                         <h6 id="answer-key-title">Answer Key *</h6>
                                         <p class="text-muted small mb-0" id="answer-key-desc">Questions with answers</p>
                                         <span class="file-name" id="answer-filename">Click to upload PDF</span>
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Spreadsheet assignment: Excel template, Excel answer key, Question paper PDF -->
+                        <div id="upload-docs-spreadsheet" class="row" style="display: none;">
+                            <div class="col-md-4 mb-3">
+                                <div class="upload-zone" id="spreadsheet_template-zone">
+                                    <input type="file" class="form-control d-none" id="spreadsheet_student_template" name="spreadsheet_student_template" 
+                                           accept=".xlsx,.xls" onchange="handleFileSelect(this, 'spreadsheet_template')">
+                                    <label for="spreadsheet_student_template" class="upload-label">
+                                        <div class="upload-icon spreadsheet">
+                                            <i class="bi bi-file-earmark-excel"></i>
+                                        </div>
+                                        <h6>Excel student template *</h6>
+                                        <p class="text-muted small mb-0">Blank template for students</p>
+                                        <span class="file-name" id="spreadsheet_template-filename">Click to upload .xlsx</span>
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <div class="upload-zone" id="spreadsheet_answer-zone">
+                                    <input type="file" class="form-control d-none" id="spreadsheet_answer_key" name="spreadsheet_answer_key" 
+                                           accept=".xlsx,.xls" onchange="handleFileSelect(this, 'spreadsheet_answer')">
+                                    <label for="spreadsheet_answer_key" class="upload-label">
+                                        <div class="upload-icon answer">
+                                            <i class="bi bi-file-earmark-excel"></i>
+                                        </div>
+                                        <h6>Excel answer key *</h6>
+                                        <p class="text-muted small mb-0">Template with correct answers</p>
+                                        <span class="file-name" id="spreadsheet_answer-filename">Click to upload .xlsx</span>
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <div class="upload-zone" id="spreadsheet_question-zone">
+                                    <input type="file" class="form-control d-none" id="spreadsheet_question_paper" name="spreadsheet_question_paper" 
+                                           accept=".pdf" onchange="handleFileSelect(this, 'spreadsheet_question')">
+                                    <label for="spreadsheet_question_paper" class="upload-label">
+                                        <div class="upload-icon">
+                                            <i class="bi bi-file-earmark-text"></i>
+                                        </div>
+                                        <h6>Question paper (PDF) *</h6>
+                                        <p class="text-muted small mb-0">Instructions / questions</p>
+                                        <span class="file-name" id="spreadsheet_question-filename">Click to upload PDF</span>
                                     </label>
                                 </div>
                             </div>
@@ -444,6 +498,18 @@
                             <span>Rubrics:</span>
                             <strong id="summary-rubrics"><span class="text-muted">Optional</span></strong>
                         </div>
+                        <div id="summary-spreadsheet_template-row" class="summary-item" style="display: none;">
+                            <span>Excel template:</span>
+                            <strong id="summary-spreadsheet_template"><span class="text-danger">Not uploaded</span></strong>
+                        </div>
+                        <div id="summary-spreadsheet_answer-row" class="summary-item" style="display: none;">
+                            <span>Excel answer key:</span>
+                            <strong id="summary-spreadsheet_answer"><span class="text-danger">Not uploaded</span></strong>
+                        </div>
+                        <div id="summary-spreadsheet_question-row" class="summary-item" style="display: none;">
+                            <span>Question paper (PDF):</span>
+                            <strong id="summary-spreadsheet_question"><span class="text-danger">Not uploaded</span></strong>
+                        </div>
                         <div class="summary-item">
                             <span>Marking Type:</span>
                             <strong id="summary-marking-type"><span class="text-primary">Standard</span></strong>
@@ -530,6 +596,10 @@
 
 .upload-icon.rubrics {
     background: linear-gradient(135deg, #fd7e14, #dc6a10);
+}
+
+.upload-icon.spreadsheet {
+    background: linear-gradient(135deg, #217346, #1d6b3c);
 }
 
 .upload-icon i {
@@ -627,14 +697,17 @@
                          document.getElementById('answer_key_drive_id').value;
         const rubrics = document.getElementById('rubrics').files.length > 0 || 
                        document.getElementById('rubrics_drive_id').value;
+        const spreadsheetTemplate = document.getElementById('spreadsheet_student_template').files.length > 0;
+        const spreadsheetAnswer = document.getElementById('spreadsheet_answer_key').files.length > 0;
+        const spreadsheetQuestion = document.getElementById('spreadsheet_question_paper').files.length > 0;
         const markingType = document.querySelector('input[name="marking_type"]:checked').value;
         const submitBtn = document.getElementById('submit-btn');
         
-        if (markingType === 'rubric') {
-            // For rubric-based: question paper and rubrics are required
+        if (markingType === 'spreadsheet') {
+            submitBtn.disabled = !(spreadsheetTemplate && spreadsheetAnswer && spreadsheetQuestion);
+        } else if (markingType === 'rubric') {
             submitBtn.disabled = !(questionPaper && rubrics);
         } else {
-            // For standard: question paper and answer key are required
             submitBtn.disabled = !(questionPaper && answerKey);
         }
     }
@@ -647,9 +720,18 @@
                          document.getElementById('answer_key_drive_id').value;
         const rubrics = document.getElementById('rubrics').files.length > 0 || 
                        document.getElementById('rubrics_drive_id').value;
+        const spreadsheetTemplate = document.getElementById('spreadsheet_student_template').files.length > 0;
+        const spreadsheetAnswer = document.getElementById('spreadsheet_answer_key').files.length > 0;
+        const spreadsheetQuestion = document.getElementById('spreadsheet_question_paper').files.length > 0;
         const markingType = document.querySelector('input[name="marking_type"]:checked').value;
         
-        if (markingType === 'rubric') {
+        if (markingType === 'spreadsheet') {
+            if (!spreadsheetTemplate || !spreadsheetAnswer || !spreadsheetQuestion) {
+                e.preventDefault();
+                alert('For spreadsheet assignments please upload: Excel student template, Excel answer key, and Question paper (PDF).');
+                return false;
+            }
+        } else if (markingType === 'rubric') {
             if (!questionPaper || !rubrics) {
                 e.preventDefault();
                 alert('Please upload or select from Google Drive both the question paper and rubrics PDFs for rubric-based marking.');
@@ -668,19 +750,30 @@
     document.querySelectorAll('input[name="marking_type"]').forEach(radio => {
         radio.addEventListener('change', function() {
             const isRubric = this.value === 'rubric';
-            updateMarkingTypeUI(isRubric);
+            const isSpreadsheet = this.value === 'spreadsheet';
+            updateMarkingTypeUI(isRubric, isSpreadsheet);
             validateForm();
         });
     });
     
-    function updateMarkingTypeUI(isRubric) {
-        // Show/hide award marks option (Standard only; rubric always uses marks)
+    function updateMarkingTypeUI(isRubric, isSpreadsheet) {
+        isSpreadsheet = !!isSpreadsheet;
+        const uploadStandard = document.getElementById('upload-docs-standard-rubric');
+        const uploadSpreadsheet = document.getElementById('upload-docs-spreadsheet');
+        if (uploadStandard) uploadStandard.style.display = isSpreadsheet ? 'none' : 'flex';
+        if (uploadSpreadsheet) uploadSpreadsheet.style.display = isSpreadsheet ? 'flex' : 'none';
+        ['spreadsheet_template', 'spreadsheet_answer', 'spreadsheet_question'].forEach(function(t) {
+            const row = document.getElementById('summary-' + t + '-row');
+            if (row) row.style.display = isSpreadsheet ? 'flex' : 'none';
+        });
+        const questionSummaryRow = document.querySelector('.summary-item:has(#summary-question)');
+        const answerSummaryRow = document.querySelector('.summary-item:has(#summary-answer)');
+        if (questionSummaryRow) questionSummaryRow.style.display = isSpreadsheet ? 'none' : 'flex';
+        if (answerSummaryRow) answerSummaryRow.style.display = isSpreadsheet ? 'none' : 'flex';
         const awardMarksContainer = document.getElementById('award-marks-container');
         if (awardMarksContainer) {
-            awardMarksContainer.style.display = isRubric ? 'none' : 'block';
-            if (isRubric) {
-                document.getElementById('award_marks_yes').checked = true;
-            }
+            awardMarksContainer.style.display = (isRubric || isSpreadsheet) ? 'none' : 'block';
+            if (isRubric) document.getElementById('award_marks_yes').checked = true;
         }
         // Update answer key section
         const answerKeyTitle = document.getElementById('answer-key-title');
@@ -697,8 +790,9 @@
         
         // Update marking type summary
         const summaryMarkingType = document.getElementById('summary-marking-type');
-        
-        if (isRubric) {
+        if (isSpreadsheet && summaryMarkingType) {
+            summaryMarkingType.innerHTML = '<span class="text-success">Spreadsheet</span>';
+        } else if (isRubric) {
             // Rubric-based marking: answer key optional, rubrics required
             answerKeyTitle.innerHTML = 'Answer Key';
             answerKeyDesc.textContent = 'Optional model essay/answer';
@@ -739,11 +833,12 @@
     }
     
     function updateSummaryAwardMarks() {
-        const isRubric = document.getElementById('marking_rubric')?.checked;
+        const isRubric = document.getElementById('marking_rubric') && document.getElementById('marking_rubric').checked;
+        const isSpreadsheet = document.getElementById('marking_spreadsheet') && document.getElementById('marking_spreadsheet').checked;
         const row = document.getElementById('summary-award-marks-row');
         const el = document.getElementById('summary-award-marks');
         if (!row || !el) return;
-        if (isRubric) {
+        if (isRubric || isSpreadsheet) {
             row.style.display = 'none';
             return;
         }
@@ -756,8 +851,9 @@
     });
     
     // Initial validation and UI (marking type + award marks)
-    const initialRubric = document.getElementById('marking_rubric')?.checked;
-    updateMarkingTypeUI(!!initialRubric);
+    const initialRubric = document.getElementById('marking_rubric') && document.getElementById('marking_rubric').checked;
+    const initialSpreadsheet = document.getElementById('marking_spreadsheet') && document.getElementById('marking_spreadsheet').checked;
+    updateMarkingTypeUI(!!initialRubric, !!initialSpreadsheet);
     updateSummaryAwardMarks();
     validateForm();
     

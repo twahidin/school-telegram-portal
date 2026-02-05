@@ -92,8 +92,27 @@
                     </div>
                     {% endif %}
                     
-                    <!-- Question Paper Download -->
-                    {% if assignment.question_paper_id %}
+                    <!-- Question Paper / Spreadsheet materials -->
+                    {% if assignment.marking_type == 'spreadsheet' %}
+                    <div class="question-paper-section mt-4">
+                        <h6><i class="bi bi-file-earmark-excel me-2"></i>Spreadsheet assignment</h6>
+                        <div class="d-grid gap-2">
+                            {% if assignment.spreadsheet_student_template_id %}
+                            <a href="{{ url_for('download_student_assignment_file', assignment_id=assignment.assignment_id, file_type='spreadsheet_student_template') }}" 
+                               class="btn btn-success" download>
+                                <i class="bi bi-download me-1"></i>Download Excel template
+                            </a>
+                            {% endif %}
+                            {% if assignment.question_paper_id %}
+                            <a href="{{ url_for('download_student_assignment_file', assignment_id=assignment.assignment_id, file_type='question_paper') }}" 
+                               class="btn btn-outline-primary" download>
+                                <i class="bi bi-file-pdf me-1"></i>Download Question paper (PDF)
+                            </a>
+                            {% endif %}
+                        </div>
+                        <p class="text-muted small mt-2 mb-0">Complete the Excel template and upload it below. You will receive a PDF report and a commented Excel file with feedback.</p>
+                    </div>
+                    {% elif assignment.question_paper_id %}
                     <div class="question-paper-section mt-4">
                         <h6><i class="bi bi-file-pdf me-2"></i>Question Paper</h6>
                         <div class="d-grid gap-2">
@@ -431,6 +450,13 @@
                         
                         <!-- Upload Method Tabs -->
                         <ul class="nav nav-pills nav-fill mb-3" role="tablist">
+                            {% if assignment.marking_type == 'spreadsheet' %}
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link active" data-bs-toggle="pill" data-bs-target="#excel-upload" type="button">
+                                    <i class="bi bi-file-earmark-excel me-1"></i>Excel
+                                </button>
+                            </li>
+                            {% else %}
                             <li class="nav-item" role="presentation">
                                 <button class="nav-link active" data-bs-toggle="pill" data-bs-target="#photo-upload" type="button">
                                     <i class="bi bi-camera me-1"></i>Photos
@@ -441,9 +467,30 @@
                                     <i class="bi bi-file-pdf me-1"></i>PDF
                                 </button>
                             </li>
+                            {% endif %}
                         </ul>
                         
                         <div class="tab-content">
+                            {% if assignment.marking_type == 'spreadsheet' %}
+                            <!-- Excel Upload (spreadsheet assignments only) -->
+                            <div class="tab-pane fade show active" id="excel-upload">
+                                <div class="upload-zone" id="excel-zone">
+                                    <input type="file" class="d-none" id="excel-input" name="files" accept=".xlsx,.xls">
+                                    <label for="excel-input" class="upload-label">
+                                        <i class="bi bi-file-earmark-excel" style="font-size: 2.5rem; color: #217346;"></i>
+                                        <h6 class="mt-2">Click to upload your Excel spreadsheet</h6>
+                                        <p class="text-muted small mb-0">Upload your completed .xlsx file</p>
+                                    </label>
+                                </div>
+                                <div id="excel-preview" class="mt-3" style="display: none;">
+                                    <div class="alert alert-success">
+                                        <i class="bi bi-check-circle me-2"></i>
+                                        <span id="excel-filename">file.xlsx</span>
+                                        <button type="button" class="btn-close float-end" onclick="clearExcel()"></button>
+                                    </div>
+                                </div>
+                            </div>
+                            {% else %}
                             <!-- Photo Upload -->
                             <div class="tab-pane fade show active" id="photo-upload">
                                 <div class="upload-zone" id="photo-zone">
@@ -482,6 +529,7 @@
                                     </div>
                                 </div>
                             </div>
+                            {% endif %}
                         </div>
                         
                         <!-- Submit Button -->
@@ -493,7 +541,7 @@
                         
                         <div class="alert alert-warning mt-3 small py-2">
                             <i class="bi bi-exclamation-triangle me-1"></i>
-                            <strong>Note:</strong> Once submitted, you cannot change your answers. AI will provide feedback, then your teacher will review.
+                            <strong>Note:</strong> Once submitted, you cannot change your answers. {% if assignment.marking_type == 'spreadsheet' %}Your spreadsheet will be evaluated and you will receive a PDF report and a commented Excel file.{% else %}AI will provide feedback, then your teacher will review.{% endif %}
                         </div>
                     </form>
                 </div>
@@ -837,6 +885,8 @@
     // === FINAL SUBMISSION UPLOADS ===
     let uploadedPhotos = [];
     let uploadedPdf = null;
+    let uploadedExcel = null;
+    const isSpreadsheetAssignment = {{ 'true' if assignment.marking_type == 'spreadsheet' else 'false' }};
     
     // === REVIEW UPLOADS ===
     let reviewPhotos = [];
@@ -927,8 +977,37 @@
     function updateSubmitButton() {
         const submitBtn = document.getElementById('submit-btn');
         if (submitBtn) {
-            submitBtn.disabled = uploadedPhotos.length === 0 && !uploadedPdf;
+            if (isSpreadsheetAssignment) {
+                submitBtn.disabled = !uploadedExcel;
+            } else {
+                submitBtn.disabled = uploadedPhotos.length === 0 && !uploadedPdf;
+            }
         }
+    }
+    
+    // Excel input handling (spreadsheet assignments only)
+    const excelInput = document.getElementById('excel-input');
+    const excelZone = document.getElementById('excel-zone');
+    const excelPreview = document.getElementById('excel-preview');
+    if (excelInput && excelZone) {
+        excelInput.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file && (file.name.endsWith('.xlsx') || file.name.endsWith('.xls'))) {
+                uploadedExcel = file;
+                excelZone.classList.add('has-files');
+                excelPreview.style.display = 'block';
+                const fn = document.getElementById('excel-filename');
+                if (fn) fn.textContent = file.name;
+                updateSubmitButton();
+            }
+        });
+    }
+    function clearExcel() {
+        uploadedExcel = null;
+        if (excelInput) excelInput.value = '';
+        if (excelZone) excelZone.classList.remove('has-files');
+        if (excelPreview) excelPreview.style.display = 'none';
+        updateSubmitButton();
     }
     
     // === REVIEW SECTION HANDLERS ===
@@ -1685,7 +1764,12 @@
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
             
-            if (uploadedPhotos.length === 0 && !uploadedPdf) {
+            if (isSpreadsheetAssignment) {
+                if (!uploadedExcel) {
+                    alert('Please upload your Excel spreadsheet.');
+                    return;
+                }
+            } else if (uploadedPhotos.length === 0 && !uploadedPdf) {
                 alert('Please upload photos or a PDF of your work.');
                 return;
             }
@@ -1700,7 +1784,10 @@
             const formData = new FormData();
             formData.append('assignment_id', '{{ assignment.assignment_id }}');
             
-            if (uploadedPhotos.length > 0) {
+            if (isSpreadsheetAssignment && uploadedExcel) {
+                formData.append('files', uploadedExcel, uploadedExcel.name);
+                formData.append('file_type', 'excel');
+            } else if (uploadedPhotos.length > 0) {
                 uploadedPhotos.forEach((photo, idx) => {
                     formData.append('files', photo, `page_${idx + 1}.jpg`);
                 });
