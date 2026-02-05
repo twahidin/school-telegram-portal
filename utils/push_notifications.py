@@ -115,14 +115,14 @@ def send_assignment_notification(db, assignment: dict, class_id: str = None,
         logger.warning("Push notifications not configured")
         return {"sent": 0, "failed": 0, "expired": 0, "error": "Not configured"}
     
-    students_col = db.client[db.db_name]['students']
+    students_col = db.db['students']
     
     # Build query to find students with push subscriptions
     query = {"push_subscription": {"$exists": True, "$ne": None}}
     
     if teaching_group_id:
         # Get students in teaching group
-        groups_col = db.client[db.db_name]['teaching_groups']
+        groups_col = db.db['teaching_groups']
         group = groups_col.find_one({"group_id": teaching_group_id})
         if group and group.get('student_ids'):
             query["student_id"] = {"$in": group['student_ids']}
@@ -203,7 +203,7 @@ def send_feedback_notification(db, student_id: str, assignment: dict,
     Returns:
         True if sent successfully
     """
-    students_col = db.client[db.db_name]['students']
+    students_col = db.db['students']
     student = students_col.find_one({"student_id": student_id})
     
     if not student or not student.get('push_subscription'):
@@ -255,7 +255,7 @@ def send_message_notification(db, student_id: str, teacher_name: str,
     Returns:
         True if sent successfully
     """
-    students_col = db.client[db.db_name]['students']
+    students_col = db.db['students']
     student = students_col.find_one({"student_id": student_id})
     
     if not student or not student.get('push_subscription'):
