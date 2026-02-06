@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Collab Space</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<link href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css" rel="stylesheet" />
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body, #root { height: 100%; width: 100%; overflow: hidden; }
+  .node-hover:hover { filter: brightness(0.95); }
+  .add-btn:hover circle { fill: #059669; }
+  .modal-overlay { background: rgba(0,0,0,0.5); }
+  @keyframes fadeIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+  .modal-content { animation: fadeIn 0.2s ease-out; }
+  .scrollbar-thin::-webkit-scrollbar { width: 6px; }
+  .scrollbar-thin::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+  .badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 9999px; font-size: 11px; font-weight: 600; }
+  .save-indicator { transition: opacity 0.3s; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<!-- Flask data injection (regular JS, uses Jinja) -->
+<script>
+window.FLASK_DATA = {
+    space: {{ space_json|safe }},
+    nodes_data: {{ nodes_json|safe }},
+    user_role: "{{ user_role }}",
+    user_id: "{{ user_id }}",
+    user_name: "{{ user_name }}",
+    back_url: "{{ back_url }}",
+    has_api_key: {{ 'true' if has_api_key else 'false' }}
+};
+</script>
+
+{% raw %}
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
+const FD = window.FLASK_DATA;
+const SPACE_ID = FD.space.space_id;
+
+/* ── SVG Icon Components ── */
+const Icon = ({ children, size = 20, className = '', style = {}, onClick }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24"
+    fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+    className={className} style={style} onClick={onClick}>{children}</svg>
+);
+const SettingsIcon = (p) => <Icon {...p}><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></Icon>;
+const XIcon = (p) => <Icon {...p}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></Icon>;
+const ThumbsUpIcon = (p) => <Icon {...p}><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></Icon>;
+const MessageIcon = (p) => <Icon {...p}><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></Icon>;
+const FileTextIcon = (p) => <Icon {...p}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></Icon>;
+const ImageIcon = (p) => <Icon {...p}><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></Icon>;
+const BarChartIcon = (p) => <Icon {...p}><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></Icon>;
+const SendIcon = (p) => <Icon {...p}><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></Icon>;
+const DownloadIcon = (p) => <Icon {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></Icon>;
+const TrashIcon = (p) => <Icon {...p}><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></Icon>;
+const ArrowLeftIcon = (p) => <Icon {...p}><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></Icon>;
+
+/* ── Color Palette ── */
+const COLOR_PALETTE = [
+  { name:'Blue',primary:'#3B82F6',light:'#DBEAFE',dark:'#1E40AF' },
+  { name:'Green',primary:'#10B981',light:'#D1FAE5',dark:'#065F46' },
+  { name:'Orange',primary:'#F97316',light:'#FED7AA',dark:'#92400E' },
+  { name:'Purple',primary:'#A855F7',light:'#E9D5FF',dark:'#581C87' },
+  { name:'Pink',primary:'#EC4899',light:'#FCE7F3',dark:'#831843' },
+  { name:'Cyan',primary:'#06B6D4',light:'#CFFAFE',dark:'#164E63' },
+  { name:'Amber',primary:'#D97706',light:'#FEF3C7',dark:'#78350F' },
+  { name:'Teal',primary:'#14B8A6',light:'#CCFBF1',dark:'#134E4A' },
+];
+
+/* ── Layout Calculation ── */
+function layoutNodes(data, cx, cy) {
+  const out = JSON.parse(JSON.stringify(data));
+  out.central.x = cx; out.central.y = cy;
+  const l1 = out.layer1, l1R = 200;
+  l1.forEach((n,i) => { const a=(i/l1.length)*Math.PI*2-Math.PI/2; n.x=cx+l1R*Math.cos(a); n.y=cy+l1R*Math.sin(a); });
+  const l2R = 130;
+  out.layer2.forEach(n => {
+    const p = l1.find(x => x.id===n.parentId); if(!p) return;
+    const sibs = out.layer2.filter(s => s.parentId===p.id), idx = sibs.indexOf(n);
+    const pa = Math.atan2(p.y-cy,p.x-cx), spread=0.7;
+    const a = pa+(idx-(sibs.length-1)/2)*spread;
+    n.x=p.x+l2R*Math.cos(a); n.y=p.y+l2R*Math.sin(a);
+  });
+  const l3R = 90;
+  out.layer3.forEach(n => {
+    const p = out.layer2.find(x => x.id===n.parentId); if(!p) return;
+    const pp = l1.find(x => x.id===p.parentId);
+    const sibs = out.layer3.filter(s => s.parentId===p.id), idx = sibs.indexOf(n);
+    const pa = Math.atan2(p.y-(pp?.y||cy),p.x-(pp?.x||cx)), spread=0.6;
+    const a = pa+(idx-(sibs.length-1)/2)*spread;
+    n.x=p.x+l3R*Math.cos(a); n.y=p.y+l3R*Math.sin(a);
+  });
+  return out;
+}
+
+const CurvedLine = ({x1,y1,x2,y2,color='#94a3b8'}) => {
+  const mx=(x1+x2)/2, my=(y1+y2)/2;
+  return <path d={`M${x1},${y1} Q${mx},${my} ${x2},${y2}`} stroke={color} strokeWidth="2" fill="none" opacity="0.5"/>;
+};
+
+const LAYER_RADIUS = {0:60,1:45,2:35,3:28};
+const LAYER_FONT = {0:13,1:11,2:10,3:9};
+
+/* ── Single Node ── */
+const MindMapNode = ({node,isSelected,onSelect,onAddChild,userView}) => {
+  const r = LAYER_RADIUS[node.layer]||28, fs = LAYER_FONT[node.layer]||9;
+  const bg = node.layer===0?'#0F172A':(node.studentColor?(node.type.includes('layer')?node.studentColor.dark:node.studentColor.light):'#e2e8f0');
+  const stroke = isSelected?'#FBBF24':(node.studentColor?node.studentColor.primary:'#334155');
+  const textFill = node.layer===0||(node.studentColor&&node.type.includes('layer'))?'#FFFFFF':'#1E293B';
+  const truncated = node.label.length>16?node.label.substring(0,14)+'...':node.label;
+  const words = node.label.split(' '); let lines=[];
+  if(node.layer===0){let line='';words.forEach(w=>{if((line+' '+w).trim().length>18){lines.push(line.trim());line=w;}else{line=(line+' '+w).trim();}});if(line)lines.push(line);}
+  return (
+    <g style={{cursor:'pointer'}} onClick={()=>onSelect(node)}>
+      {isSelected && <circle cx={node.x} cy={node.y} r={r+6} fill="none" stroke="#FBBF24" strokeWidth="3" opacity="0.5"/>}
+      <circle cx={node.x} cy={node.y} r={r} fill={bg} stroke={stroke} strokeWidth={isSelected?3:1.5} className="node-hover" style={{transition:'all 0.2s'}}/>
+      {node.votes>0&&node.layer>0&&(<g><circle cx={node.x+r*0.7} cy={node.y-r*0.7} r="10" fill="#FBBF24" stroke="#fff" strokeWidth="1.5"/><text x={node.x+r*0.7} y={node.y-r*0.7+1} textAnchor="middle" dominantBaseline="middle" style={{fontSize:'8px',fontWeight:700,fill:'#1E293B'}}>{node.votes}</text></g>)}
+      {node.comments&&node.comments.length>0&&(<g><circle cx={node.x-r*0.7} cy={node.y-r*0.7} r="10" fill="#3B82F6" stroke="#fff" strokeWidth="1.5"/><text x={node.x-r*0.7} y={node.y-r*0.7+1} textAnchor="middle" dominantBaseline="middle" style={{fontSize:'8px',fontWeight:700,fill:'#FFFFFF'}}>{node.comments.length}</text></g>)}
+      {node.layer===0 ? lines.map((line,i)=>(<text key={i} x={node.x} y={node.y+(i-(lines.length-1)/2)*16} textAnchor="middle" dominantBaseline="middle" style={{fontSize:`${fs}px`,fontWeight:700,fill:textFill,pointerEvents:'none'}}>{line}</text>))
+        : (<text x={node.x} y={node.y+1} textAnchor="middle" dominantBaseline="middle" style={{fontSize:`${fs}px`,fontWeight:600,fill:textFill,pointerEvents:'none'}}>{truncated}</text>)}
+      {node.hasImage&&(<g><rect x={node.x-8} y={node.y+r*0.4} width="16" height="12" rx="2" fill="#F59E0B" stroke="#fff" strokeWidth="1"/><text x={node.x} y={node.y+r*0.4+7} textAnchor="middle" dominantBaseline="middle" style={{fontSize:'6px',fill:'#fff',fontWeight:700}}>IMG</text></g>)}
+      {node.layer<3&&userView==='student'&&(<g className="add-btn" onClick={e=>{e.stopPropagation();onAddChild(node);}} style={{cursor:'pointer'}}><circle cx={node.x+r+12} cy={node.y} r="11" fill="#10B981" stroke="#fff" strokeWidth="1.5"/><text x={node.x+r+12} y={node.y+1} textAnchor="middle" dominantBaseline="middle" style={{fontSize:'14px',fill:'#fff',fontWeight:700,pointerEvents:'none'}}>+</text></g>)}
+      {node.studentColor&&node.layer>0&&(<circle cx={node.x} cy={node.y+r+8} r="4" fill={node.studentColor.primary} stroke="#fff" strokeWidth="1"/>)}
+    </g>
+  );
+};
+
+/* ── API helpers ── */
+const api = (path, opts={}) => fetch(`/api/collab-space/${SPACE_ID}${path}`, {method:'POST', headers:{'Content-Type':'application/json','Accept':'application/json'}, ...opts});
+
+/* ── Main App ── */
+function App() {
+  const svgRef = useRef(null);
+  const saveTimer = useRef(null);
+  const [userView, setUserView] = useState(FD.user_role === 'teacher' ? 'teacher' : 'student');
+  const [nodes, setNodes] = useState(() => layoutNodes(FD.nodes_data, 500, 350));
+  const [selectedNode, setSelectedNode] = useState(null);
+  const [teacherPanel, setTeacherPanel] = useState(false);
+  const [commentText, setCommentText] = useState('');
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [contentText, setContentText] = useState('');
+  const [contentImage, setContentImage] = useState(false);
+  const [addTarget, setAddTarget] = useState(null);
+  const [showPreview, setShowPreview] = useState(null);
+  const [showColorPicker, setShowColorPicker] = useState(false);
+  const [infographicsUsed, setInfographicsUsed] = useState(FD.space.infographic_count || 0);
+  const maxInfographics = FD.space.max_infographic || 5;
+  const [currentStudent, setCurrentStudent] = useState({id:FD.user_id, name:FD.user_name, color:COLOR_PALETTE[0]});
+  const [saveStatus, setSaveStatus] = useState('');
+  const [genStatus, setGenStatus] = useState('');
+  const [settings, setSettings] = useState({
+    topic: FD.space.central_topic || 'Discussion',
+    maxLayer1: (FD.space.settings||{}).maxLayer1||6, maxTextNodes: (FD.space.settings||{}).maxTextNodes||5,
+    charLimit: (FD.space.settings||{}).charLimit||200, sessionOpen: FD.space.is_active!==false,
+  });
+  const [viewBox, setViewBox] = useState({x:100,y:0,w:900,h:700});
+  const [dragging, setDragging] = useState(false);
+  const [dragStart, setDragStart] = useState({x:0,y:0});
+
+  // Auto-save debounce
+  function triggerSave(nodesData) {
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    setSaveStatus('Unsaved');
+    saveTimer.current = setTimeout(async () => {
+      setSaveStatus('Saving...');
+      try {
+        await api('/save-nodes', {body: JSON.stringify({nodes_data: nodesData, settings: {maxLayer1:settings.maxLayer1,maxTextNodes:settings.maxTextNodes,charLimit:settings.charLimit}})});
+        setSaveStatus('Saved');
+        setTimeout(() => setSaveStatus(''), 2000);
+      } catch(e) { setSaveStatus('Save failed'); }
+    }, 1500);
+  }
+
+  const handleWheel = useCallback(e => {
+    e.preventDefault();
+    const scale = e.deltaY>0?1.1:0.9;
+    setViewBox(v => {const cx=v.x+v.w/2,cy=v.y+v.h/2,nw=v.w*scale,nh=v.h*scale;return{x:cx-nw/2,y:cy-nh/2,w:nw,h:nh};});
+  },[]);
+  const handleMouseDown = e => { if(e.target.tagName==='circle'||e.target.tagName==='text')return; setDragging(true);setDragStart({x:e.clientX,y:e.clientY}); };
+  const handleMouseMove = e => { if(!dragging)return; const dx=(e.clientX-dragStart.x)*(viewBox.w/window.innerWidth),dy=(e.clientY-dragStart.y)*(viewBox.h/window.innerHeight); setViewBox(v=>({...v,x:v.x-dx,y:v.y-dy})); setDragStart({x:e.clientX,y:e.clientY}); };
+  const handleMouseUp = () => setDragging(false);
+  useEffect(() => { const el=svgRef.current; if(el)el.addEventListener('wheel',handleWheel,{passive:false}); return()=>{if(el)el.removeEventListener('wheel',handleWheel);}; },[handleWheel]);
+
+  const handleAddChild = parent => { setAddTarget(parent); setShowAddModal(true); };
+  const handleCreate = () => {
+    if(!contentText.trim()||!addTarget) return;
+    const layerKey = `layer${addTarget.layer+1}`;
+    const newNode = { id:`n-${Date.now()}`, parentId:addTarget.id, type:layerKey, label:contentText.substring(0,25), content:contentText,
+      studentColor:currentStudent.color, layer:addTarget.layer+1, studentId:currentStudent.id, studentName:currentStudent.name,
+      votes:0, comments:[], textContent:addTarget.layer+1===3?contentText:'', hasImage:contentImage, x:0, y:0 };
+    setNodes(prev => { const upd={...prev,[layerKey]:[...prev[layerKey],newNode]}; const laid=layoutNodes(upd,500,350); triggerSave(laid); return laid; });
+    setShowAddModal(false); setContentText(''); setContentImage(false); setAddTarget(null);
+  };
+  const handleVote = () => {
+    if(!selectedNode||selectedNode.layer===0) return;
+    const lk=selectedNode.type;
+    setNodes(prev => { const upd={...prev}; upd[lk]=upd[lk].map(n=>n.id===selectedNode.id?{...n,votes:(n.votes||0)+1}:n); triggerSave(upd); return upd; });
+    setSelectedNode(prev=>({...prev,votes:(prev.votes||0)+1}));
+  };
+  const handleComment = () => {
+    if(!commentText.trim()||!selectedNode) return;
+    const nc = {id:`cm-${Date.now()}`,studentId:currentStudent.id,name:currentStudent.name,studentColor:currentStudent.color,text:commentText};
+    const lk=selectedNode.type;
+    setNodes(prev => { const upd={...prev}; upd[lk]=upd[lk].map(n=>n.id===selectedNode.id?{...n,comments:[...(n.comments||[]),nc]}:n); triggerSave(upd); return upd; });
+    setSelectedNode(prev=>({...prev,comments:[...(prev.comments||[]),nc]}));
+    setCommentText('');
+  };
+  const handleDeleteNode = nodeId => {
+    if(!selectedNode||selectedNode.layer===0) return;
+    const lk=selectedNode.type;
+    setNodes(prev => { const upd={...prev}; upd[lk]=upd[lk].filter(n=>n.id!==nodeId);
+      if(selectedNode.layer===1){const l2c=upd.layer2.filter(n=>n.parentId===nodeId);const l2ids=l2c.map(n=>n.id);upd.layer2=upd.layer2.filter(n=>n.parentId!==nodeId);upd.layer3=upd.layer3.filter(n=>!l2ids.includes(n.parentId));}
+      else if(selectedNode.layer===2){upd.layer3=upd.layer3.filter(n=>n.parentId!==nodeId);}
+      const laid=layoutNodes(upd,500,350); triggerSave(laid); return laid; });
+    setSelectedNode(null);
+  };
+
+  // Generate infographic via API
+  const handleGenerateInfographic = async () => {
+    setGenStatus('Generating... this may take a minute');
+    try {
+      const r = await api('/generate-infographic');
+      const ct = r.headers.get('Content-Type')||'';
+      if (!ct.includes('json')) { setGenStatus('Error: unexpected response'); return; }
+      const data = await r.json();
+      if(data.success) { setInfographicsUsed(data.infographic_count||infographicsUsed+1); setGenStatus('Done! Image generated.'); setShowPreview('infographic_result'); }
+      else { setGenStatus(data.error||'Failed'); }
+    } catch(e) { setGenStatus('Error: '+e.message); }
+  };
+  // Generate PDF via API
+  const handleGeneratePDF = async () => {
+    // Ensure latest data is saved first
+    setSaveStatus('Saving before PDF...');
+    try { await api('/save-nodes', {body: JSON.stringify({nodes_data: nodes})}); } catch(e) {}
+    window.open(`/api/collab-space/${SPACE_ID}/generate-pdf`, '_blank');
+    setSaveStatus('');
+  };
+
+  const allFlat = [nodes.central,...nodes.layer1,...nodes.layer2,...nodes.layer3];
+  const totalVotes = allFlat.reduce((s,n)=>s+(n.votes||0),0);
+  const totalComments = allFlat.reduce((s,n)=>s+(n.comments?.length||0),0);
+  const edges = [];
+  nodes.layer1.forEach(n => edges.push({from:nodes.central,to:n,color:n.studentColor?.primary||'#94a3b8'}));
+  nodes.layer2.forEach(n => {const p=nodes.layer1.find(x=>x.id===n.parentId);if(p)edges.push({from:p,to:n,color:n.studentColor?.primary||'#94a3b8'});});
+  nodes.layer3.forEach(n => {const p=nodes.layer2.find(x=>x.id===n.parentId);if(p)edges.push({from:p,to:n,color:n.studentColor?.primary||'#94a3b8'});});
+
+  return (
+    <div style={{display:'flex',height:'100vh',fontFamily:'-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif'}}>
+      {/* Teacher Side Panel */}
+      {FD.user_role==='teacher' && (
+      <div style={{position:'fixed',left:0,top:0,height:'100%',width:320,background:'#fff',boxShadow:'2px 0 12px rgba(0,0,0,0.1)',borderRight:'1px solid #e2e8f0',
+        transform:teacherPanel?'translateX(0)':'translateX(-100%)',transition:'transform 0.3s ease',zIndex:50,overflowY:'auto'}}>
+        <div style={{padding:24}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:24}}>
+            <h2 style={{fontSize:18,fontWeight:700,color:'#1e293b'}}>Teacher Controls</h2>
+            <button onClick={()=>setTeacherPanel(false)} style={{background:'none',border:'none',cursor:'pointer',color:'#64748b'}}><XIcon size={20}/></button>
+          </div>
+          <div style={{display:'flex',flexDirection:'column',gap:20}}>
+            <div><label style={{display:'block',fontSize:13,fontWeight:600,color:'#475569',marginBottom:6}}>Central Topic</label>
+              <input value={settings.topic} onChange={e=>setSettings({...settings,topic:e.target.value})} style={{width:'100%',padding:'8px 12px',border:'1px solid #d1d5db',borderRadius:8,fontSize:13,outline:'none'}}/></div>
+            <div><label style={{display:'block',fontSize:13,fontWeight:600,color:'#475569',marginBottom:6}}>Max Layer 1 Sub-topics ({settings.maxLayer1})</label>
+              <input type="range" min="2" max="10" value={settings.maxLayer1} onChange={e=>setSettings({...settings,maxLayer1:parseInt(e.target.value)})} style={{width:'100%'}}/></div>
+            <div><label style={{display:'block',fontSize:13,fontWeight:600,color:'#475569',marginBottom:6}}>Max Text Nodes per Sub-node</label>
+              <input type="number" min="1" max="10" value={settings.maxTextNodes} onChange={e=>setSettings({...settings,maxTextNodes:parseInt(e.target.value)})} style={{width:'100%',padding:'8px 12px',border:'1px solid #d1d5db',borderRadius:8,fontSize:13}}/></div>
+            <div><label style={{display:'block',fontSize:13,fontWeight:600,color:'#475569',marginBottom:6}}>Character Limit per Text Node</label>
+              <input type="number" min="50" max="1000" step="50" value={settings.charLimit} onChange={e=>setSettings({...settings,charLimit:parseInt(e.target.value)})} style={{width:'100%',padding:'8px 12px',border:'1px solid #d1d5db',borderRadius:8,fontSize:13}}/></div>
+            <div style={{paddingTop:16,borderTop:'1px solid #e2e8f0'}}>
+              <h3 style={{fontSize:14,fontWeight:700,color:'#1e293b',marginBottom:12}}>Session Stats</h3>
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+                <div style={{background:'#f0f9ff',padding:12,borderRadius:8,textAlign:'center'}}><div style={{fontSize:20,fontWeight:700,color:'#3b82f6'}}>{allFlat.length}</div><div style={{fontSize:10,color:'#64748b'}}>Total Nodes</div></div>
+                <div style={{background:'#f0fdf4',padding:12,borderRadius:8,textAlign:'center'}}><div style={{fontSize:20,fontWeight:700,color:'#10b981'}}>{totalVotes}</div><div style={{fontSize:10,color:'#64748b'}}>Total Votes</div></div>
+                <div style={{background:'#fdf4ff',padding:12,borderRadius:8,textAlign:'center'}}><div style={{fontSize:20,fontWeight:700,color:'#a855f7'}}>{totalComments}</div><div style={{fontSize:10,color:'#64748b'}}>Comments</div></div>
+              </div>
+            </div>
+            <div style={{paddingTop:16,borderTop:'1px solid #e2e8f0'}}>
+              <h3 style={{fontSize:14,fontWeight:700,color:'#1e293b',marginBottom:8}}>Layer Rules</h3>
+              <div style={{fontSize:12,color:'#64748b',lineHeight:1.8}}>
+                <div>Layer 1: Up to <strong>{settings.maxLayer1}</strong> sub-topics</div>
+                <div>Layer 2: Fixed at <strong>3</strong> per parent</div>
+                <div>Layer 3: Fixed at <strong>3</strong> per parent</div>
+                <div>Layer 3: <strong>Text/Image only</strong></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>)}
+
+      {/* Main Content */}
+      <div style={{flex:1,display:'flex',flexDirection:'column'}}>
+        {/* Header */}
+        <div style={{background:'#0f172a',color:'#fff',padding:'12px 20px',display:'flex',alignItems:'center',justifyContent:'space-between',flexShrink:0}}>
+          <div style={{display:'flex',alignItems:'center',gap:16}}>
+            <a href={FD.back_url} style={{color:'#94a3b8',textDecoration:'none',display:'flex',alignItems:'center'}} title="Back"><ArrowLeftIcon size={18}/></a>
+            {FD.user_role==='teacher' && <button onClick={()=>setTeacherPanel(!teacherPanel)} style={{background:teacherPanel?'#334155':'transparent',border:'none',color:'#fff',cursor:'pointer',padding:8,borderRadius:8}}><SettingsIcon size={18}/></button>}
+            <div>
+              <h1 style={{fontSize:17,fontWeight:700}}>{settings.topic}</h1>
+              <div style={{display:'flex',alignItems:'center',gap:8,marginTop:2}}>
+                <span style={{display:'inline-block',width:8,height:8,borderRadius:'50%',background:settings.sessionOpen?'#10b981':'#ef4444'}}/>
+                <span style={{fontSize:11,color:'#94a3b8'}}>{settings.sessionOpen?'Session Active':'Session Closed'}</span>
+                <span style={{fontSize:11,color:'#64748b',marginLeft:8}}>Code: <strong style={{color:'#fbbf24'}}>{FD.space.join_code}</strong></span>
+              </div>
+            </div>
+          </div>
+          <div style={{display:'flex',alignItems:'center',gap:20}}>
+            {saveStatus && <span className="save-indicator" style={{fontSize:11,color:saveStatus==='Saved'?'#10b981':'#fbbf24'}}>{saveStatus}</span>}
+            <div style={{display:'flex',alignItems:'center',gap:6,cursor:'pointer'}} onClick={()=>setShowColorPicker(!showColorPicker)}>
+              <span style={{fontSize:12,color:'#94a3b8'}}>Your color:</span>
+              <div style={{width:22,height:22,borderRadius:'50%',background:currentStudent.color.primary,border:'2px solid #fff'}}/>
+            </div>
+            <div style={{display:'flex',gap:4,borderLeft:'1px solid #334155',paddingLeft:16}}>
+              {['student','teacher'].map(v => (
+                <button key={v} onClick={()=>setUserView(v)} style={{padding:'5px 14px',borderRadius:6,fontSize:12,fontWeight:600,border:'none',cursor:'pointer',
+                  background:userView===v?'#3b82f6':'transparent',color:userView===v?'#fff':'#94a3b8'}}>{v.charAt(0).toUpperCase()+v.slice(1)} View</button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {showColorPicker && (
+          <div style={{position:'absolute',right:180,top:52,background:'#fff',borderRadius:12,padding:12,boxShadow:'0 8px 32px rgba(0,0,0,0.15)',zIndex:40,display:'flex',gap:8,flexWrap:'wrap',width:200}}>
+            {COLOR_PALETTE.map((c,i) => (
+              <div key={i} onClick={()=>{setCurrentStudent({...currentStudent,color:c});setShowColorPicker(false);}}
+                style={{width:36,height:36,borderRadius:'50%',background:c.primary,border:currentStudent.color.name===c.name?'3px solid #1e293b':'2px solid #e2e8f0',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}}>
+                {currentStudent.color.name===c.name && <span style={{color:'#fff',fontSize:14,fontWeight:700}}>✓</span>}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Mind Map + Detail Panel */}
+        <div style={{flex:1,display:'flex',overflow:'hidden'}}>
+          <svg ref={svgRef} style={{flex:1,background:'#f8fafc',cursor:dragging?'grabbing':'grab'}}
+            viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`}
+            onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}>
+            <defs><pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M 40 0 L 0 0 0 40" fill="none" stroke="#e2e8f0" strokeWidth="0.5"/></pattern></defs>
+            <rect x={viewBox.x-500} y={viewBox.y-500} width={viewBox.w+1000} height={viewBox.h+1000} fill="url(#grid)"/>
+            {edges.map((e,i) => <CurvedLine key={i} x1={e.from.x} y1={e.from.y} x2={e.to.x} y2={e.to.y} color={e.color}/>)}
+            <MindMapNode node={nodes.central} isSelected={selectedNode?.id==='central'} onSelect={setSelectedNode} onAddChild={handleAddChild} userView={userView}/>
+            {nodes.layer1.map(n => <MindMapNode key={n.id} node={n} isSelected={selectedNode?.id===n.id} onSelect={setSelectedNode} onAddChild={handleAddChild} userView={userView}/>)}
+            {nodes.layer2.map(n => <MindMapNode key={n.id} node={n} isSelected={selectedNode?.id===n.id} onSelect={setSelectedNode} onAddChild={handleAddChild} userView={userView}/>)}
+            {nodes.layer3.map(n => <MindMapNode key={n.id} node={n} isSelected={selectedNode?.id===n.id} onSelect={setSelectedNode} onAddChild={handleAddChild} userView={userView}/>)}
+            <g transform={`translate(${viewBox.x+16},${viewBox.y+viewBox.h-100})`}>
+              <rect x="0" y="0" width="160" height="90" rx="8" fill="white" stroke="#e2e8f0" strokeWidth="1" opacity="0.9"/>
+              <text x="10" y="18" style={{fontSize:'10px',fontWeight:700,fill:'#475569'}}>Legend</text>
+              <circle cx="18" cy="34" r="6" fill="#0F172A"/><text x="30" y="37" style={{fontSize:'9px',fill:'#64748b'}}>Central Topic</text>
+              <circle cx="18" cy="50" r="6" fill="#1E40AF"/><text x="30" y="53" style={{fontSize:'9px',fill:'#64748b'}}>Sub-topic (darker)</text>
+              <circle cx="18" cy="66" r="6" fill="#DBEAFE" stroke="#3B82F6" strokeWidth="1"/><text x="30" y="69" style={{fontSize:'9px',fill:'#64748b'}}>Text node (lighter)</text>
+              <circle cx="18" cy="82" r="6" fill="#FBBF24"/><text x="30" y="85" style={{fontSize:'9px',fill:'#64748b'}}>Vote count</text>
+            </g>
+          </svg>
+
+          {/* Right Detail Panel */}
+          <div style={{width:360,background:'#fff',borderLeft:'1px solid #e2e8f0',overflowY:'auto',flexShrink:0}}>
+            {selectedNode ? (
+              <div style={{padding:20}}>
+                <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:4}}>
+                  {selectedNode.studentColor && <div style={{width:14,height:14,borderRadius:'50%',background:selectedNode.studentColor.primary,border:'2px solid #e2e8f0'}}/>}
+                  <h3 style={{fontSize:16,fontWeight:700,color:'#1e293b',flex:1}}>{selectedNode.label}</h3>
+                </div>
+                <div style={{display:'flex',gap:8,marginBottom:16}}>
+                  <span className="badge" style={{background:'#f1f5f9',color:'#475569'}}>Layer {selectedNode.layer}</span>
+                  {selectedNode.studentName && <span className="badge" style={{background:selectedNode.studentColor?.light||'#f1f5f9',color:selectedNode.studentColor?.dark||'#475569'}}>by {selectedNode.studentName}</span>}
+                </div>
+                {selectedNode.content && <div style={{background:'#f0f9ff',padding:14,borderRadius:10,border:'1px solid #bfdbfe',marginBottom:16}}><p style={{fontSize:13,color:'#334155',lineHeight:1.6}}>{selectedNode.content}</p></div>}
+                {selectedNode.textContent && <div style={{background:'#f0fdf4',padding:14,borderRadius:10,border:'1px solid #bbf7d0',marginBottom:16}}><div style={{display:'flex',alignItems:'center',gap:6,marginBottom:8}}><FileTextIcon size={14} style={{color:'#16a34a'}}/><span style={{fontSize:11,fontWeight:600,color:'#15803d'}}>Text Content</span></div><p style={{fontSize:13,color:'#334155',lineHeight:1.6}}>{selectedNode.textContent}</p></div>}
+                <div style={{display:'flex',gap:12,paddingTop:16,borderTop:'1px solid #e2e8f0',marginBottom:16}}>
+                  <button onClick={handleVote} disabled={selectedNode.layer===0} style={{display:'flex',alignItems:'center',gap:6,padding:'8px 16px',background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:8,cursor:selectedNode.layer===0?'not-allowed':'pointer',color:'#2563eb',fontSize:13,fontWeight:600}}><ThumbsUpIcon size={15}/> {selectedNode.votes||0}</button>
+                  <div style={{display:'flex',alignItems:'center',gap:6,padding:'8px 16px',background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:8,color:'#64748b',fontSize:13}}><MessageIcon size={15}/> {selectedNode.comments?.length||0}</div>
+                  {selectedNode.studentId===currentStudent.id && selectedNode.layer>0 && (
+                    <button onClick={()=>handleDeleteNode(selectedNode.id)} style={{display:'flex',alignItems:'center',gap:6,padding:'8px 12px',background:'#fef2f2',border:'1px solid #fecaca',borderRadius:8,cursor:'pointer',color:'#dc2626',fontSize:12,marginLeft:'auto'}}><TrashIcon size={14}/> Delete</button>
+                  )}
+                </div>
+                <div style={{borderTop:'1px solid #e2e8f0',paddingTop:16}}>
+                  <h4 style={{fontSize:14,fontWeight:700,color:'#1e293b',marginBottom:12}}>Comments</h4>
+                  {selectedNode.comments&&selectedNode.comments.length>0 ? (
+                    <div style={{display:'flex',flexDirection:'column',gap:10,marginBottom:16}}>
+                      {selectedNode.comments.map(c => (<div key={c.id} style={{background:'#f8fafc',padding:12,borderRadius:10,border:'1px solid #e2e8f0'}}><div style={{display:'flex',alignItems:'center',gap:6,marginBottom:6}}><div style={{width:10,height:10,borderRadius:'50%',background:c.studentColor?.primary||'#94a3b8'}}/><span style={{fontSize:11,fontWeight:600,color:'#475569'}}>{c.name}</span></div><p style={{fontSize:12,color:'#64748b',lineHeight:1.5}}>{c.text}</p></div>))}
+                    </div>
+                  ) : <p style={{fontSize:12,color:'#94a3b8',marginBottom:16}}>No comments yet</p>}
+                  {userView==='student' && (
+                    <div>
+                      <textarea value={commentText} onChange={e=>setCommentText(e.target.value)} placeholder="Add a comment..." rows="2" style={{width:'100%',padding:'8px 12px',border:'1px solid #d1d5db',borderRadius:8,fontSize:12,resize:'none',outline:'none',marginBottom:8}}/>
+                      <button onClick={handleComment} disabled={!commentText.trim()} style={{width:'100%',padding:'8px 12px',background:commentText.trim()?'#3b82f6':'#d1d5db',color:'#fff',border:'none',borderRadius:8,fontSize:12,fontWeight:600,cursor:commentText.trim()?'pointer':'not-allowed',display:'flex',alignItems:'center',justifyContent:'center',gap:6}}><SendIcon size={13}/> Post Comment</button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',height:'100%',color:'#94a3b8',textAlign:'center',padding:40}}>
+                <MessageIcon size={48} style={{marginBottom:16,opacity:0.3}}/>
+                <p style={{fontSize:14,fontWeight:500}}>Click a node to view details</p>
+                <p style={{fontSize:12,marginTop:8}}>Select any node on the mind map to see its content, vote, or add comments.</p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Bottom Export Toolbar */}
+        <div style={{background:'#f1f5f9',borderTop:'1px solid #e2e8f0',padding:'12px 20px',display:'flex',alignItems:'center',justifyContent:'space-between',flexShrink:0}}>
+          <div style={{display:'flex',alignItems:'center',gap:20}}>
+            <span style={{fontSize:12,color:'#64748b'}}>Nodes: <strong style={{color:'#1e293b'}}>{allFlat.length}</strong></span>
+            <span style={{fontSize:12,color:'#64748b'}}>Votes: <strong style={{color:'#1e293b'}}>{totalVotes}</strong></span>
+            <span style={{fontSize:12,color:'#64748b'}}>Infographics remaining: <strong style={{color:infographicsUsed>=maxInfographics?'#ef4444':'#1e293b'}}>{maxInfographics-infographicsUsed}/{maxInfographics}</strong></span>
+            {genStatus && <span style={{fontSize:11,color:'#64748b'}}>{genStatus}</span>}
+          </div>
+          <div style={{display:'flex',gap:10}}>
+            <button onClick={handleGenerateInfographic} disabled={infographicsUsed>=maxInfographics||!FD.has_api_key}
+              style={{display:'flex',alignItems:'center',gap:6,padding:'8px 18px',background:(infographicsUsed>=maxInfographics||!FD.has_api_key)?'#94a3b8':'#7c3aed',color:'#fff',border:'none',borderRadius:8,fontSize:12,fontWeight:600,cursor:(infographicsUsed>=maxInfographics||!FD.has_api_key)?'not-allowed':'pointer'}}>
+              <BarChartIcon size={15}/> Generate Infographic
+            </button>
+            <button onClick={handleGeneratePDF}
+              style={{display:'flex',alignItems:'center',gap:6,padding:'8px 18px',background:'#dc2626',color:'#fff',border:'none',borderRadius:8,fontSize:12,fontWeight:600,cursor:'pointer'}}>
+              <DownloadIcon size={15}/> Generate PDF Report
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Add Content Modal */}
+      {showAddModal && (
+        <div className="modal-overlay" style={{position:'fixed',inset:0,display:'flex',alignItems:'center',justifyContent:'center',zIndex:60}}>
+          <div className="modal-content" style={{background:'#fff',borderRadius:16,padding:28,maxWidth:440,width:'90%',boxShadow:'0 16px 48px rgba(0,0,0,0.2)'}}>
+            <h3 style={{fontSize:18,fontWeight:700,color:'#1e293b',marginBottom:4}}>Add Content</h3>
+            <p style={{fontSize:12,color:'#64748b',marginBottom:20}}>Adding to: <strong>{addTarget?.label}</strong> (Layer {(addTarget?.layer||0)+1})</p>
+            <div style={{marginBottom:16}}>
+              <div style={{display:'flex',justifyContent:'space-between',marginBottom:6}}><label style={{fontSize:12,fontWeight:600,color:'#475569'}}>Content</label><span style={{fontSize:11,color:contentText.length>=settings.charLimit?'#ef4444':'#94a3b8'}}>{contentText.length}/{settings.charLimit}</span></div>
+              <textarea value={contentText} onChange={e=>setContentText(e.target.value.substring(0,settings.charLimit))} placeholder="Enter your content..." rows="4" style={{width:'100%',padding:'10px 14px',border:'1px solid #d1d5db',borderRadius:10,fontSize:13,resize:'none',outline:'none',lineHeight:1.6}}/>
+              <div style={{height:4,borderRadius:2,background:'#e2e8f0',marginTop:6}}><div style={{height:'100%',borderRadius:2,background:contentText.length>=settings.charLimit?'#ef4444':'#3b82f6',width:`${Math.min(100,(contentText.length/settings.charLimit)*100)}%`,transition:'width 0.2s'}}/></div>
+            </div>
+            <label style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer',marginBottom:20}}>
+              <input type="checkbox" checked={contentImage} onChange={e=>setContentImage(e.target.checked)}/><ImageIcon size={16} style={{color:'#ca8a04'}}/><span style={{fontSize:13,color:'#475569'}}>Include image</span>
+            </label>
+            <div style={{display:'flex',gap:10}}>
+              <button onClick={()=>{setShowAddModal(false);setContentText('');setContentImage(false);}} style={{flex:1,padding:'10px 16px',border:'1px solid #d1d5db',borderRadius:10,background:'#fff',cursor:'pointer',fontSize:13,fontWeight:600,color:'#475569'}}>Cancel</button>
+              <button onClick={handleCreate} disabled={!contentText.trim()} style={{flex:1,padding:'10px 16px',border:'none',borderRadius:10,background:contentText.trim()?'#3b82f6':'#d1d5db',color:'#fff',cursor:contentText.trim()?'pointer':'not-allowed',fontSize:13,fontWeight:600}}>Create Node</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+ReactDOM.render(<App/>, document.getElementById('root'));
+</script>
+{% endraw %}
+</body>
+</html>

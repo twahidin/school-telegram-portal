@@ -2302,6 +2302,92 @@ def teacher_collab_space_settings():
     })
 
 
+def _collab_space_render(space, user_role):
+    """Shared render for collab space mind-map view (teacher or student)."""
+    teacher_id = space.get('teacher_id')
+    settings = _get_teacher_collab_settings(teacher_id)
+    teacher = Teacher.find_one({'teacher_id': teacher_id})
+    # Build node tree from stored data or default
+    nodes_data = space.get('nodes_data')
+    if not nodes_data:
+        nodes_data = {
+            'central': {'id': 'central', 'type': 'central', 'label': space.get('central_topic') or 'Discussion',
+                        'content': '', 'studentColor': None, 'layer': 0, 'x': 0, 'y': 0, 'votes': 0, 'comments': []},
+            'layer1': [], 'layer2': [], 'layer3': [],
+        }
+    # Determine current user info
+    if user_role == 'teacher':
+        user_id = session['teacher_id']
+        user_name = (teacher.get('name') if teacher else session['teacher_id'])
+        back_url = url_for('teacher_collab_space')
+    else:
+        user_id = session['student_id']
+        student = Student.find_one({'student_id': session['student_id']})
+        user_name = (student.get('name') if student else session['student_id'])
+        back_url = url_for('student_collab_space')
+    space_json = json.dumps({
+        'space_id': space['space_id'],
+        'name': space.get('name', ''),
+        'central_topic': space.get('central_topic', 'Discussion'),
+        'join_code': space.get('join_code', ''),
+        'is_active': space.get('is_active', True),
+        'max_infographic': space.get('max_infographic', DEFAULT_MAX_INFOGraphic_PER_SPACE),
+        'infographic_count': space.get('infographic_count', 0),
+        'infographics': space.get('infographics', []),
+        'settings': space.get('collab_settings', {'maxLayer1': 6, 'maxTextNodes': 5, 'charLimit': 200}),
+    }, default=str)
+    nodes_json = json.dumps(nodes_data, default=str)
+    return render_template('collab_space_view.html',
+                           space_json=space_json,
+                           nodes_json=nodes_json,
+                           user_role=user_role,
+                           user_id=user_id,
+                           user_name=user_name,
+                           back_url=back_url,
+                           has_api_key=bool(settings.get('nanobanana_api_key')))
+
+
+def _build_tree_summary(nodes_data):
+    """Build text summary from mind-map node tree for infographic/PDF prompt."""
+    if not nodes_data:
+        return ''
+    lines = []
+    central = nodes_data.get('central', {})
+    lines.append(f"Central Topic: {central.get('label', '')}")
+    if central.get('content'):
+        lines.append(f"  {central['content']}")
+    for n1 in nodes_data.get('layer1', []):
+        lines.append(f"\n## {n1.get('label', '')}")
+        if n1.get('content'):
+            lines.append(f"  {n1['content']}")
+        for n2 in nodes_data.get('layer2', []):
+            if n2.get('parentId') == n1.get('id'):
+                lines.append(f"  ### {n2.get('label', '')}")
+                if n2.get('content'):
+                    lines.append(f"    {n2['content']}")
+                for n3 in nodes_data.get('layer3', []):
+                    if n3.get('parentId') == n2.get('id'):
+                        lines.append(f"    - {n3.get('label', '')}")
+                        if n3.get('textContent'):
+                            lines.append(f"      {n3['textContent']}")
+    return '\n'.join(lines)
+
+
+def _get_collab_space_for_api(space_id):
+    """Return (space, error_response). Checks teacher or student access."""
+    space = db.db.collab_spaces.find_one({'space_id': space_id})
+    if not space:
+        return None, (jsonify({'error': 'Space not found'}), 404)
+    tid = session.get('teacher_id')
+    sid = session.get('student_id')
+    if tid and space.get('teacher_id') == tid:
+        return space, None
+    if sid and space.get('is_active'):
+        if _student_has_collab_space_access(sid):
+            return space, None
+    return None, (jsonify({'error': 'Access denied'}), 403)
+
+
 @app.route('/teacher/collab-space/<space_id>')
 @teacher_required
 def teacher_collab_space_session(space_id):
@@ -2310,53 +2396,54 @@ def teacher_collab_space_session(space_id):
     space = db.db.collab_spaces.find_one({'space_id': space_id, 'teacher_id': session['teacher_id']})
     if not space:
         return redirect(url_for('teacher_collab_space'))
-    settings = _get_teacher_collab_settings(session['teacher_id'])
-    # Do not pass API key to template; only a flag for button state
-    settings_safe = {'nanobanana_api_key': None, 'max_infographic_per_space': settings.get('max_infographic_per_space', DEFAULT_MAX_INFOGraphic_PER_SPACE), 'has_api_key': bool(settings.get('nanobanana_api_key'))}
-    return render_template('teacher_collab_space_session.html', space=space, settings=settings_safe)
+    return _collab_space_render(space, 'teacher')
 
 
-@app.route('/teacher/collab-space/<space_id>/content', methods=['POST'])
-@teacher_required
-def teacher_collab_space_save_content(space_id):
-    if not _teacher_has_collab_space_access(session['teacher_id']):
-        return jsonify({'error': 'Access denied'}), 403
-    space = db.db.collab_spaces.find_one({'space_id': space_id, 'teacher_id': session['teacher_id']})
-    if not space:
-        return jsonify({'error': 'Space not found'}), 404
+@app.route('/api/collab-space/<space_id>/save-nodes', methods=['POST'])
+@student_or_teacher_required
+def api_collab_space_save_nodes(space_id):
+    """Save the full node tree and optional settings."""
+    space, err = _get_collab_space_for_api(space_id)
+    if err:
+        return err
     data = request.get_json() or {}
-    discussion_text = (data.get('discussion_text') or '')[:10000]
-    db.db.collab_spaces.update_one(
-        {'space_id': space_id},
-        {'$set': {'discussion_text': discussion_text, 'updated_at': datetime.utcnow()}},
-    )
+    upd = {'updated_at': datetime.utcnow()}
+    if 'nodes_data' in data:
+        upd['nodes_data'] = data['nodes_data']
+    if 'settings' in data and session.get('teacher_id') == space.get('teacher_id'):
+        upd['collab_settings'] = data['settings']
+    db.db.collab_spaces.update_one({'space_id': space_id}, {'$set': upd})
     return jsonify({'success': True})
 
 
-@app.route('/teacher/collab-space/<space_id>/generate-infographic', methods=['POST'])
-@teacher_required
-def teacher_collab_space_generate_infographic(space_id):
-    if not _teacher_has_collab_space_access(session['teacher_id']):
-        return jsonify({'error': 'Access denied'}), 403
-    space = db.db.collab_spaces.find_one({'space_id': space_id, 'teacher_id': session['teacher_id']})
-    if not space:
-        return jsonify({'error': 'Space not found'}), 404
-    settings = _get_teacher_collab_settings(session['teacher_id'])
+@app.route('/api/collab-space/<space_id>/generate-infographic', methods=['POST'])
+@student_or_teacher_required
+def api_collab_space_generate_infographic(space_id):
+    """Generate infographic from the mind-map node tree using Nanobanana Pro. Available to teacher and students."""
+    space, err = _get_collab_space_for_api(space_id)
+    if err:
+        return err
+    teacher_id = space.get('teacher_id')
+    settings = _get_teacher_collab_settings(teacher_id)
     api_key = settings.get('nanobanana_api_key')
     if not api_key:
-        return jsonify({'error': 'Please set your Nanobanana Pro API key in Collab Space settings first.'}), 400
+        return jsonify({'error': 'The teacher has not set a Nanobanana Pro API key yet.'}), 400
     max_infographic = space.get('max_infographic', DEFAULT_MAX_INFOGraphic_PER_SPACE)
     if (space.get('infographic_count') or 0) >= max_infographic:
         return jsonify({'error': f'Maximum infographics ({max_infographic}) reached for this space.'}), 400
     central_topic = space.get('central_topic') or 'Discussion'
-    discussion_text = (space.get('discussion_text') or '').strip()
+    nodes_data = space.get('nodes_data')
+    tree_summary = _build_tree_summary(nodes_data) if nodes_data else (space.get('discussion_text') or '')
     prompt = f"""Create a professional educational infographic about:
 Topic: {central_topic}
 
-Key discussion points and content:
-{discussion_text or '(No content yet)'}
+Key subtopics and content:
+{tree_summary or '(No content yet)'}
 
-Style: Clean, modern infographic with icons, sections for key points, educational and visually engaging. Vertical format suitable for sharing."""
+Style: Clean, modern infographic with icons, sections for each subtopic,
+key facts highlighted, educational and visually engaging.
+Color scheme: Warm educational tones.
+Layout: Vertical infographic format suitable for printing."""
     try:
         resp = nanobanana_generate_pro(api_key, prompt, aspect_ratio="4:5")
         if resp.get('code') != 200:
@@ -2378,10 +2465,63 @@ Style: Clean, modern infographic with icons, sections for key points, educationa
                 'updated_at': datetime.utcnow(),
             }},
         )
-        return jsonify({'success': True, 'image_url': image_url})
+        return jsonify({'success': True, 'image_url': image_url, 'infographic_count': (space.get('infographic_count') or 0) + 1})
     except Exception as e:
         logger.exception("Collab Space infographic generation error: %s", e)
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/collab-space/<space_id>/generate-pdf', methods=['POST'])
+@student_or_teacher_required
+def api_collab_space_generate_pdf(space_id):
+    """Generate a PDF report from the mind-map tree."""
+    space, err = _get_collab_space_for_api(space_id)
+    if err:
+        return err
+    from reportlab.lib.pagesizes import A4
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import cm
+    nodes_data = space.get('nodes_data') or {}
+    central = nodes_data.get('central', {})
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle('CTitle', parent=styles['Title'], fontSize=20, spaceAfter=14)
+    h1 = ParagraphStyle('CH1', parent=styles['Heading1'], fontSize=16, spaceAfter=8)
+    h2 = ParagraphStyle('CH2', parent=styles['Heading2'], fontSize=13, spaceAfter=6, leftIndent=1 * cm)
+    h3 = ParagraphStyle('CH3', parent=styles['Heading3'], fontSize=11, spaceAfter=4, leftIndent=2 * cm)
+    body = ParagraphStyle('CBody', parent=styles['Normal'], fontSize=10, leftIndent=2.5 * cm, spaceAfter=4)
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=2 * cm, bottomMargin=2 * cm)
+    story = []
+    story.append(Paragraph(space.get('name', 'Collab Space'), title_style))
+    if central.get('label'):
+        story.append(Paragraph(f"Central Topic: {central['label']}", styles['Heading2']))
+    if central.get('content'):
+        story.append(Paragraph(central['content'], styles['Normal']))
+    story.append(Spacer(1, 0.5 * cm))
+    for n1 in nodes_data.get('layer1', []):
+        story.append(Paragraph(n1.get('label', ''), h1))
+        if n1.get('content'):
+            story.append(Paragraph(n1['content'], styles['Normal']))
+        for n2 in nodes_data.get('layer2', []):
+            if n2.get('parentId') == n1.get('id'):
+                story.append(Paragraph(n2.get('label', ''), h2))
+                if n2.get('content'):
+                    story.append(Paragraph(n2['content'], body))
+                for n3 in nodes_data.get('layer3', []):
+                    if n3.get('parentId') == n2.get('id'):
+                        story.append(Paragraph(n3.get('label', ''), h3))
+                        if n3.get('textContent'):
+                            story.append(Paragraph(n3['textContent'], body))
+        story.append(Spacer(1, 0.3 * cm))
+    try:
+        doc.build(story)
+    except Exception as e:
+        logger.exception("PDF build error: %s", e)
+        return jsonify({'error': 'Failed to generate PDF'}), 500
+    buf.seek(0)
+    return send_file(buf, mimetype='application/pdf', as_attachment=True,
+                     download_name=f"{space.get('name', 'report')}.pdf")
 
 
 @app.route('/student/collab-space')
@@ -2390,7 +2530,6 @@ def student_collab_space():
     """Collab Space: join or list joined spaces."""
     if not _student_has_collab_space_access(session['student_id']):
         return redirect(url_for('dashboard'))
-    # Students see spaces they've joined (we could add collab_space_participants later; for now redirect to join page)
     return render_template('student_collab_space.html')
 
 
@@ -2406,7 +2545,6 @@ def student_collab_space_join():
     space = db.db.collab_spaces.find_one({'join_code': join_code, 'is_active': True})
     if not space:
         return jsonify({'error': 'Invalid or inactive join code'}), 404
-    # Store joined space in session or in a participant collection; for simplicity store in session
     session['collab_space_id'] = space['space_id']
     session.permanent = True
     return jsonify({'success': True, 'space_id': space['space_id'], 'name': space.get('name')})
@@ -2420,30 +2558,7 @@ def student_collab_space_session(space_id):
     space = db.db.collab_spaces.find_one({'space_id': space_id, 'is_active': True})
     if not space:
         return redirect(url_for('student_collab_space'))
-    return render_template('student_collab_space_session.html', space=space)
-
-
-@app.route('/student/collab-space/<space_id>/content', methods=['POST'])
-@login_required
-def student_collab_space_add_content(space_id):
-    if not _student_has_collab_space_access(session['student_id']):
-        return jsonify({'error': 'Access denied'}), 403
-    space = db.db.collab_spaces.find_one({'space_id': space_id, 'is_active': True})
-    if not space:
-        return jsonify({'error': 'Space not found'}), 404
-    data = request.get_json() or {}
-    new_text = (data.get('content') or '').strip()[:2000]
-    if not new_text:
-        return jsonify({'error': 'No content'}), 400
-    student = Student.find_one({'student_id': session['student_id']})
-    student_name = (student.get('name') or session['student_id'])
-    prefix = f"[{student_name}]: {new_text}\n\n"
-    current = (space.get('discussion_text') or '')
-    db.db.collab_spaces.update_one(
-        {'space_id': space_id},
-        {'$set': {'discussion_text': prefix + current, 'updated_at': datetime.utcnow()}},
-    )
-    return jsonify({'success': True})
+    return _collab_space_render(space, 'student')
 
 
 @app.route('/api/learning/chat', methods=['POST'])
