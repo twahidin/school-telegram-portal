@@ -1131,6 +1131,26 @@ code, .font-monospace {
     gap: 0.5rem;
 }
 
+/* Assignment folders (group by subject/class) */
+.assignment-folder {
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    overflow: hidden;
+}
+
+.assignment-folder-header {
+    font-weight: 600;
+    transition: background-color 0.2s;
+}
+
+.assignment-folder-header:hover {
+    background-color: rgba(102, 126, 234, 0.08);
+}
+
+.assignment-folder .assignments-grid {
+    padding: 0 0 0.5rem 0;
+}
+
 /* === Question Items (Create/Edit) === */
 .question-item {
     background: var(--bg-light);

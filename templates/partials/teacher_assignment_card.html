@@ -1,0 +1,73 @@
+<div class="assignment-manage-card">
+    <div class="assignment-header">
+        <div class="d-flex justify-content-between align-items-start">
+            <div>
+                <span class="badge bg-primary mb-2">{{ assignment.subject }}</span>
+                {% if assignment.status == 'draft' %}
+                <span class="badge bg-secondary">Draft</span>
+                {% endif %}
+                {% if assignment.target_display %}
+                <span class="badge bg-info mb-2" title="Assigned to"><i class="bi bi-{{ assignment.target_icon }} me-1"></i>{{ assignment.target_display }}</span>
+                {% endif %}
+            </div>
+            <div class="dropdown">
+                <button class="btn btn-link text-muted" data-bs-toggle="dropdown">
+                    <i class="bi bi-three-dots-vertical"></i>
+                </button>
+                <ul class="dropdown-menu dropdown-menu-end">
+                    <li><a class="dropdown-item" href="{{ url_for('edit_assignment', assignment_id=assignment.assignment_id) }}">
+                        <i class="bi bi-pencil me-2"></i>Edit
+                    </a></li>
+                    <li><hr class="dropdown-divider"></li>
+                    <li><a class="dropdown-item text-danger delete-assignment" href="#" data-id="{{ assignment.assignment_id }}">
+                        <i class="bi bi-trash me-2"></i>Delete
+                    </a></li>
+                </ul>
+            </div>
+        </div>
+        <h4>{{ assignment.title }}</h4>
+    </div>
+    <div class="assignment-stats">
+        <div class="stat">
+            <i class="bi bi-question-circle"></i>
+            <span>{{ assignment.questions|length }} questions</span>
+        </div>
+        <div class="stat">
+            {% if assignment.marking_type == 'rubric' or assignment.get('award_marks', True) %}
+            <i class="bi bi-star"></i>
+            <span>{{ assignment.total_marks }} marks</span>
+            {% else %}
+            <i class="bi bi-check2-all"></i>
+            <span>Correct / Partial / Incorrect</span>
+            {% endif %}
+        </div>
+        {% if assignment.due_date %}
+        <div class="stat">
+            <i class="bi bi-calendar"></i>
+            <span>Due: {{ assignment.due_date }}</span>
+        </div>
+        {% endif %}
+    </div>
+    <div class="assignment-progress">
+        <div class="progress-info">
+            <span>Submissions</span>
+            <span>{{ assignment.submission_count }} total / {{ assignment.pending_count }} pending</span>
+        </div>
+        <div class="progress" style="height: 6px;">
+            {% set reviewed = assignment.submission_count - assignment.pending_count %}
+            {% set pct = (reviewed / assignment.submission_count * 100) if assignment.submission_count > 0 else 0 %}
+            <div class="progress-bar bg-success" style="width: {{ pct }}%"></div>
+        </div>
+    </div>
+    <div class="assignment-actions">
+        <a href="{{ url_for('assignment_summary', assignment_id=assignment.assignment_id) }}" class="btn btn-primary btn-sm">
+            <i class="bi bi-bar-chart me-1"></i>Summary
+        </a>
+        <a href="{{ url_for('teacher_submissions', assignment=assignment.assignment_id) }}" class="btn btn-outline-secondary btn-sm">
+            <i class="bi bi-inbox me-1"></i>Submissions
+        </a>
+        <a href="{{ url_for('edit_assignment', assignment_id=assignment.assignment_id) }}" class="btn btn-outline-primary btn-sm">
+            <i class="bi bi-pencil me-1"></i>Edit
+        </a>
+    </div>
+</div>

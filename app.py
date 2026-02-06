@@ -2729,9 +2729,27 @@ def teacher_assignments():
         else:
             a['target_display'] = None
     
+    # Build folder groupings for organise-by-class/subject
+    by_subject = {}
+    by_class = {}
+    by_subject_class = {}
+    for a in assignments:
+        subj = a.get('subject') or 'General'
+        target = a.get('target_display') or 'No class'
+        key_both = f"{subj} » {target}"
+        by_subject.setdefault(subj, []).append(a)
+        by_class.setdefault(target, []).append(a)
+        by_subject_class.setdefault(key_both, []).append(a)
+    folders_by_subject = [{'name': k, 'assignments': v} for k, v in sorted(by_subject.items())]
+    folders_by_class = [{'name': k, 'assignments': v} for k, v in sorted(by_class.items())]
+    folders_by_subject_class = [{'name': k, 'assignments': v} for k, v in sorted(by_subject_class.items())]
+    
     return render_template('teacher_assignments.html',
                          teacher=teacher,
-                         assignments=assignments)
+                         assignments=assignments,
+                         folders_by_subject=folders_by_subject,
+                         folders_by_class=folders_by_class,
+                         folders_by_subject_class=folders_by_subject_class)
 
 def _build_student_status_for_submission(submission):
     """Build display status dict for one submission (for class view and API)."""
