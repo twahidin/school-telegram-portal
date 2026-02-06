@@ -63,9 +63,21 @@ document.getElementById('join-btn').addEventListener('click', async () => {
     try {
         const r = await fetch('{{ url_for("student_collab_space_join") }}', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
             body: JSON.stringify({ join_code: code })
         });
+        const contentType = r.headers.get('Content-Type') || '';
+        if (!contentType.includes('application/json')) {
+            if (r.status === 401) {
+                status.textContent = 'Session expired. Please log in again and try joining.';
+                window.location.href = '{{ url_for("login") }}';
+            } else {
+                status.textContent = 'Something went wrong. Please try again or log in again.';
+            }
+            status.className = 'small text-danger mt-2 mb-0';
+            btn.disabled = false;
+            return;
+        }
         const data = await r.json();
         if (data.success) {
             status.textContent = 'Joined! Redirecting...';

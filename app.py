@@ -122,10 +122,12 @@ ADMIN_PASSWORD = os.getenv('ADMIN_PASSWORD', 'admin123')
 # ============================================================================
 
 def login_required(f):
-    """Require student login."""
+    """Require student login. For JSON/fetch requests return 401 JSON so client gets JSON, not redirect HTML."""
     @wraps(f)
     def decorated_function(*args, **kwargs):
         if 'student_id' not in session:
+            if request.is_json or ('application/json' in (request.headers.get('Accept') or '')):
+                return jsonify({'error': 'Please log in again.', 'login_required': True}), 401
             return redirect(url_for('login'))
         return f(*args, **kwargs)
     return decorated_function
@@ -2811,6 +2813,11 @@ def teacher_dashboard():
                          classes=classes_data,
                          teaching_groups=teaching_groups)
 
+def _generate_teacher_group_id():
+    """Generate unique ID for a teacher-created group (within class or teaching group)."""
+    return f"TGRP-{uuid.uuid4().hex[:8].upper()}"
+
+
 @app.route('/teacher/class/<class_id>')
 @teacher_required
 def view_class(class_id):
@@ -2859,11 +2866,18 @@ def view_class(class_id):
     # Get class info
     class_info = Class.find_one({'class_id': class_id}) or {'class_id': class_id}
     
-    # Get teaching groups from this class
+    # Get teaching groups from this class (admin-created)
     teaching_groups = list(TeachingGroup.find({
         'teacher_id': session['teacher_id'],
         'class_id': class_id
     }))
+    
+    # Teacher-created groups within this class
+    my_groups = list(db.db.teacher_groups.find({
+        'teacher_id': session['teacher_id'],
+        'source_type': 'class',
+        'source_id': class_id
+    }).sort('name', 1))
     
     title = class_id
     subtitle = class_info.get('name') if class_info.get('name') and class_info.get('name') != class_id else None
@@ -2890,6 +2904,9 @@ def view_class(class_id):
                          students=students,
                          assignments=assignments,
                          teaching_groups=teaching_groups,
+                         my_groups=my_groups,
+                         group_source_type='class',
+                         group_source_id=class_id,
                          is_teaching_group=False,
                          selected_assignment_id=selected_assignment_id,
                          student_statuses=student_statuses)
@@ -2941,6 +2958,13 @@ def view_teaching_group(group_id):
             else:
                 student_statuses[sid] = {'status': 'none', 'label': 'No Submission', 'class': 'light', 'submission_id': None}
     
+    # Teacher-created groups within this teaching group
+    my_groups = list(db.db.teacher_groups.find({
+        'teacher_id': session['teacher_id'],
+        'source_type': 'teaching_group',
+        'source_id': group_id
+    }).sort('name', 1))
+
     return render_template('teacher_class_view.html',
                          teacher=teacher,
                          title=title,
@@ -2948,9 +2972,90 @@ def view_teaching_group(group_id):
                          students=students,
                          assignments=assignments,
                          teaching_groups=[],
+                         my_groups=my_groups,
+                         group_source_type='teaching_group',
+                         group_source_id=group_id,
                          is_teaching_group=True,
                          selected_assignment_id=selected_assignment_id,
                          student_statuses=student_statuses)
+
+@app.route('/teacher/api/my-groups', methods=['POST'])
+@teacher_required
+def api_teacher_group_create():
+    """Create a group within a class or teaching group. Body: source_type, source_id, name, student_ids."""
+    try:
+        data = request.get_json() or {}
+        source_type = (data.get('source_type') or '').strip()
+        source_id = (data.get('source_id') or '').strip()
+        name = (data.get('name') or '').strip()[:200]
+        student_ids = list(data.get('student_ids') or [])
+        if source_type not in ('class', 'teaching_group') or not source_id or not name:
+            return jsonify({'error': 'source_type, source_id and name are required'}), 400
+        # Verify teacher has access to this source
+        if source_type == 'class':
+            teacher = Teacher.find_one({'teacher_id': session['teacher_id']})
+            if source_id not in (teacher.get('classes') or []):
+                students_in_class = Student.find({'class': source_id, 'teachers': session['teacher_id']})
+                if not any(1 for _ in students_in_class):
+                    return jsonify({'error': 'Access denied to this class'}), 403
+            allowed_ids = set(s['student_id'] for s in Student.find({'class': source_id}))
+        else:
+            tg = TeachingGroup.find_one({'group_id': source_id, 'teacher_id': session['teacher_id']})
+            if not tg:
+                return jsonify({'error': 'Teaching group not found'}), 404
+            allowed_ids = set(tg.get('student_ids') or [])
+        student_ids = [s for s in student_ids if s in allowed_ids]
+        group_id = _generate_teacher_group_id()
+        doc = {
+            'group_id': group_id,
+            'teacher_id': session['teacher_id'],
+            'source_type': source_type,
+            'source_id': source_id,
+            'name': name,
+            'student_ids': student_ids,
+            'created_at': datetime.utcnow(),
+            'updated_at': datetime.utcnow(),
+        }
+        db.db.teacher_groups.insert_one(doc)
+        return jsonify({'success': True, 'group_id': group_id, 'group': {'group_id': group_id, 'name': name, 'student_ids': student_ids}})
+    except Exception as e:
+        logger.exception("Create teacher group: %s", e)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/teacher/api/my-groups/<group_id>', methods=['PUT', 'DELETE'])
+@teacher_required
+def api_teacher_group_update_or_delete(group_id):
+    """Update or delete a teacher-created group."""
+    doc = db.db.teacher_groups.find_one({'group_id': group_id, 'teacher_id': session['teacher_id']})
+    if not doc:
+        return jsonify({'error': 'Group not found'}), 404
+    if request.method == 'DELETE':
+        db.db.teacher_groups.delete_one({'group_id': group_id})
+        return jsonify({'success': True})
+    try:
+        data = request.get_json() or {}
+        name = (data.get('name') or '').strip()[:200]
+        student_ids = data.get('student_ids')
+        source_type = doc.get('source_type')
+        source_id = doc.get('source_id')
+        if source_type == 'class':
+            allowed_ids = set(s['student_id'] for s in Student.find({'class': source_id}))
+        else:
+            tg = TeachingGroup.find_one({'group_id': source_id, 'teacher_id': session['teacher_id']})
+            allowed_ids = set(tg.get('student_ids') or []) if tg else set()
+        upd = {'updated_at': datetime.utcnow()}
+        if name:
+            upd['name'] = name
+        if student_ids is not None:
+            upd['student_ids'] = [s for s in list(student_ids) if s in allowed_ids]
+        db.db.teacher_groups.update_one({'group_id': group_id}, {'$set': upd})
+        updated = db.db.teacher_groups.find_one({'group_id': group_id})
+        return jsonify({'success': True, 'group': {'group_id': group_id, 'name': updated.get('name'), 'student_ids': updated.get('student_ids', [])}})
+    except Exception as e:
+        logger.exception("Update teacher group: %s", e)
+        return jsonify({'error': str(e)}), 500
+
 
 @app.route('/teacher/assignments')
 @teacher_required

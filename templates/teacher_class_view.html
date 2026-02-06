@@ -174,7 +174,82 @@
         </div>
     </div>
     {% endif %}
+
+    <!-- My groups (teacher-created groups within this class or teaching group) -->
+    {% if group_source_type and group_source_id is defined %}
+    <div class="card mt-4">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="mb-0"><i class="bi bi-people-fill me-2"></i>My groups</h5>
+            {% if students %}
+            <button type="button" class="btn btn-sm btn-primary" id="btn-create-my-group" data-bs-toggle="modal" data-bs-target="#modal-my-group">
+                <i class="bi bi-plus-lg me-1"></i>Create group
+            </button>
+            {% endif %}
+        </div>
+        <div class="card-body">
+            <p class="text-muted small mb-3">Create groups from this {{ 'class' if group_source_type == 'class' else 'teaching group' }} for organising students (e.g. Group A, Group B).</p>
+            {% if my_groups %}
+            <div class="row g-3" id="my-groups-list">
+                {% for g in my_groups %}
+                <div class="col-md-4" data-group-id="{{ g.group_id }}">
+                    <div class="card h-100 border-secondary">
+                        <div class="card-body py-3">
+                            <h6 class="card-title mb-1">{{ g.name }}</h6>
+                            <span class="badge bg-secondary">{{ (g.student_ids or [])|length }} students</span>
+                            <div class="mt-2">
+                                <button type="button" class="btn btn-sm btn-outline-primary edit-my-group-btn" data-group-id="{{ g.group_id }}" data-group-name="{{ g.name }}" data-student-ids="{{ (g.student_ids or [])|join(',') }}">
+                                    <i class="bi bi-pencil"></i>
+                                </button>
+                                <button type="button" class="btn btn-sm btn-outline-danger delete-my-group-btn" data-group-id="{{ g.group_id }}" data-group-name="{{ g.name }}">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="text-muted mb-0" id="my-groups-empty">No groups yet. Click <strong>Create group</strong> to add one.</p>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
 </div>
+
+<!-- Create / Edit My Group Modal -->
+{% if group_source_type and group_source_id is defined and students %}
+<div class="modal fade" id="modal-my-group" tabindex="-1" aria-labelledby="modal-my-group-label" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="modal-my-group-label"><i class="bi bi-people me-2"></i><span id="modal-my-group-title">Create group</span></h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="my-group-id" value="">
+                <div class="mb-3">
+                    <label for="my-group-name" class="form-label">Group name</label>
+                    <input type="text" class="form-control" id="my-group-name" placeholder="e.g. Group A" maxlength="200">
+                </div>
+                <label class="form-label">Students in this group</label>
+                <div class="border rounded p-3 mb-0" style="max-height: 240px; overflow-y: auto;">
+                    {% for s in students %}
+                    <div class="form-check">
+                        <input class="form-check-input my-group-student-cb" type="checkbox" value="{{ s.student_id }}" id="mg-st-{{ s.student_id }}">
+                        <label class="form-check-label" for="mg-st-{{ s.student_id }}">{{ s.name }} ({{ s.student_id }})</label>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="my-group-save-btn"><i class="bi bi-check-lg me-1"></i>Save</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
 
 <!-- Reset Student Password Modal -->
 <div class="modal fade" id="reset-password-modal" tabindex="-1" aria-labelledby="reset-password-modal-label" aria-hidden="true">
@@ -206,6 +281,95 @@
 <script>
     // Assignment status is loaded server-side when you select an assignment (form submit).
     // No API fetch — avoids "Error loading" from session/JSON issues.
+
+    // My groups (teacher-created groups within class or teaching group)
+    {% if group_source_type and group_source_id is defined %}
+    (function() {
+        const sourceType = '{{ group_source_type }}';
+        const sourceId = '{{ group_source_id }}';
+        const modal = document.getElementById('modal-my-group');
+        const titleEl = document.getElementById('modal-my-group-title');
+        const nameInput = document.getElementById('my-group-name');
+        const groupIdInput = document.getElementById('my-group-id');
+        const saveBtn = document.getElementById('my-group-save-btn');
+        const checkboxes = document.querySelectorAll('.my-group-student-cb');
+
+        function openForCreate() {
+            if (!groupIdInput) return;
+            groupIdInput.value = '';
+            if (titleEl) titleEl.textContent = 'Create group';
+            if (nameInput) nameInput.value = '';
+            checkboxes.forEach(cb => { cb.checked = false; });
+        }
+
+        document.getElementById('btn-create-my-group')?.addEventListener('click', openForCreate);
+
+        document.querySelectorAll('.edit-my-group-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                const id = this.dataset.groupId;
+                const groupName = this.dataset.groupName || '';
+                const ids = (this.dataset.studentIds || '').split(',').filter(Boolean);
+                if (groupIdInput) groupIdInput.value = id;
+                if (titleEl) titleEl.textContent = 'Edit group';
+                if (nameInput) nameInput.value = groupName;
+                checkboxes.forEach(cb => {
+                    cb.checked = ids.includes(cb.value);
+                });
+                if (modal) bootstrap.Modal.getOrCreateInstance(modal).show();
+            });
+        });
+
+        document.querySelectorAll('.delete-my-group-btn').forEach(btn => {
+            btn.addEventListener('click', async function() {
+                const id = this.dataset.groupId;
+                const groupName = this.dataset.groupName || id;
+                if (!confirm('Delete group “‘ + groupName + '”?')) return;
+                try {
+                    const r = await fetch('/teacher/api/my-groups/' + id, { method: 'DELETE' });
+                    const data = await r.json();
+                    if (data.success) window.location.reload();
+                    else alert(data.error || 'Failed to delete');
+                } catch (e) {
+                    alert('Failed to delete group');
+                }
+            });
+        });
+
+        saveBtn?.addEventListener('click', async function() {
+            const name = nameInput?.value.trim();
+            if (!name) {
+                alert('Enter a group name');
+                return;
+            }
+            const studentIds = Array.from(checkboxes).filter(cb => cb.checked).map(cb => cb.value);
+            const id = groupIdInput?.value || '';
+            this.disabled = true;
+            this.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Saving...';
+            try {
+                const url = id ? '/teacher/api/my-groups/' + id : '/teacher/api/my-groups';
+                const method = id ? 'PUT' : 'POST';
+                const body = id ? { name, student_ids: studentIds } : { source_type: sourceType, source_id: sourceId, name, student_ids: studentIds };
+                const r = await fetch(url, {
+                    method: method,
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+                const data = await r.json();
+                if (data.success) {
+                    bootstrap.Modal.getInstance(modal).hide();
+                    window.location.reload();
+                } else {
+                    alert(data.error || 'Failed to save');
+                }
+            } catch (e) {
+                alert('Failed to save group');
+            } finally {
+                this.disabled = false;
+                this.innerHTML = '<i class="bi bi-check-lg me-1"></i>Save';
+            }
+        });
+    })();
+    {% endif %}
 
     // Reset password modal
     const resetPasswordModal = document.getElementById('reset-password-modal');

@@ -77,6 +77,9 @@ class Database:
         self.db.collab_spaces.create_index('teacher_id')
         self.db.collab_spaces.create_index('join_code', unique=True)
         self.db.collab_space_infographics.create_index([('space_id', 1), ('created_at', -1)])
+        # Teacher-created groups within a class or teaching group
+        self.db.teacher_groups.create_index('group_id', unique=True)
+        self.db.teacher_groups.create_index([('teacher_id', 1), ('source_type', 1), ('source_id', 1)])
 
 db = Database()
 
