@@ -119,6 +119,13 @@
                     <label class="form-label">Max infographics per space (default 5)</label>
                     <input type="number" class="form-control" id="settings-max-infographic" min="1" max="20" value="{{ settings.max_infographic_per_space or 5 }}">
                 </div>
+                <hr class="my-3">
+                <p class="text-muted small mb-2">PDF study notes are generated from the mind-map using your AI (Teacher Settings). Limit how many times students can generate PDFs and infographics combined per space.</p>
+                <div class="mb-3">
+                    <label class="form-label">Max generations per space (PDF + infographic, default 5)</label>
+                    <input type="number" class="form-control" id="settings-max-generation" min="1" max="20" value="{{ settings.max_generation_per_space or 5 }}">
+                    <small class="text-muted">Students share this limit per space; teachers have unlimited.</small>
+                </div>
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
@@ -156,13 +163,14 @@ document.getElementById('create-space-submit').addEventListener('click', async (
 document.getElementById('settings-save-btn').addEventListener('click', async () => {
     const apiKey = document.getElementById('settings-api-key').value.trim() || null;
     const maxVal = parseInt(document.getElementById('settings-max-infographic').value, 10) || 5;
+    const maxGenVal = parseInt(document.getElementById('settings-max-generation').value, 10) || 5;
     const btn = document.getElementById('settings-save-btn');
     btn.disabled = true;
     try {
         const r = await fetch('{{ url_for("teacher_collab_space_settings") }}', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ nanobanana_api_key: apiKey || undefined, max_infographic_per_space: maxVal })
+            body: JSON.stringify({ nanobanana_api_key: apiKey || undefined, max_infographic_per_space: maxVal, max_generation_per_space: maxGenVal })
         });
         const data = await r.json();
         if (data.success) {

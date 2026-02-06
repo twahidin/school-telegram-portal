@@ -91,6 +91,11 @@
                     <label class="form-label">Max infographics per space</label>
                     <input type="number" class="form-control" id="settings-max-infographic" min="1" max="20" value="{{ settings.max_infographic_per_space or 5 }}">
                 </div>
+                <div class="mb-3">
+                    <label class="form-label">Max generations per space (PDF + infographic)</label>
+                    <input type="number" class="form-control" id="settings-max-generation" min="1" max="20" value="{{ settings.max_generation_per_space or 5 }}">
+                    <small class="text-muted">Students share this limit; teachers have unlimited.</small>
+                </div>
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
@@ -154,13 +159,14 @@ document.getElementById('generate-infographic-btn').addEventListener('click', as
 document.getElementById('settings-save-btn').addEventListener('click', async () => {
     const apiKey = document.getElementById('settings-api-key').value.trim() || null;
     const maxVal = parseInt(document.getElementById('settings-max-infographic').value, 10) || 5;
+    const maxGenVal = parseInt(document.getElementById('settings-max-generation').value, 10) || 5;
     const btn = document.getElementById('settings-save-btn');
     btn.disabled = true;
     try {
         const r = await fetch('{{ url_for("teacher_collab_space_settings") }}', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ nanobanana_api_key: apiKey || undefined, max_infographic_per_space: maxVal })
+            body: JSON.stringify({ nanobanana_api_key: apiKey || undefined, max_infographic_per_space: maxVal, max_generation_per_space: maxGenVal })
         });
         const data = await r.json();
         if (data.success) {

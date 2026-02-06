@@ -2205,11 +2205,18 @@ def student_python_execute():
 # COLLAB SPACE - Teacher settings, spaces, Nanobanana Pro infographic
 # ============================================================================
 
+DEFAULT_MAX_GENERATION_PER_SPACE = 5  # combined limit for students (PDF + infographic)
+
+
 def _get_teacher_collab_settings(teacher_id):
-    """Return { nanobanana_api_key: decrypted or None, max_infographic_per_space: int }."""
+    """Return { nanobanana_api_key, max_infographic_per_space, max_generation_per_space }."""
     doc = db.db.teacher_collab_settings.find_one({'teacher_id': teacher_id})
     if not doc:
-        return {'nanobanana_api_key': None, 'max_infographic_per_space': DEFAULT_MAX_INFOGraphic_PER_SPACE}
+        return {
+            'nanobanana_api_key': None,
+            'max_infographic_per_space': DEFAULT_MAX_INFOGraphic_PER_SPACE,
+            'max_generation_per_space': DEFAULT_MAX_GENERATION_PER_SPACE,
+        }
     key = None
     if doc.get('nanobanana_api_key_encrypted'):
         try:
@@ -2219,16 +2226,19 @@ def _get_teacher_collab_settings(teacher_id):
     return {
         'nanobanana_api_key': key,
         'max_infographic_per_space': doc.get('max_infographic_per_space', DEFAULT_MAX_INFOGraphic_PER_SPACE),
+        'max_generation_per_space': doc.get('max_generation_per_space', DEFAULT_MAX_GENERATION_PER_SPACE),
     }
 
 
-def _set_teacher_collab_settings(teacher_id, nanobanana_api_key=None, max_infographic_per_space=None):
+def _set_teacher_collab_settings(teacher_id, nanobanana_api_key=None, max_infographic_per_space=None, max_generation_per_space=None):
     """Save teacher Collab Space settings. Pass None to leave unchanged."""
     upd = {'updated_at': datetime.utcnow()}
     if nanobanana_api_key is not None:
         upd['nanobanana_api_key_encrypted'] = encrypt_api_key(nanobanana_api_key) if nanobanana_api_key else None
     if max_infographic_per_space is not None:
         upd['max_infographic_per_space'] = max(1, min(20, int(max_infographic_per_space)))
+    if max_generation_per_space is not None:
+        upd['max_generation_per_space'] = max(1, min(20, int(max_generation_per_space)))
     db.db.teacher_collab_settings.update_one(
         {'teacher_id': teacher_id},
         {'$set': {**upd, 'teacher_id': teacher_id}},
@@ -2252,7 +2262,10 @@ def teacher_collab_space():
         return redirect(url_for('teacher_dashboard'))
     spaces = list(db.db.collab_spaces.find({'teacher_id': session['teacher_id']}).sort('created_at', -1))
     raw_settings = _get_teacher_collab_settings(session['teacher_id'])
-    settings = {'max_infographic_per_space': raw_settings.get('max_infographic_per_space', DEFAULT_MAX_INFOGraphic_PER_SPACE)}
+    settings = {
+        'max_infographic_per_space': raw_settings.get('max_infographic_per_space', DEFAULT_MAX_INFOGraphic_PER_SPACE),
+        'max_generation_per_space': raw_settings.get('max_generation_per_space', DEFAULT_MAX_GENERATION_PER_SPACE),
+    }
     # Get teacher's groups for the create-space modal (My Groups from all classes/teaching groups)
     my_groups = list(db.db.teacher_groups.find({'teacher_id': session['teacher_id']}).sort('name', 1))
     return render_template('teacher_collab_space.html', spaces=spaces, settings=settings, my_groups=my_groups)
@@ -2268,6 +2281,7 @@ def teacher_collab_space_create():
     central_topic = (data.get('central_topic') or '').strip()[:500]
     settings = _get_teacher_collab_settings(session['teacher_id'])
     max_infographic = settings.get('max_infographic_per_space') or DEFAULT_MAX_INFOGraphic_PER_SPACE
+    max_generation = settings.get('max_generation_per_space') or DEFAULT_MAX_GENERATION_PER_SPACE
     space_id = _generate_space_id()
     join_code = _generate_join_code()
     while db.db.collab_spaces.find_one({'join_code': join_code}):
@@ -2286,7 +2300,7 @@ def teacher_collab_space_create():
         'join_code': join_code,
         'is_active': True,
         'max_infographic': max_infographic,
-        'max_generation': DEFAULT_MAX_GENERATION_PER_SPACE,
+        'max_generation': max_generation,
         'generation_count': 0,
         'assigned_group_id': assigned_group_id,
         'assigned_group_name': assigned_group_name,
@@ -2309,12 +2323,20 @@ def teacher_collab_space_settings():
         api_key = (data.get('nanobanana_api_key') or '').strip() or None
         max_val = data.get('max_infographic_per_space')
         max_infographic = int(max_val) if max_val not in (None, '') else None
-        _set_teacher_collab_settings(session['teacher_id'], nanobanana_api_key=api_key, max_infographic_per_space=max_infographic)
+        max_gen_val = data.get('max_generation_per_space')
+        max_generation = int(max_gen_val) if max_gen_val not in (None, '') else None
+        _set_teacher_collab_settings(
+            session['teacher_id'],
+            nanobanana_api_key=api_key,
+            max_infographic_per_space=max_infographic,
+            max_generation_per_space=max_generation,
+        )
         return jsonify({'success': True})
     settings = _get_teacher_collab_settings(session['teacher_id'])
     return jsonify({
         'nanobanana_api_key_set': bool(settings.get('nanobanana_api_key')),
         'max_infographic_per_space': settings.get('max_infographic_per_space', DEFAULT_MAX_INFOGraphic_PER_SPACE),
+        'max_generation_per_space': settings.get('max_generation_per_space', DEFAULT_MAX_GENERATION_PER_SPACE),
     })
 
 
@@ -2708,9 +2730,6 @@ def handle_settings_changed(data):
         {'$set': {'collab_settings': settings, 'updated_at': datetime.utcnow()}}
     )
     emit('settings_changed', {'settings': settings, 'by': data.get('user_id')}, to=room, include_self=False)
-
-
-DEFAULT_MAX_GENERATION_PER_SPACE = 5  # combined limit for students (PDF + infographic)
 
 
 def _check_generation_limit(space, space_id):
