@@ -27,13 +27,22 @@
     {% if spaces %}
     <div class="row g-4">
         {% for s in spaces %}
-        <div class="col-md-6 col-lg-4">
+        <div class="col-md-6 col-lg-4" id="space-card-{{ s.space_id }}">
             <div class="card h-100">
                 <div class="card-body">
-                    <h5 class="card-title">{{ s.name or s.space_id }}</h5>
-                    <p class="text-muted small mb-2">{{ s.central_topic or 'No topic' }}</p>
+                    <div class="d-flex justify-content-between align-items-start">
+                        <h5 class="card-title mb-1">{{ s.name or s.space_id }}</h5>
+                        <button type="button" class="btn btn-sm btn-outline-danger delete-space-btn" data-space-id="{{ s.space_id }}" data-space-name="{{ s.name or s.space_id }}" title="Delete space">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </div>
+                    <p class="text-muted small mb-1">{{ s.central_topic or 'No topic' }}</p>
+                    {% if s.assigned_group_name %}
+                    <p class="mb-1"><span class="badge bg-info"><i class="bi bi-people-fill me-1"></i>{{ s.assigned_group_name }}</span></p>
+                    {% endif %}
                     <p class="mb-2">
                         <span class="badge bg-primary">Join code: {{ s.join_code }}</span>
+                        {% if s.is_active %}<span class="badge bg-success ms-1">Active</span>{% else %}<span class="badge bg-secondary ms-1">Closed</span>{% endif %}
                     </p>
                     <p class="small text-muted mb-0">
                         Infographics: {{ s.infographic_count or 0 }} / {{ s.max_infographic or 5 }}
@@ -69,6 +78,16 @@
                 <div class="mb-3">
                     <label class="form-label">Central topic</label>
                     <input type="text" class="form-control" id="new-space-topic" placeholder="e.g. Exploring climate impact">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Assign to group (optional)</label>
+                    <select class="form-select" id="new-space-group">
+                        <option value="">-- No group (open join code) --</option>
+                        {% for g in my_groups %}
+                        <option value="{{ g.group_id }}">{{ g.name }} ({{ (g.student_ids or [])|length }} students)</option>
+                        {% endfor %}
+                    </select>
+                    <small class="text-muted">Assign a space to a group you created within a class or teaching group.</small>
                 </div>
             </div>
             <div class="modal-footer">
@@ -113,13 +132,14 @@
 document.getElementById('create-space-submit').addEventListener('click', async () => {
     const name = document.getElementById('new-space-name').value.trim() || 'New Collab Space';
     const central_topic = document.getElementById('new-space-topic').value.trim();
+    const assigned_group_id = document.getElementById('new-space-group').value || undefined;
     const btn = document.getElementById('create-space-submit');
     btn.disabled = true;
     try {
         const r = await fetch('{{ url_for("teacher_collab_space_create") }}', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name, central_topic })
+            body: JSON.stringify({ name, central_topic, assigned_group_id })
         });
         const data = await r.json();
         if (data.success) {
@@ -155,6 +175,31 @@ document.getElementById('settings-save-btn').addEventListener('click', async () 
         alert('Error: ' + e.message);
     }
     btn.disabled = false;
+});
+
+// Delete space
+document.querySelectorAll('.delete-space-btn').forEach(btn => {
+    btn.addEventListener('click', async function() {
+        const spaceId = this.dataset.spaceId;
+        const spaceName = this.dataset.spaceName || spaceId;
+        if (!confirm('Delete space "' + spaceName + '"? This cannot be undone.')) return;
+        this.disabled = true;
+        try {
+            const r = await fetch('/teacher/collab-space/' + spaceId + '/delete', {
+                method: 'POST', headers: { 'Accept': 'application/json' }
+            });
+            const data = await r.json();
+            if (data.success) {
+                const card = document.getElementById('space-card-' + spaceId);
+                if (card) card.remove();
+            } else {
+                alert(data.error || 'Failed to delete');
+            }
+        } catch (e) {
+            alert('Error: ' + e.message);
+        }
+        this.disabled = false;
+    });
 });
 </script>
 {% endblock %}

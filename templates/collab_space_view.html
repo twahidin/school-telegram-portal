@@ -34,7 +34,8 @@ window.FLASK_DATA = {
     user_id: "{{ user_id }}",
     user_name: "{{ user_name }}",
     back_url: "{{ back_url }}",
-    has_api_key: {{ 'true' if has_api_key else 'false' }}
+    has_api_key: {{ 'true' if has_api_key else 'false' }},
+    all_spaces: {{ all_spaces_json|safe }}
 };
 </script>
 
@@ -126,7 +127,8 @@ const MindMapNode = ({node,isSelected,onSelect,onAddChild,userView}) => {
       {node.layer===0 ? lines.map((line,i)=>(<text key={i} x={node.x} y={node.y+(i-(lines.length-1)/2)*16} textAnchor="middle" dominantBaseline="middle" style={{fontSize:`${fs}px`,fontWeight:700,fill:textFill,pointerEvents:'none'}}>{line}</text>))
         : (<text x={node.x} y={node.y+1} textAnchor="middle" dominantBaseline="middle" style={{fontSize:`${fs}px`,fontWeight:600,fill:textFill,pointerEvents:'none'}}>{truncated}</text>)}
       {node.hasImage&&(<g><rect x={node.x-8} y={node.y+r*0.4} width="16" height="12" rx="2" fill="#F59E0B" stroke="#fff" strokeWidth="1"/><text x={node.x} y={node.y+r*0.4+7} textAnchor="middle" dominantBaseline="middle" style={{fontSize:'6px',fill:'#fff',fontWeight:700}}>IMG</text></g>)}
-      {node.layer<3&&userView==='student'&&(<g className="add-btn" onClick={e=>{e.stopPropagation();onAddChild(node);}} style={{cursor:'pointer'}}><circle cx={node.x+r+12} cy={node.y} r="11" fill="#10B981" stroke="#fff" strokeWidth="1.5"/><text x={node.x+r+12} y={node.y+1} textAnchor="middle" dominantBaseline="middle" style={{fontSize:'14px',fill:'#fff',fontWeight:700,pointerEvents:'none'}}>+</text></g>)}
+      {/* Add child button: students can only add text nodes on layer2 parents (creates layer3 text); teachers in student-view can add on any layer<3 */}
+      {userView==='student'&&(FD.user_role==='teacher'?node.layer<3:node.layer===2)&&(<g className="add-btn" onClick={e=>{e.stopPropagation();onAddChild(node);}} style={{cursor:'pointer'}}><circle cx={node.x+r+12} cy={node.y} r="11" fill="#10B981" stroke="#fff" strokeWidth="1.5"/><text x={node.x+r+12} y={node.y+1} textAnchor="middle" dominantBaseline="middle" style={{fontSize:'14px',fill:'#fff',fontWeight:700,pointerEvents:'none'}}>+</text></g>)}
       {node.studentColor&&node.layer>0&&(<circle cx={node.x} cy={node.y+r+8} r="4" fill={node.studentColor.primary} stroke="#fff" strokeWidth="1"/>)}
     </g>
   );
@@ -139,7 +141,8 @@ const api = (path, opts={}) => fetch(`/api/collab-space/${SPACE_ID}${path}`, {me
 function App() {
   const svgRef = useRef(null);
   const saveTimer = useRef(null);
-  const [userView, setUserView] = useState(FD.user_role === 'teacher' ? 'teacher' : 'student');
+  // Students are always locked to student view; teachers default to teacher view
+  const [userView, setUserView] = useState(FD.user_role === 'student' ? 'student' : 'teacher');
   const [nodes, setNodes] = useState(() => layoutNodes(FD.nodes_data, 500, 350));
   const [selectedNode, setSelectedNode] = useState(null);
   const [teacherPanel, setTeacherPanel] = useState(false);
@@ -314,12 +317,24 @@ function App() {
               <span style={{fontSize:12,color:'#94a3b8'}}>Your color:</span>
               <div style={{width:22,height:22,borderRadius:'50%',background:currentStudent.color.primary,border:'2px solid #fff'}}/>
             </div>
+            {/* Teacher: space switcher dropdown */}
+            {FD.user_role==='teacher' && FD.all_spaces.length>1 && (
+              <div style={{borderLeft:'1px solid #334155',paddingLeft:16}}>
+                <select value={SPACE_ID} onChange={e=>{if(e.target.value!==SPACE_ID)window.location.href='/teacher/collab-space/'+e.target.value;}}
+                  style={{background:'#1e293b',color:'#e2e8f0',border:'1px solid #475569',borderRadius:6,padding:'4px 8px',fontSize:12,cursor:'pointer'}}>
+                  {FD.all_spaces.map(s => <option key={s.space_id} value={s.space_id}>{s.name || s.space_id}{s.assigned_group_name ? ` (${s.assigned_group_name})` : ''}</option>)}
+                </select>
+              </div>
+            )}
+            {/* View toggle: only for teachers */}
+            {FD.user_role==='teacher' && (
             <div style={{display:'flex',gap:4,borderLeft:'1px solid #334155',paddingLeft:16}}>
               {['student','teacher'].map(v => (
                 <button key={v} onClick={()=>setUserView(v)} style={{padding:'5px 14px',borderRadius:6,fontSize:12,fontWeight:600,border:'none',cursor:'pointer',
                   background:userView===v?'#3b82f6':'transparent',color:userView===v?'#fff':'#94a3b8'}}>{v.charAt(0).toUpperCase()+v.slice(1)} View</button>
               ))}
             </div>
+            )}
           </div>
         </div>
 
@@ -373,7 +388,8 @@ function App() {
                 <div style={{display:'flex',gap:12,paddingTop:16,borderTop:'1px solid #e2e8f0',marginBottom:16}}>
                   <button onClick={handleVote} disabled={selectedNode.layer===0} style={{display:'flex',alignItems:'center',gap:6,padding:'8px 16px',background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:8,cursor:selectedNode.layer===0?'not-allowed':'pointer',color:'#2563eb',fontSize:13,fontWeight:600}}><ThumbsUpIcon size={15}/> {selectedNode.votes||0}</button>
                   <div style={{display:'flex',alignItems:'center',gap:6,padding:'8px 16px',background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:8,color:'#64748b',fontSize:13}}><MessageIcon size={15}/> {selectedNode.comments?.length||0}</div>
-                  {selectedNode.studentId===currentStudent.id && selectedNode.layer>0 && (
+                  {/* Delete: students can only delete own nodes; teachers can delete any non-central node */}
+                  {selectedNode.layer>0 && (FD.user_role==='teacher' || selectedNode.studentId===currentStudent.id) && (
                     <button onClick={()=>handleDeleteNode(selectedNode.id)} style={{display:'flex',alignItems:'center',gap:6,padding:'8px 12px',background:'#fef2f2',border:'1px solid #fecaca',borderRadius:8,cursor:'pointer',color:'#dc2626',fontSize:12,marginLeft:'auto'}}><TrashIcon size={14}/> Delete</button>
                   )}
                 </div>

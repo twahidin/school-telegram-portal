@@ -2248,7 +2248,9 @@ def teacher_collab_space():
     spaces = list(db.db.collab_spaces.find({'teacher_id': session['teacher_id']}).sort('created_at', -1))
     raw_settings = _get_teacher_collab_settings(session['teacher_id'])
     settings = {'max_infographic_per_space': raw_settings.get('max_infographic_per_space', DEFAULT_MAX_INFOGraphic_PER_SPACE)}
-    return render_template('teacher_collab_space.html', spaces=spaces, settings=settings)
+    # Get teacher's groups for the create-space modal (My Groups from all classes/teaching groups)
+    my_groups = list(db.db.teacher_groups.find({'teacher_id': session['teacher_id']}).sort('name', 1))
+    return render_template('teacher_collab_space.html', spaces=spaces, settings=settings, my_groups=my_groups)
 
 
 @app.route('/teacher/collab-space/create', methods=['POST'])
@@ -2265,6 +2267,12 @@ def teacher_collab_space_create():
     join_code = _generate_join_code()
     while db.db.collab_spaces.find_one({'join_code': join_code}):
         join_code = _generate_join_code()
+    assigned_group_id = (data.get('assigned_group_id') or '').strip() or None
+    assigned_group_name = None
+    if assigned_group_id:
+        grp = db.db.teacher_groups.find_one({'group_id': assigned_group_id, 'teacher_id': session['teacher_id']})
+        if grp:
+            assigned_group_name = grp.get('name', assigned_group_id)
     doc = {
         'space_id': space_id,
         'teacher_id': session['teacher_id'],
@@ -2273,6 +2281,8 @@ def teacher_collab_space_create():
         'join_code': join_code,
         'is_active': True,
         'max_infographic': max_infographic,
+        'assigned_group_id': assigned_group_id,
+        'assigned_group_name': assigned_group_name,
         'discussion_text': '',
         'infographic_count': 0,
         'infographics': [],
@@ -2337,6 +2347,14 @@ def _collab_space_render(space, user_role):
         'settings': space.get('collab_settings', {'maxLayer1': 6, 'maxTextNodes': 5, 'charLimit': 200}),
     }, default=str)
     nodes_json = json.dumps(nodes_data, default=str)
+    # For teachers: pass list of all spaces for the dropdown switcher
+    all_spaces_json = '[]'
+    if user_role == 'teacher':
+        all_spaces = list(db.db.collab_spaces.find(
+            {'teacher_id': teacher_id},
+            {'space_id': 1, 'name': 1, 'assigned_group_name': 1, '_id': 0}
+        ).sort('name', 1))
+        all_spaces_json = json.dumps(all_spaces, default=str)
     return render_template('collab_space_view.html',
                            space_json=space_json,
                            nodes_json=nodes_json,
@@ -2344,7 +2362,8 @@ def _collab_space_render(space, user_role):
                            user_id=user_id,
                            user_name=user_name,
                            back_url=back_url,
-                           has_api_key=bool(settings.get('nanobanana_api_key')))
+                           has_api_key=bool(settings.get('nanobanana_api_key')),
+                           all_spaces_json=all_spaces_json)
 
 
 def _build_tree_summary(nodes_data):
@@ -2386,6 +2405,19 @@ def _get_collab_space_for_api(space_id):
         if _student_has_collab_space_access(sid):
             return space, None
     return None, (jsonify({'error': 'Access denied'}), 403)
+
+
+@app.route('/teacher/collab-space/<space_id>/delete', methods=['POST'])
+@teacher_required
+def teacher_collab_space_delete(space_id):
+    """Delete a collab space."""
+    if not _teacher_has_collab_space_access(session['teacher_id']):
+        return jsonify({'error': 'Access denied'}), 403
+    space = db.db.collab_spaces.find_one({'space_id': space_id, 'teacher_id': session['teacher_id']})
+    if not space:
+        return jsonify({'error': 'Space not found'}), 404
+    db.db.collab_spaces.delete_one({'space_id': space_id})
+    return jsonify({'success': True})
 
 
 @app.route('/teacher/collab-space/<space_id>')
