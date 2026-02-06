@@ -127,8 +127,8 @@ const MindMapNode = ({node,isSelected,onSelect,onAddChild,userView}) => {
       {node.layer===0 ? lines.map((line,i)=>(<text key={i} x={node.x} y={node.y+(i-(lines.length-1)/2)*16} textAnchor="middle" dominantBaseline="middle" style={{fontSize:`${fs}px`,fontWeight:700,fill:textFill,pointerEvents:'none'}}>{line}</text>))
         : (<text x={node.x} y={node.y+1} textAnchor="middle" dominantBaseline="middle" style={{fontSize:`${fs}px`,fontWeight:600,fill:textFill,pointerEvents:'none'}}>{truncated}</text>)}
       {node.hasImage&&(<g><rect x={node.x-8} y={node.y+r*0.4} width="16" height="12" rx="2" fill="#F59E0B" stroke="#fff" strokeWidth="1"/><text x={node.x} y={node.y+r*0.4+7} textAnchor="middle" dominantBaseline="middle" style={{fontSize:'6px',fill:'#fff',fontWeight:700}}>IMG</text></g>)}
-      {/* Add child button: students can only add text nodes on layer2 parents (creates layer3 text); teachers in student-view can add on any layer<3 */}
-      {userView==='student'&&(FD.user_role==='teacher'?node.layer<3:node.layer===2)&&(<g className="add-btn" onClick={e=>{e.stopPropagation();onAddChild(node);}} style={{cursor:'pointer'}}><circle cx={node.x+r+12} cy={node.y} r="11" fill="#10B981" stroke="#fff" strokeWidth="1.5"/><text x={node.x+r+12} y={node.y+1} textAnchor="middle" dominantBaseline="middle" style={{fontSize:'14px',fill:'#fff',fontWeight:700,pointerEvents:'none'}}>+</text></g>)}
+      {/* Add child button: teachers always see it on any layer<3; students only on layer2 parents (text nodes) */}
+      {node.layer<3 && (FD.user_role==='teacher' || (userView==='student' && node.layer===2)) && (<g className="add-btn" onClick={e=>{e.stopPropagation();onAddChild(node);}} style={{cursor:'pointer'}}><circle cx={node.x+r+12} cy={node.y} r="11" fill="#10B981" stroke="#fff" strokeWidth="1.5"/><text x={node.x+r+12} y={node.y+1} textAnchor="middle" dominantBaseline="middle" style={{fontSize:'14px',fill:'#fff',fontWeight:700,pointerEvents:'none'}}>+</text></g>)}
       {node.studentColor&&node.layer>0&&(<circle cx={node.x} cy={node.y+r+8} r="4" fill={node.studentColor.primary} stroke="#fff" strokeWidth="1"/>)}
     </g>
   );
@@ -217,6 +217,13 @@ function App() {
   };
   const handleDeleteNode = nodeId => {
     if(!selectedNode||selectedNode.layer===0) return;
+    const childCount = selectedNode.layer===1
+      ? nodes.layer2.filter(n=>n.parentId===nodeId).length + nodes.layer3.filter(n=>nodes.layer2.some(l2=>l2.parentId===nodeId&&n.parentId===l2.id)).length
+      : selectedNode.layer===2 ? nodes.layer3.filter(n=>n.parentId===nodeId).length : 0;
+    const msg = childCount > 0
+      ? `Delete "${selectedNode.label}" and its ${childCount} child node${childCount>1?'s':''}? This cannot be undone.`
+      : `Delete "${selectedNode.label}"? This cannot be undone.`;
+    if (!window.confirm(msg)) return;
     const lk=selectedNode.type;
     setNodes(prev => { const upd={...prev}; upd[lk]=upd[lk].filter(n=>n.id!==nodeId);
       if(selectedNode.layer===1){const l2c=upd.layer2.filter(n=>n.parentId===nodeId);const l2ids=l2c.map(n=>n.id);upd.layer2=upd.layer2.filter(n=>n.parentId!==nodeId);upd.layer3=upd.layer3.filter(n=>!l2ids.includes(n.parentId));}
