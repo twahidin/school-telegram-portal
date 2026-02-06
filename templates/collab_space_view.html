@@ -247,22 +247,57 @@ function App() {
   const [remoteCursors, setRemoteCursors] = useState({});
   const [connected, setConnected] = useState(false);
   const cursorThrottle = useRef(0);
-  // Node dragging
-  const [dragNode, setDragNode] = useState(null);
-  const [dragNodeStart, setDragNodeStart] = useState(null);  // {nodeX, nodeY, mouseX, mouseY}
-  const [didDrag, setDidDrag] = useState(false);
+  // Node dragging — use refs for zero-lag drag, only commit to state on drop
+  const dragNodeRef = useRef(null);     // the node being dragged
+  const dragStartRef = useRef(null);    // {nodeX, nodeY, mouseX, mouseY}
+  const didDragRef = useRef(false);
+  const dragOffsetRef = useRef({dx:0, dy:0});
+  const rafRef = useRef(null);
+  const [dragNodeId, setDragNodeId] = useState(null);  // only for cursor style
   const DRAG_THRESHOLD = 5;
   // Editing
   const [editing, setEditing] = useState(false);
   const [editLabel, setEditLabel] = useState('');
   const [editContent, setEditContent] = useState('');
+  // Polling fallback
+  const pollVersion = useRef('');
+  const pollTimer = useRef(null);
 
   // Derived: taken colors (by other online users)
   const takenColors = onlineUsers.filter(u => u.user_id !== FD.user_id).map(u => u.color).filter(Boolean);
 
+  // ─── Polling fallback: fetch latest state every 3s ───
+  useEffect(() => {
+    const poll = async () => {
+      // Skip if user is actively dragging
+      if (dragNodeRef.current) return;
+      try {
+        const r = await fetch(`/api/collab-space/${SPACE_ID}/nodes`, {headers:{'Accept':'application/json'}});
+        if (!r.ok) return;
+        const data = await r.json();
+        if (!data.nodes_data) return;
+        // Only update if version changed (something new from server)
+        if (data.version && data.version !== pollVersion.current) {
+          pollVersion.current = data.version;
+          setNodes(prev => {
+            const remote = data.nodes_data;
+            // Merge: use remote state but preserve local positions of nodes being viewed
+            return layoutNodes(remote, 500, 350);
+          });
+          if (data.collab_settings) {
+            setSettings(prev => ({...prev, ...data.collab_settings}));
+          }
+        }
+      } catch(e) { /* silent */ }
+    };
+    pollTimer.current = setInterval(poll, 3000);
+    return () => clearInterval(pollTimer.current);
+  }, []);
+
   // ─── Socket.IO setup ───
   useEffect(() => {
     socket.on('connect', () => {
+      console.log('[Collab] Socket connected, transport:', socket.io.engine?.transport?.name);
       setConnected(true);
       socket.emit('join_space', {
         space_id: SPACE_ID, user_id: FD.user_id,
@@ -270,7 +305,13 @@ function App() {
         color: currentStudent.color.primary,
       });
     });
-    socket.on('disconnect', () => setConnected(false));
+    socket.on('disconnect', (reason) => {
+      console.log('[Collab] Socket disconnected:', reason);
+      setConnected(false);
+    });
+    socket.on('connect_error', (err) => {
+      console.warn('[Collab] Socket connect error:', err.message);
+    });
     // Full room user list on join
     socket.on('room_users', (data) => {
       setOnlineUsers(data.users || []);
@@ -315,6 +356,8 @@ function App() {
       setSelectedNode(prev => prev && prev.id===data.node_id ? {...prev,comments:[...(prev.comments||[]),data.comment]} : prev);
     });
     socket.on('node_moved', (data) => {
+      // Don't apply remote move if we're the one dragging that node
+      if (dragNodeRef.current && dragNodeRef.current.id === data.node_id) return;
       setNodes(prev => {
         const update = (arr) => arr.map(n => n.id === data.node_id ? {...n, x: data.x, y: data.y} : n);
         const upd = {...prev, layer1: update(prev.layer1), layer2: update(prev.layer2), layer3: update(prev.layer3)};
@@ -347,7 +390,7 @@ function App() {
     });
     return () => {
       socket.emit('leave_space', {space_id: SPACE_ID, user_id: FD.user_id, user_name: FD.user_name});
-      ['connect','disconnect','room_users','user_joined','user_left','color_changed','cursor_move',
+      ['connect','disconnect','connect_error','room_users','user_joined','user_left','color_changed','cursor_move',
        'node_added','node_deleted','node_voted','comment_added','node_moved','node_edited','settings_changed'
       ].forEach(ev => socket.off(ev));
     };
@@ -372,15 +415,19 @@ function App() {
     if (e.changedTouches && e.changedTouches.length > 0) return { clientX: e.changedTouches[0].clientX, clientY: e.changedTouches[0].clientY };
     return { clientX: e.clientX, clientY: e.clientY };
   };
-  const svgCoords = (e) => {
+  const svgCoordsFromPointer = (p) => {
     const svg = svgRef.current; if (!svg) return {x:0,y:0};
     const rect = svg.getBoundingClientRect();
-    const p = getPointer(e);
     return { x: viewBox.x + ((p.clientX - rect.left) / rect.width) * viewBox.w,
              y: viewBox.y + ((p.clientY - rect.top) / rect.height) * viewBox.h };
   };
-  // Pinch-to-zoom tracking
+  const svgCoords = (e) => svgCoordsFromPointer(getPointer(e));
+  // Pinch-to-zoom + viewBox refs for use in native listeners
   const pinchRef = useRef(null);
+  const viewBoxRef = useRef(viewBox);
+  viewBoxRef.current = viewBox;
+  const draggingRef = useRef(false);
+  const dragStartRef2 = useRef({x:0,y:0});
 
   // ─── Canvas interactions ───
   const handleWheel = useCallback(e => {
@@ -391,95 +438,122 @@ function App() {
 
   // — Pointer down (canvas pan start) —
   const handlePointerDown = e => {
-    // Touch: handle pinch-to-zoom (2 fingers)
     if (e.touches && e.touches.length === 2) {
       const d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
-      pinchRef.current = { dist: d, vb: {...viewBox} };
+      pinchRef.current = { dist: d, vb: {...viewBoxRef.current} };
       return;
     }
-    if (dragNode) return;
+    if (dragNodeRef.current) return;
     const p = getPointer(e);
-    setDragging(true); setDragStart({x: p.clientX, y: p.clientY});
+    setDragging(true); draggingRef.current = true;
+    setDragStart({x: p.clientX, y: p.clientY}); dragStartRef2.current = {x: p.clientX, y: p.clientY};
   };
 
-  // — Pointer move (pan, node drag, cursor broadcast) —
-  const handlePointerMove = e => {
-    // Prevent default on touch to stop iOS scroll/bounce
+  // — Pointer move — uses requestAnimationFrame for smooth 60fps drag —
+  const handlePointerMove = useCallback(e => {
     if (e.touches) e.preventDefault();
-    // Pinch-to-zoom
+    // Pinch
     if (e.touches && e.touches.length === 2 && pinchRef.current) {
       const d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
       const scale = pinchRef.current.dist / d;
       const vb = pinchRef.current.vb;
       const cx = vb.x + vb.w / 2, cy = vb.y + vb.h / 2;
-      const nw = vb.w * scale, nh = vb.h * scale;
-      setViewBox({x: cx - nw/2, y: cy - nh/2, w: nw, h: nh});
+      setViewBox({x: cx - vb.w*scale/2, y: cy - vb.h*scale/2, w: vb.w*scale, h: vb.h*scale});
       return;
     }
     const p = getPointer(e);
-    // Remote cursor broadcast (~15fps)
+    // Cursor broadcast (~15fps)
     const now = Date.now();
     if (now - cursorThrottle.current > 66) {
       cursorThrottle.current = now;
-      const c = svgCoords(e);
-      socket.emit('cursor_move', {space_id:SPACE_ID, user_id:FD.user_id, user_name:FD.user_name, color:currentStudent.color.primary, x:Math.round(c.x), y:Math.round(c.y)});
+      const svg = svgRef.current;
+      if (svg) {
+        const rect = svg.getBoundingClientRect();
+        const vb = viewBoxRef.current;
+        const sx = vb.x + ((p.clientX - rect.left) / rect.width) * vb.w;
+        const sy = vb.y + ((p.clientY - rect.top) / rect.height) * vb.h;
+        socket.volatile.emit('cursor_move', {space_id:SPACE_ID, user_id:FD.user_id, user_name:FD.user_name, color:currentStudent.color.primary, x:Math.round(sx), y:Math.round(sy)});
+      }
     }
-    // Node dragging
-    if (dragNode && dragNodeStart) {
-      const c = svgCoords(e);
-      const dx = c.x - dragNodeStart.mouseX, dy = c.y - dragNodeStart.mouseY;
-      if (!didDrag && Math.abs(dx) + Math.abs(dy) > DRAG_THRESHOLD) setDidDrag(true);
-      if (didDrag || Math.abs(dx) + Math.abs(dy) > DRAG_THRESHOLD) {
-        const nx = dragNodeStart.nodeX + dx, ny = dragNodeStart.nodeY + dy;
-        setNodes(prev => {
-          if (dragNode.id === 'central') return {...prev, central: {...prev.central, x: nx, y: ny}};
-          const lk = dragNode.type;
-          return {...prev, [lk]: prev[lk].map(n => n.id === dragNode.id ? {...n, x: nx, y: ny} : n)};
-        });
+    // Node drag (RAF-batched for smooth 60fps)
+    const dn = dragNodeRef.current, ds = dragStartRef.current;
+    if (dn && ds) {
+      const svg = svgRef.current; if (!svg) return;
+      const rect = svg.getBoundingClientRect();
+      const vb = viewBoxRef.current;
+      const cx = vb.x + ((p.clientX - rect.left) / rect.width) * vb.w;
+      const cy = vb.y + ((p.clientY - rect.top) / rect.height) * vb.h;
+      const dx = cx - ds.mouseX, dy = cy - ds.mouseY;
+      if (!didDragRef.current && Math.abs(dx) + Math.abs(dy) > DRAG_THRESHOLD) {
+        didDragRef.current = true; setDragNodeId(dn.id);
+      }
+      if (didDragRef.current) {
+        dragOffsetRef.current = {dx, dy};
+        if (!rafRef.current) {
+          rafRef.current = requestAnimationFrame(() => {
+            const off = dragOffsetRef.current;
+            const d = dragNodeRef.current, s = dragStartRef.current;
+            if (d && s) {
+              const nx = s.nodeX + off.dx, ny = s.nodeY + off.dy;
+              setNodes(prev => {
+                if (d.id === 'central') return {...prev, central: {...prev.central, x: nx, y: ny}};
+                const lk = d.type;
+                return {...prev, [lk]: prev[lk].map(n => n.id === d.id ? {...n, x: nx, y: ny} : n)};
+              });
+            }
+            rafRef.current = null;
+          });
+        }
       }
       return;
     }
     // Canvas pan
-    if (dragging) {
-      const dx = (p.clientX - dragStart.x) * (viewBox.w / window.innerWidth);
-      const dy = (p.clientY - dragStart.y) * (viewBox.h / window.innerHeight);
-      setViewBox(v => ({...v, x: v.x - dx, y: v.y - dy}));
-      setDragStart({x: p.clientX, y: p.clientY});
+    if (draggingRef.current) {
+      const ds = dragStartRef2.current;
+      const vb = viewBoxRef.current;
+      const ddx = (p.clientX - ds.x) * (vb.w / window.innerWidth);
+      const ddy = (p.clientY - ds.y) * (vb.h / window.innerHeight);
+      setViewBox(v => ({...v, x: v.x - ddx, y: v.y - ddy}));
+      setDragStart({x: p.clientX, y: p.clientY}); dragStartRef2.current = {x: p.clientX, y: p.clientY};
     }
-  };
+  }, []);
 
   // — Pointer up (finish drag/click) —
-  const handlePointerUp = (e) => {
+  const handlePointerUp = () => {
     pinchRef.current = null;
-    // Finish node drag
-    if (dragNode && didDrag) {
+    if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
+    const dn = dragNodeRef.current;
+    // Finish node drag → commit + broadcast
+    if (dn && didDragRef.current) {
       setNodes(prev => {
         let finalNode;
-        if (dragNode.id === 'central') finalNode = prev.central;
-        else { const lk = dragNode.type; finalNode = prev[lk]?.find(n => n.id === dragNode.id); }
+        if (dn.id === 'central') finalNode = prev.central;
+        else { const lk = dn.type; finalNode = prev[lk]?.find(n => n.id === dn.id); }
         if (finalNode) {
-          const lk = dragNode.id === 'central' ? 'central' : dragNode.type;
-          socket.emit('node_moved', {space_id: SPACE_ID, node_id: dragNode.id, layer_key: lk, x: finalNode.x, y: finalNode.y, user_id: FD.user_id});
+          const lk = dn.id === 'central' ? 'central' : dn.type;
+          socket.emit('node_moved', {space_id: SPACE_ID, node_id: dn.id, layer_key: lk, x: finalNode.x, y: finalNode.y, user_id: FD.user_id});
         }
         triggerSave(prev);
         return prev;
       });
     }
-    // If it was a click (not a drag), select the node
-    if (dragNode && !didDrag) {
+    // Click (no drag) → select node
+    if (dn && !didDragRef.current) {
       setNodes(prev => {
         let fresh;
-        if (dragNode.id === 'central') fresh = prev.central;
-        else { const lk = dragNode.type; fresh = prev[lk]?.find(n => n.id === dragNode.id); }
+        if (dn.id === 'central') fresh = prev.central;
+        else { const lk = dn.type; fresh = prev[lk]?.find(n => n.id === dn.id); }
         if (fresh) { setSelectedNode(fresh); setEditing(false); }
         return prev;
       });
     }
-    setDragNode(null); setDragNodeStart(null); setDidDrag(false);
-    setDragging(false);
+    dragNodeRef.current = null; dragStartRef.current = null;
+    didDragRef.current = false; dragOffsetRef.current = {dx:0,dy:0};
+    setDragNodeId(null);
+    setDragging(false); draggingRef.current = false;
   };
 
-  // Attach wheel + touch listeners with {passive:false} to allow preventDefault
+  // Attach wheel + touch listeners with {passive:false}
   useEffect(() => {
     const el = svgRef.current; if (!el) return;
     el.addEventListener('wheel', handleWheel, {passive:false});
@@ -488,16 +562,17 @@ function App() {
       el.removeEventListener('wheel', handleWheel);
       el.removeEventListener('touchmove', handlePointerMove);
     };
-  }, [handleWheel, dragging, dragNode, dragNodeStart, didDrag, dragStart, viewBox]);
+  }, [handleWheel, handlePointerMove]);
 
-  // ─── Node pointer-down (start potential drag — works for mouse + touch) ───
+  // ─── Node pointer-down (start potential drag — mouse + touch) ───
   const handleNodeMouseDown = (e, node) => {
     if (e.touches) e.preventDefault();
     e.stopPropagation();
     const c = svgCoords(e);
-    setDragNode(node);
-    setDragNodeStart({ nodeX: node.x, nodeY: node.y, mouseX: c.x, mouseY: c.y });
-    setDidDrag(false);
+    dragNodeRef.current = node;
+    dragStartRef.current = { nodeX: node.x, nodeY: node.y, mouseX: c.x, mouseY: c.y };
+    didDragRef.current = false;
+    dragOffsetRef.current = {dx:0, dy:0};
   };
 
   // ─── Add child ───
@@ -744,7 +819,7 @@ function App() {
 
         {/* Mind Map + Detail Panel */}
         <div style={{flex:1,display:'flex',overflow:'hidden'}}>
-          <svg ref={svgRef} style={{flex:1,background:'#f8fafc',cursor: dragNode ? 'grabbing' : (dragging ? 'grabbing' : 'grab'), touchAction:'none'}}
+          <svg ref={svgRef} style={{flex:1,background:'#f8fafc',cursor: dragNodeId ? 'grabbing' : (dragging ? 'grabbing' : 'grab'), touchAction:'none'}}
             viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`}
             onMouseDown={handlePointerDown} onMouseMove={handlePointerMove} onMouseUp={handlePointerUp} onMouseLeave={handlePointerUp}
             onTouchStart={handlePointerDown} onTouchEnd={handlePointerUp} onTouchCancel={handlePointerUp}>

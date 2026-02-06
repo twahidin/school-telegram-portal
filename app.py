@@ -2453,6 +2453,20 @@ def api_collab_space_save_nodes(space_id):
     return jsonify({'success': True})
 
 
+@app.route('/api/collab-space/<space_id>/nodes', methods=['GET'])
+@student_or_teacher_required
+def api_collab_space_get_nodes(space_id):
+    """Polling endpoint: return current node state and version for sync fallback."""
+    space, err = _get_collab_space_for_api(space_id)
+    if err:
+        return err
+    return jsonify({
+        'nodes_data': space.get('nodes_data'),
+        'version': str(space.get('updated_at', '')),
+        'collab_settings': space.get('collab_settings'),
+    })
+
+
 # ============================================================================
 # COLLAB SPACE – SOCKET.IO REAL-TIME EVENTS
 # ============================================================================
