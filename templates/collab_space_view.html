@@ -853,8 +853,8 @@ function App() {
             {nodes.layer3.map(n => <MindMapNode key={n.id} node={n} isSelected={selectedNode?.id===n.id} onMouseDown={handleNodeMouseDown} onAddChild={handleAddChild} userView={userView}/>)}
             {/* Remote cursors */}
             {Object.entries(remoteCursors).map(([uid,cur]) => <RemoteCursor key={uid} user={cur}/>)}
-            {/* Legend */}
-            <g transform={`translate(${viewBox.x+16},${viewBox.y+viewBox.h-110})`}>
+            {/* Legend — positioned higher so it stays visible above bottom toolbar */}
+            <g transform={`translate(${viewBox.x+16},${viewBox.y+viewBox.h-220})`}>
               <rect x="0" y="0" width="170" height="100" rx="8" fill="white" stroke="#e2e8f0" strokeWidth="1" opacity="0.9"/>
               <text x="10" y="16" style={{fontSize:'10px',fontWeight:700,fill:'#475569'}}>Legend</text>
               <rect x="10" y="24" width="20" height="12" rx="6" fill="#0F172A"/><text x="36" y="33" style={{fontSize:'9px',fill:'#64748b'}}>Central Topic</text>
