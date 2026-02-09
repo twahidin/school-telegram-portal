@@ -2,7 +2,7 @@
 RAG (Retrieval-Augmented Generation) service for storing and querying textbook content
 per module tree. Enables the learning agent to ground responses in uploaded textbook PDFs.
 
-Uses Pinecone (hosted vector DB) to avoid memory issues on Railway/limited environments.
+Uses PGvector (PostgreSQL extension) for vector storage and similarity search.
 
 PDF extraction: PyPDF2 (default) or Anthropic Vision when USE_ANTHROPIC_VISION_FOR_PDF=1
 and ANTHROPIC_API_KEY is set (better for scanned PDFs, images, tables).
@@ -10,6 +10,7 @@ and ANTHROPIC_API_KEY is set (better for scanned PDFs, images, tables).
 
 import base64
 import gc
+import json
 import os
 import re
 import io
@@ -19,34 +20,106 @@ from typing import Optional, List, Dict, Any, Tuple
 
 logger = logging.getLogger(__name__)
 
+# Chunking defaults (smaller = less memory on Railway's limited RAM)
+CHUNK_SIZE = 600
+CHUNK_OVERLAP = 100
+MAX_CHUNKS_QUERY = 5
+INGEST_BATCH_SIZE = 5
+
+# OpenAI embedding model (1536 dimensions)
+EMBEDDING_MODEL = "text-embedding-3-small"
+EMBEDDING_DIMENSION = 1536
+
+# Anthropic Vision: max pages per upload to limit cost/latency
+MAX_PAGES_ANTHROPIC_VISION = int(os.getenv("RAG_VISION_MAX_PAGES", "40"))
+
+# Table and schema
+RAG_TABLE = "rag_embeddings"
+
 
 def _log_memory_usage(label: str = ""):
     """Log current memory usage (helps debug OOM on Railway)."""
     try:
         import resource
         import platform
-        # ru_maxrss is in KB on Linux, bytes on macOS
         ru_maxrss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-        if platform.system() == 'Darwin':  # macOS: bytes
+        if platform.system() == 'Darwin':
             mem_mb = ru_maxrss / 1024 / 1024
-        else:  # Linux: KB
+        else:
             mem_mb = ru_maxrss / 1024
         logger.info(f"[MEMORY] {label}: ~{mem_mb:.0f} MB (peak RSS)")
     except Exception as e:
         logger.info(f"[MEMORY] {label}: (unable to measure: {e})")
 
-# Chunking defaults (smaller = less memory on Railway's limited RAM)
-CHUNK_SIZE = 600  # Smaller chunks = less memory per batch
-CHUNK_OVERLAP = 100
-MAX_CHUNKS_QUERY = 5
-INGEST_BATCH_SIZE = 5  # Very small batches to avoid OOM
 
-# OpenAI embedding model (1536 dimensions)
-EMBEDDING_MODEL = "text-embedding-3-small"
-EMBEDDING_DIMENSION = 1536
+def _get_pgvector_url() -> Optional[str]:
+    """Get PostgreSQL connection URL for pgvector.
+    Tries PGVECTOR_DATABASE_URL, then DATABASE_URL, then DATABASE_URL_PRIVATE."""
+    url = (
+        os.getenv("PGVECTOR_DATABASE_URL", "").strip()
+        or os.getenv("DATABASE_URL", "").strip()
+        or os.getenv("DATABASE_URL_PRIVATE", "").strip()
+    )
+    return url if url else None
 
-# Anthropic Vision: max pages per upload to limit cost/latency (env override optional)
-MAX_PAGES_ANTHROPIC_VISION = int(os.getenv("RAG_VISION_MAX_PAGES", "40"))
+
+def _get_pg_conn():
+    """Return a psycopg2 connection with pgvector registered, or None."""
+    url = _get_pgvector_url()
+    if not url:
+        return None
+    try:
+        import psycopg2
+        from pgvector.psycopg2 import register_vector
+
+        conn = psycopg2.connect(url)
+        register_vector(conn)
+        return conn
+    except ImportError as e:
+        logger.warning("pgvector or psycopg2 not installed: %s", e)
+        return None
+    except Exception as e:
+        logger.warning("Could not connect to pgvector: %s", e)
+        return None
+
+
+def _ensure_table(conn) -> bool:
+    """Create rag_embeddings table and enable extension if needed."""
+    try:
+        cur = conn.cursor()
+        cur.execute("CREATE EXTENSION IF NOT EXISTS vector")
+        cur.execute(f"""
+            CREATE TABLE IF NOT EXISTS {RAG_TABLE} (
+                id UUID PRIMARY KEY,
+                namespace VARCHAR(255) NOT NULL,
+                embedding vector({EMBEDDING_DIMENSION}) NOT NULL,
+                content TEXT NOT NULL,
+                metadata JSONB
+            )
+        """)
+        cur.execute(f"""
+            CREATE INDEX IF NOT EXISTS idx_rag_namespace ON {RAG_TABLE} (namespace)
+        """)
+        try:
+            cur.execute(f"""
+                CREATE INDEX IF NOT EXISTS idx_rag_embedding ON {RAG_TABLE}
+                USING hnsw (embedding vector_cosine_ops)
+            """)
+        except Exception as idx_err:
+            logger.warning("Could not create HNSW index (queries will still work): %s", idx_err)
+        conn.commit()
+        cur.close()
+        return True
+    except Exception as e:
+        logger.exception("Error ensuring pgvector table: %s", e)
+        conn.rollback()
+        return False
+
+
+def _namespace_name(module_id: str) -> str:
+    """Namespace for a module's textbook. Sanitize for safe use."""
+    safe = re.sub(r"[^a-zA-Z0-9_-]", "_", module_id)
+    return f"textbook_{safe}"[:255]
 
 
 def _extract_text_from_pdf(pdf_bytes: bytes) -> str:
@@ -176,7 +249,6 @@ def _chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OV
         if end >= len(text):
             chunks.append(text[start:].strip())
             break
-        # Prefer breaking at paragraph or sentence
         break_at = text.rfind("\n\n", start, end + 1)
         if break_at < start:
             break_at = text.rfind(". ", start, end + 1)
@@ -217,47 +289,12 @@ def _get_embeddings(texts: List[str], openai_client) -> List[List[float]]:
         return []
 
 
-def _get_pinecone_index() -> Tuple[Optional[Any], Optional[str]]:
-    """Return (Pinecone index, None) if OK, else (None, error_code).
-    error_code: None = no credentials, 'index_not_found' = 404, 'other' = other error."""
-    api_key = os.getenv("PINECONE_API_KEY", "").strip()
-    index_name = os.getenv("PINECONE_INDEX_NAME", "").strip()
-    
-    if not api_key or not index_name:
-        return (None, None)
-    
-    try:
-        from pinecone import Pinecone
-        pc = Pinecone(api_key=api_key)
-        return (pc.Index(index_name), None)
-    except ImportError:
-        logger.warning("pinecone not installed; run: pip install pinecone")
-        return (None, "other")
-    except Exception as e:
-        err_str = str(e).lower()
-        if "404" in err_str or "not found" in err_str or "resource" in err_str:
-            logger.warning(
-                "Pinecone index %r not found. Create it in the Pinecone console: dimension %s, metric cosine.",
-                index_name, EMBEDDING_DIMENSION
-            )
-            return (None, "index_not_found")
-        logger.warning("Pinecone not available: %s", e)
-        return (None, "other")
-
-
-def _pinecone_index_not_found_message() -> str:
-    """User-facing message when Pinecone index does not exist (404)."""
-    index_name = os.getenv("PINECONE_INDEX_NAME", "school-portal")
+def _pgvector_not_available_message() -> str:
+    """User-facing message when pgvector is not configured."""
     return (
-        f"Pinecone index '{index_name}' not found. Create it in the Pinecone console: "
-        f"dimension {EMBEDDING_DIMENSION}, metric cosine, then redeploy."
+        "Vector store not available. Set PGVECTOR_DATABASE_URL (or DATABASE_URL / DATABASE_URL_PRIVATE) "
+        "to your PostgreSQL connection string with the pgvector extension."
     )
-
-
-def _namespace_name(module_id: str) -> str:
-    """Pinecone namespace for a module's textbook. Sanitize for Pinecone."""
-    safe = re.sub(r"[^a-zA-Z0-9_-]", "_", module_id)
-    return f"textbook_{safe}"[:63]
 
 
 def ingest_textbook(
@@ -267,7 +304,7 @@ def ingest_textbook(
     append: bool = True,
 ) -> Dict[str, Any]:
     """
-    Ingest a textbook PDF for a module tree: extract text, chunk, embed, store in Pinecone.
+    Ingest a textbook PDF for a module tree: extract text, chunk, embed, store in PGvector.
     By default appends to existing content so you can upload chapters one at a time.
 
     Args:
@@ -282,123 +319,97 @@ def ingest_textbook(
     logger.info(f"=== Starting textbook ingest: {len(pdf_bytes)} bytes ===")
     _log_memory_usage("Start of ingest")
     
-    index, pinecone_err = _get_pinecone_index()
-    if not index:
-        if pinecone_err == "index_not_found":
-            return {"success": False, "error": _pinecone_index_not_found_message()}
-        return {"success": False, "error": "Vector store not available (set PINECONE_API_KEY and PINECONE_INDEX_NAME)."}
+    conn = _get_pg_conn()
+    if not conn:
+        return {"success": False, "error": _pgvector_not_available_message()}
 
     openai_client = _get_openai_client()
     if not openai_client:
         return {"success": False, "error": "Embeddings not available (set OPENAI_API_KEY)."}
 
+    if not _ensure_table(conn):
+        return {"success": False, "error": "Could not create RAG table."}
+
     _log_memory_usage("Before PDF extraction")
     
-    # PDF text extraction method selection
-    # PyPDF2 (default): Low memory, works for text-based PDFs
-    # Anthropic Vision (optional): Memory-intensive, better for scanned PDFs
-    # WARNING: Anthropic Vision uses pdf2image which can cause OOM on Railway
     use_vision = os.getenv("USE_ANTHROPIC_VISION_FOR_PDF", "").strip().lower() in ("1", "true", "yes")
     
     if use_vision and _get_anthropic_client():
         logger.info("PDF extraction: Using Anthropic Vision (USE_ANTHROPIC_VISION_FOR_PDF=true)")
-        logger.warning("Anthropic Vision is memory-intensive. If you get OOM errors, disable it in Railway env vars.")
         text = _extract_text_from_pdf_via_anthropic(pdf_bytes)
         if not text or len(text.strip()) < 50:
-            logger.info("Vision extraction returned little text, falling back to PyPDF2")
             text = _extract_text_from_pdf(pdf_bytes)
     else:
-        logger.info("PDF extraction: Using PyPDF2 (lightweight, recommended for Railway)")
+        logger.info("PDF extraction: Using PyPDF2")
         text = _extract_text_from_pdf(pdf_bytes)
     
     _log_memory_usage("After PDF extraction")
     
-    # Free PDF bytes from memory immediately after extraction
     del pdf_bytes
     gc.collect()
-    _log_memory_usage("After freeing PDF bytes")
     logger.info(f"Extracted {len(text)} characters")
     
     if not text or len(text.strip()) < 100:
         return {"success": False, "error": "Could not extract enough text from the PDF (may be image-only or corrupted)."}
 
-    logger.info("Starting text chunking...")
     chunks = _chunk_text(text)
-    logger.info(f"Chunking complete: {len(chunks)} chunks created")
-    
-    # Free full text after chunking
     del text
     gc.collect()
-    _log_memory_usage(f"After chunking ({len(chunks)} chunks)")
     
     if not chunks:
         return {"success": False, "error": "No text chunks produced from PDF."}
-    
-    logger.info("Preparing to process embeddings...")
 
     namespace = _namespace_name(module_id)
     upload_title = (title or "Textbook").strip()[:200]
 
     try:
-        # Delete existing content if not appending
+        cur = conn.cursor()
         if not append:
-            try:
-                index.delete(delete_all=True, namespace=namespace)
-            except Exception:
-                pass
+            cur.execute(f"DELETE FROM {RAG_TABLE} WHERE namespace = %s", (namespace,))
 
-        # Process in batches
+        import numpy as np
         batch_size = INGEST_BATCH_SIZE
         total_upserted = 0
-        total_batches = (len(chunks) + batch_size - 1) // batch_size
-        logger.info(f"Will process {len(chunks)} chunks in {total_batches} batches of {batch_size}")
-        
+
         for start in range(0, len(chunks), batch_size):
-            batch_num = start // batch_size + 1
             end = min(start + batch_size, len(chunks))
             batch_chunks = chunks[start:end]
             
-            logger.info(f"Batch {batch_num}/{total_batches}: Getting embeddings for {len(batch_chunks)} chunks...")
-            _log_memory_usage(f"Before batch {batch_num} embeddings")
-            
-            # Get embeddings for this batch
             embeddings = _get_embeddings(batch_chunks, openai_client)
             if not embeddings or len(embeddings) != len(batch_chunks):
+                cur.close()
+                conn.close()
                 return {"success": False, "error": "Failed to generate embeddings for chunks."}
             
-            logger.info(f"Batch {batch_num}/{total_batches}: Embeddings received, preparing vectors...")
-            
-            # Prepare vectors for Pinecone
-            vectors = []
             for i, (chunk, embedding) in enumerate(zip(batch_chunks, embeddings)):
-                vector_id = str(uuid.uuid4())
-                vectors.append({
-                    "id": vector_id,
-                    "values": embedding,
-                    "metadata": {
-                        "text": chunk,
-                        "page_chunk": start + i + 1,
-                        "total_chunks": len(chunks),
-                        "upload_title": upload_title,
-                    }
-                })
+                meta = {
+                    "page_chunk": start + i + 1,
+                    "total_chunks": len(chunks),
+                    "upload_title": upload_title,
+                }
+                cur.execute(
+                    f"""
+                    INSERT INTO {RAG_TABLE} (id, namespace, embedding, content, metadata)
+                    VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (
+                        str(uuid.uuid4()),
+                        namespace,
+                        np.array(embedding, dtype="float32"),
+                        chunk,
+                        json.dumps(meta),
+                    ),
+                )
+                total_upserted += 1
             
-            # Upsert to Pinecone
-            index.upsert(vectors=vectors, namespace=namespace)
-            total_upserted += len(vectors)
-            
-            # Free batch memory immediately
-            del batch_chunks, embeddings, vectors
+            del batch_chunks, embeddings
             gc.collect()
-            logger.info(f"Batch complete: {total_upserted}/{len(chunks)} chunks uploaded")
 
-        # Get total count in namespace
-        try:
-            stats = index.describe_index_stats()
-            ns_stats = stats.namespaces.get(namespace, {})
-            total_count = getattr(ns_stats, 'vector_count', total_upserted)
-        except Exception:
-            total_count = total_upserted
+        cur.execute(f"SELECT COUNT(*) FROM {RAG_TABLE} WHERE namespace = %s", (namespace,))
+        total_count = cur.fetchone()[0]
+        cur.close()
+        conn.commit()
+        conn.close()
 
         return {
             "success": True,
@@ -407,112 +418,12 @@ def ingest_textbook(
             "title": title or "Textbook",
         }
     except Exception as e:
-        err_str = str(e).lower()
-        if "404" in err_str or "not found" in err_str:
-            return {"success": False, "error": _pinecone_index_not_found_message(), "chunk_count": 0, "total_chunk_count": 0}
         logger.exception("Error ingesting textbook for module %s: %s", module_id, e)
-        return {"success": False, "error": str(e), "chunk_count": 0, "total_chunk_count": 0}
-
-
-def ingest_precomputed_embeddings(
-    module_id: str,
-    items: List[Dict[str, Any]],
-    title: Optional[str] = None,
-    append: bool = True,
-) -> Dict[str, Any]:
-    """
-    Ingest pre-computed (text, embedding) pairs into Pinecone for a module.
-    No OpenAI call—use this when embeddings were generated outside Railway (e.g. locally)
-    to avoid OOM on memory-constrained deploys.
-
-    Args:
-        module_id: Root module_id of the module tree.
-        items: List of {"text": str, "embedding": [float, ...]} (embedding must be 1536-dim).
-        title: Optional display name for this upload.
-        append: If True (default), add to existing content. If False, replace all.
-
-    Returns:
-        Dict with success, chunk_count, total_chunk_count, error.
-    """
-    index, pinecone_err = _get_pinecone_index()
-    if not index:
-        if pinecone_err == "index_not_found":
-            return {"success": False, "error": _pinecone_index_not_found_message()}
-        return {"success": False, "error": "Vector store not available (set PINECONE_API_KEY and PINECONE_INDEX_NAME)."}
-
-    if not items:
-        return {"success": False, "error": "No items provided."}
-
-    # Validate first item
-    first = items[0]
-    if not isinstance(first.get("embedding"), (list, tuple)) or not first.get("text"):
-        return {"success": False, "error": "Each item must have 'text' (str) and 'embedding' (list of 1536 floats)."}
-    emb = first["embedding"]
-    if len(emb) != EMBEDDING_DIMENSION:
-        return {
-            "success": False,
-            "error": f"Embedding dimension must be {EMBEDDING_DIMENSION} (OpenAI text-embedding-3-small). Got {len(emb)}.",
-        }
-
-    namespace = _namespace_name(module_id)
-    upload_title = (title or "Textbook").strip()[:200]
-    batch_size = min(INGEST_BATCH_SIZE * 2, 50)  # Slightly larger batches since no API call
-
-    try:
-        if not append:
-            try:
-                index.delete(delete_all=True, namespace=namespace)
-            except Exception:
-                pass
-
-        total_upserted = 0
-        total_items = len(items)
-        num_batches = (total_items + batch_size - 1) // batch_size
-        logger.info(f"Ingesting {total_items} pre-computed vectors in {num_batches} batches")
-
-        for start in range(0, total_items, batch_size):
-            end = min(start + batch_size, total_items)
-            batch = items[start:end]
-            vectors = []
-            for i, item in enumerate(batch):
-                text = item.get("text") or ""
-                embedding = item.get("embedding")
-                if not text or not isinstance(embedding, (list, tuple)) or len(embedding) != EMBEDDING_DIMENSION:
-                    return {"success": False, "error": f"Invalid item at index {start + i}: need 'text' and 1536-dim 'embedding'."}
-                vectors.append({
-                    "id": str(uuid.uuid4()),
-                    "values": list(embedding),
-                    "metadata": {
-                        "text": text[:100_000],
-                        "page_chunk": start + i + 1,
-                        "total_chunks": total_items,
-                        "upload_title": upload_title,
-                    },
-                })
-            index.upsert(vectors=vectors, namespace=namespace)
-            total_upserted += len(vectors)
-            logger.info(f"Precomputed ingest: {total_upserted}/{total_items} vectors uploaded")
-            del batch, vectors
-            gc.collect()
-
+        conn.rollback()
         try:
-            stats = index.describe_index_stats()
-            ns_stats = stats.namespaces.get(namespace, {})
-            total_count = getattr(ns_stats, "vector_count", total_upserted)
+            conn.close()
         except Exception:
-            total_count = total_upserted
-
-        return {
-            "success": True,
-            "chunk_count": total_upserted,
-            "total_chunk_count": total_count,
-            "title": title or "Textbook",
-        }
-    except Exception as e:
-        err_str = str(e).lower()
-        if "404" in err_str or "not found" in err_str:
-            return {"success": False, "error": _pinecone_index_not_found_message(), "chunk_count": 0, "total_chunk_count": 0}
-        logger.exception("Error ingesting precomputed embeddings for module %s: %s", module_id, e)
+            pass
         return {"success": False, "error": str(e), "chunk_count": 0, "total_chunk_count": 0}
 
 
@@ -535,11 +446,9 @@ def query_textbook(
     if not query or not query.strip():
         return {"success": True, "chunks": []}
 
-    index, pinecone_err = _get_pinecone_index()
-    if not index:
-        if pinecone_err == "index_not_found":
-            return {"success": False, "chunks": [], "error": _pinecone_index_not_found_message()}
-        return {"success": False, "chunks": [], "error": "Vector store not available."}
+    conn = _get_pg_conn()
+    if not conn:
+        return {"success": False, "chunks": [], "error": _pgvector_not_available_message()}
 
     openai_client = _get_openai_client()
     if not openai_client:
@@ -548,70 +457,86 @@ def query_textbook(
     namespace = _namespace_name(module_id)
 
     try:
-        # Get query embedding
         embeddings = _get_embeddings([query.strip()], openai_client)
         if not embeddings:
             return {"success": False, "chunks": [], "error": "Failed to generate query embedding."}
         
-        query_embedding = embeddings[0]
+        import numpy as np
+        query_embedding = np.array(embeddings[0], dtype="float32")
 
-        # Query Pinecone
-        results = index.query(
-            vector=query_embedding,
-            top_k=min(k, 10),
-            namespace=namespace,
-            include_metadata=True,
+        cur = conn.cursor()
+        cur.execute(
+            f"""
+            SELECT content, metadata FROM {RAG_TABLE}
+            WHERE namespace = %s
+            ORDER BY embedding <=> %s
+            LIMIT %s
+            """,
+            (namespace, query_embedding, min(k, 10)),
         )
-
-        if not results.matches:
-            return {"success": True, "chunks": []}
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
 
         chunks = []
-        for match in results.matches:
-            metadata = match.metadata or {}
-            content = metadata.pop("text", "")
-            chunks.append({"content": content, "metadata": metadata})
+        for content, meta in rows:
+            if meta and isinstance(meta, dict):
+                m = dict(meta)
+            else:
+                m = json.loads(meta) if isinstance(meta, str) else {}
+            chunks.append({"content": content or "", "metadata": m})
 
         return {"success": True, "chunks": chunks}
     except Exception as e:
-        err_str = str(e).lower()
-        if "404" in err_str or "not found" in err_str:
-            return {"success": False, "chunks": [], "error": _pinecone_index_not_found_message()}
         logger.warning("Error querying textbook for module %s: %s", module_id, e)
+        try:
+            conn.close()
+        except Exception:
+            pass
         return {"success": False, "chunks": [], "error": str(e)}
 
 
 def textbook_has_content(module_id: str) -> bool:
     """Return True if this module has a textbook ingested in the vector store."""
-    index, _ = _get_pinecone_index()
-    if not index:
+    conn = _get_pg_conn()
+    if not conn:
         return False
     
     namespace = _namespace_name(module_id)
     try:
-        stats = index.describe_index_stats()
-        ns_stats = stats.namespaces.get(namespace, {})
-        count = getattr(ns_stats, 'vector_count', 0)
+        cur = conn.cursor()
+        cur.execute(f"SELECT COUNT(*) FROM {RAG_TABLE} WHERE namespace = %s", (namespace,))
+        count = cur.fetchone()[0]
+        cur.close()
+        conn.close()
         return count > 0
     except Exception:
+        try:
+            conn.close()
+        except Exception:
+            pass
         return False
 
 
 def delete_textbook(module_id: str) -> Dict[str, Any]:
     """Remove textbook content for this module."""
-    index, pinecone_err = _get_pinecone_index()
-    if not index:
-        if pinecone_err == "index_not_found":
-            return {"success": False, "error": _pinecone_index_not_found_message()}
-        return {"success": False, "error": "Vector store not available."}
+    conn = _get_pg_conn()
+    if not conn:
+        return {"success": False, "error": _pgvector_not_available_message()}
     
     namespace = _namespace_name(module_id)
     try:
-        index.delete(delete_all=True, namespace=namespace)
+        cur = conn.cursor()
+        cur.execute(f"DELETE FROM {RAG_TABLE} WHERE namespace = %s", (namespace,))
+        cur.close()
+        conn.commit()
+        conn.close()
         return {"success": True}
     except Exception as e:
-        err_str = str(e).lower()
-        if "404" in err_str or "not found" in err_str:
-            return {"success": False, "error": _pinecone_index_not_found_message()}
         logger.warning("Error deleting textbook for module %s: %s", module_id, e)
+        conn.rollback()
+        try:
+            conn.close()
+        except Exception:
+            pass
         return {"success": False, "error": str(e)}

@@ -1,5 +1,4 @@
 from flask import Flask, render_template, request, jsonify, session, redirect, url_for, send_file, Response
-from flask_socketio import SocketIO, emit, join_room, leave_room
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from functools import wraps
@@ -19,10 +18,7 @@ from utils.module_ai import (
     analyze_writing_submission,
 )
 from utils import rag_service
-from utils.nanobanana import generate_pro as nanobanana_generate_pro, wait_for_result as nanobanana_wait_for_result
 import logging
-import random
-import string
 import math
 import uuid
 import json
@@ -83,10 +79,6 @@ app.config['MONGODB_URI'] = os.getenv('MONGODB_URI') or os.getenv('MONGO_URL')
 app.config['MONGODB_DB'] = os.getenv('MONGODB_DB', 'school_portal')
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=8)
 
-# Initialize Socket.IO for real-time collaboration
-# Using 'threading' mode for compatibility with anthropic/trio dependencies
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading', logger=False, engineio_logger=False)
-
 # Initialize database
 db.init_app(app)
 
@@ -110,13 +102,11 @@ def sgt_filter(dt):
         return dt.astimezone(SGT)
     return dt
 
-# Initialize rate limiter (explicit storage avoids "no storage specified" warning)
-# Set RATELIMIT_STORAGE_URI=redis://... for production (e.g. Railway Redis)
+# Initialize rate limiter
 limiter = Limiter(
     app=app,
     key_func=get_remote_address,
-    default_limits=["200 per day", "50 per hour"],
-    storage_uri=os.getenv("RATELIMIT_STORAGE_URI", "memory://"),
+    default_limits=["200 per day", "50 per hour"]
 )
 
 # Admin password from environment
@@ -127,23 +117,19 @@ ADMIN_PASSWORD = os.getenv('ADMIN_PASSWORD', 'admin123')
 # ============================================================================
 
 def login_required(f):
-    """Require student login. For JSON/fetch requests return 401 JSON so client gets JSON, not redirect HTML."""
+    """Require student login."""
     @wraps(f)
     def decorated_function(*args, **kwargs):
         if 'student_id' not in session:
-            if request.is_json or ('application/json' in (request.headers.get('Accept') or '')):
-                return jsonify({'error': 'Please log in again.', 'login_required': True}), 401
             return redirect(url_for('login'))
         return f(*args, **kwargs)
     return decorated_function
 
 def teacher_required(f):
-    """Require teacher login. For /teacher/api/* return JSON 401 so fetch() gets JSON, not redirect HTML."""
+    """Require teacher login"""
     @wraps(f)
     def decorated_function(*args, **kwargs):
         if 'teacher_id' not in session:
-            if request.path.startswith('/teacher/api/'):
-                return jsonify({'success': False, 'error': 'Session expired. Please refresh the page.'}), 401
             return redirect(url_for('teacher_login'))
         return f(*args, **kwargs)
     return decorated_function
@@ -1213,25 +1199,6 @@ def download_submission_pdf(submission_id):
             logger.error(f"Assignment not found for submission {submission_id}, assignment_id: {assignment_id}")
             return redirect(url_for('student_submissions'))
         
-        # For spreadsheet assignments, serve the stored feedback PDF if available
-        if assignment.get('marking_type') == 'spreadsheet' and submission.get('spreadsheet_feedback_pdf_id'):
-            from gridfs import GridFS
-            from bson import ObjectId
-            fs = GridFS(db.db)
-            try:
-                file_id = submission['spreadsheet_feedback_pdf_id']
-                if isinstance(file_id, str):
-                    file_id = ObjectId(file_id)
-                pdf_content = fs.get(file_id).read()
-                return send_file(
-                    io.BytesIO(pdf_content),
-                    mimetype='application/pdf',
-                    as_attachment=True,
-                    download_name=f"feedback_report_{submission_id}.pdf"
-                )
-            except Exception as e:
-                logger.warning(f"Could not read spreadsheet feedback PDF: {e}")
-        
         pdf_content = generate_feedback_pdf(submission, assignment, student)
         
         if not pdf_content:
@@ -1247,175 +1214,6 @@ def download_submission_pdf(submission_id):
     except Exception as e:
         logger.error(f"Error downloading PDF for submission {submission_id}: {e}", exc_info=True)
         return redirect(url_for('view_submission', submission_id=submission_id))
-
-
-@app.route('/submissions/<submission_id>/feedback-excel')
-@login_required
-def download_submission_feedback_excel(submission_id):
-    """Download spreadsheet feedback Excel (commented student file) for spreadsheet assignments."""
-    try:
-        student = Student.find_one({'student_id': session['student_id']})
-        if not student:
-            return redirect(url_for('student_submissions'))
-        submission = Submission.find_one({
-            'submission_id': submission_id,
-            'student_id': session['student_id']
-        })
-        if not submission or not submission.get('spreadsheet_feedback_excel_id'):
-            return redirect(url_for('view_submission', submission_id=submission_id))
-        assignment = Assignment.find_one({'assignment_id': submission.get('assignment_id')})
-        if not assignment or assignment.get('marking_type') != 'spreadsheet':
-            return redirect(url_for('view_submission', submission_id=submission_id))
-        from gridfs import GridFS
-        from bson import ObjectId
-        fs = GridFS(db.db)
-        file_id = submission['spreadsheet_feedback_excel_id']
-        if isinstance(file_id, str):
-            file_id = ObjectId(file_id)
-        excel_content = fs.get(file_id).read()
-        return send_file(
-            io.BytesIO(excel_content),
-            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            as_attachment=True,
-            download_name=f"feedback_commented_{submission_id}.xlsx"
-        )
-    except Exception as e:
-        logger.error(f"Error downloading feedback Excel for submission {submission_id}: {e}", exc_info=True)
-        return redirect(url_for('view_submission', submission_id=submission_id))
-
-
-def _get_submission_and_assignment_for_excel_feedback(submission_id):
-    """Resolve submission and assignment; allow student (own) or teacher (assigned). Returns (submission, assignment, student, is_teacher) or (None, None, None, None)."""
-    submission = Submission.find_one({'submission_id': submission_id})
-    if not submission:
-        return None, None, None, None
-    assignment = Assignment.find_one({'assignment_id': submission.get('assignment_id')})
-    if not assignment or assignment.get('marking_type') != 'spreadsheet':
-        return None, None, None, None
-    student = Student.find_one({'student_id': submission['student_id']})
-    if session.get('teacher_id'):
-        if assignment.get('teacher_id') != session['teacher_id']:
-            return None, None, None, None
-        return submission, assignment, student, True
-    if session.get('student_id'):
-        if submission.get('student_id') != session['student_id']:
-            return None, None, None, None
-        return submission, assignment, student, False
-    return None, None, None, None
-
-
-@app.route('/submissions/<submission_id>/excel-feedback')
-@student_or_teacher_required
-def view_excel_feedback(submission_id):
-    """View spreadsheet feedback (comments) on the page. Student: own submission; Teacher: any submission they teach."""
-    submission, assignment, student, is_teacher = _get_submission_and_assignment_for_excel_feedback(submission_id)
-    if not submission or not assignment:
-        if session.get('teacher_id'):
-            return redirect(url_for('teacher_submissions'))
-        return redirect(url_for('student_submissions'))
-    sf = submission.get('ai_feedback', {}).get('spreadsheet_feedback') or {}
-    if not sf or not sf.get('questions'):
-        if session.get('teacher_id'):
-            return redirect(url_for('review_submission', submission_id=submission_id))
-        return redirect(url_for('view_submission', submission_id=submission_id))
-    teacher_feedback = submission.get('teacher_feedback', {})
-    return render_template(
-        'excel_feedback_view.html',
-        submission=submission,
-        assignment=assignment,
-        student=student,
-        spreadsheet_feedback=sf,
-        teacher_feedback=teacher_feedback,
-        is_teacher=is_teacher,
-    )
-
-
-@app.route('/submissions/<submission_id>/excel-feedback/save', methods=['POST'])
-@teacher_required
-def save_excel_feedback(submission_id):
-    """Save teacher-edited spreadsheet feedback (overall and per-question feedback text)."""
-    submission = Submission.find_one({'submission_id': submission_id})
-    if not submission:
-        return jsonify({'success': False, 'error': 'Submission not found'}), 404
-    assignment = Assignment.find_one({'assignment_id': submission.get('assignment_id')})
-    if not assignment or assignment.get('teacher_id') != session['teacher_id']:
-        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
-    if assignment.get('marking_type') != 'spreadsheet':
-        return jsonify({'success': False, 'error': 'Not a spreadsheet assignment'}), 400
-    try:
-        data = request.get_json() or {}
-        teacher_feedback = dict(submission.get('teacher_feedback', {}))
-        teacher_feedback['spreadsheet_overall_feedback'] = data.get('overall_feedback', '')
-        teacher_feedback['spreadsheet_questions'] = data.get('questions', {})
-        teacher_feedback['spreadsheet_edited_at'] = datetime.utcnow()
-        teacher_feedback['spreadsheet_edited_by'] = session['teacher_id']
-        Submission.update_one(
-            {'submission_id': submission_id},
-            {'$set': {'teacher_feedback': teacher_feedback, 'updated_at': datetime.utcnow()}}
-        )
-        return jsonify({'success': True})
-    except Exception as e:
-        logger.exception("Error saving excel feedback")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/teacher/submissions/<submission_id>/feedback-excel')
-@teacher_required
-def teacher_download_feedback_excel(submission_id):
-    """Download spreadsheet feedback Excel (commented file) for a submission. Teacher only."""
-    submission = Submission.find_one({'submission_id': submission_id})
-    if not submission or not submission.get('spreadsheet_feedback_excel_id'):
-        return redirect(url_for('teacher_submissions'))
-    assignment = Assignment.find_one({'assignment_id': submission.get('assignment_id')})
-    if not assignment or assignment.get('teacher_id') != session['teacher_id']:
-        return redirect(url_for('teacher_submissions'))
-    from gridfs import GridFS
-    from bson import ObjectId
-    fs = GridFS(db.db)
-    try:
-        file_id = submission['spreadsheet_feedback_excel_id']
-        if isinstance(file_id, str):
-            file_id = ObjectId(file_id)
-        excel_content = fs.get(file_id).read()
-        return send_file(
-            io.BytesIO(excel_content),
-            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            as_attachment=True,
-            download_name=f"feedback_commented_{submission_id}.xlsx"
-        )
-    except Exception as e:
-        logger.error(f"Error downloading feedback Excel for teacher: {e}")
-        return redirect(url_for('review_submission', submission_id=submission_id))
-
-
-@app.route('/teacher/submissions/<submission_id>/feedback-pdf')
-@teacher_required
-def teacher_download_feedback_pdf(submission_id):
-    """Download spreadsheet feedback PDF for a submission. Teacher only."""
-    submission = Submission.find_one({'submission_id': submission_id})
-    if not submission or not submission.get('spreadsheet_feedback_pdf_id'):
-        return redirect(url_for('review_submission', submission_id=submission_id))
-    assignment = Assignment.find_one({'assignment_id': submission.get('assignment_id')})
-    if not assignment or assignment.get('teacher_id') != session['teacher_id']:
-        return redirect(url_for('teacher_submissions'))
-    from gridfs import GridFS
-    from bson import ObjectId
-    fs = GridFS(db.db)
-    try:
-        file_id = submission['spreadsheet_feedback_pdf_id']
-        if isinstance(file_id, str):
-            file_id = ObjectId(file_id)
-        pdf_content = fs.get(file_id).read()
-        return send_file(
-            io.BytesIO(pdf_content),
-            mimetype='application/pdf',
-            as_attachment=True,
-            download_name=f"feedback_report_{submission_id}.pdf"
-        )
-    except Exception as e:
-        logger.error(f"Error downloading feedback PDF for teacher: {e}")
-        return redirect(url_for('review_submission', submission_id=submission_id))
-
 
 @app.route('/student/submit', methods=['POST'])
 @login_required
@@ -1482,23 +1280,18 @@ def student_submit_files():
         for i, file in enumerate(files):
             file_data = file.read()
             
-            # Determine content type (support Excel for spreadsheet assignments)
-            fn_lower = (file.filename or '').lower()
-            if fn_lower.endswith('.pdf'):
+            # Determine content type
+            if file.filename.lower().endswith('.pdf'):
                 content_type = 'application/pdf'
                 page_type = 'pdf'
-            elif fn_lower.endswith(('.xlsx', '.xls')) and assignment.get('marking_type') == 'spreadsheet':
-                content_type = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-                page_type = 'excel'
             else:
                 content_type = 'image/jpeg'
                 page_type = 'image'
             
             # Store in GridFS
-            ext = file.filename.split('.')[-1] if file.filename else ('xlsx' if page_type == 'excel' else 'jpg')
             file_id = fs.put(
                 file_data,
-                filename=f"{submission_id}_page_{i+1}.{ext}",
+                filename=f"{submission_id}_page_{i+1}.{file.filename.split('.')[-1]}",
                 content_type=content_type,
                 submission_id=submission_id,
                 page_num=i + 1
@@ -1517,7 +1310,7 @@ def student_submit_files():
             'student_id': session['student_id'],
             'teacher_id': assignment['teacher_id'],
             'file_ids': file_ids,
-            'file_type': 'excel' if (file_type == 'excel' or (pages and pages[0].get('type') == 'excel')) else ('pdf' if file_type == 'pdf' else 'image'),
+            'file_type': 'pdf' if file_type == 'pdf' else 'image',
             'page_count': len(files),
             'status': 'submitted',
             'submitted_at': datetime.utcnow(),
@@ -1534,80 +1327,11 @@ def student_submit_files():
         else:
             Submission.insert_one(submission)
         
-        # Generate AI feedback (or spreadsheet evaluation)
+        # Generate AI feedback
         try:
             marking_type = assignment.get('marking_type', 'standard')
             
-            if marking_type == 'spreadsheet':
-                # Evaluate Excel submission against answer key; generate PDF report and commented Excel
-                answer_key_bytes = None
-                if assignment.get('spreadsheet_answer_key_id'):
-                    try:
-                        ans_file = fs.get(assignment['spreadsheet_answer_key_id'])
-                        answer_key_bytes = ans_file.read()
-                    except Exception as e:
-                        logger.warning(f"Could not read spreadsheet answer key: {e}")
-                student_bytes = pages[0]['data'] if pages and pages[0].get('type') == 'excel' else None
-                if not answer_key_bytes or not student_bytes:
-                    ai_result = {'error': 'Missing answer key or Excel submission'}
-                else:
-                    from utils.spreadsheet_evaluator import (
-                        evaluate_spreadsheet_submission,
-                        generate_pdf_report as generate_spreadsheet_pdf,
-                        generate_commented_excel,
-                    )
-                    student_name = student.get('name') or session.get('student_name') or 'Student'
-                    result_dict = evaluate_spreadsheet_submission(
-                        answer_key_bytes=answer_key_bytes,
-                        student_bytes=student_bytes,
-                        student_name=student_name,
-                        student_filename=(files[0].filename if files else 'submission.xlsx'),
-                    )
-                    if result_dict is None:
-                        ai_result = {'error': 'Spreadsheet evaluation failed'}
-                    else:
-                        pdf_bytes = generate_spreadsheet_pdf(result_dict)
-                        excel_bytes = generate_commented_excel(student_bytes, result_dict)
-                        pdf_id = fs.put(
-                            pdf_bytes,
-                            filename=f"{submission_id}_feedback_report.pdf",
-                            content_type='application/pdf',
-                            submission_id=submission_id,
-                            file_type='spreadsheet_feedback_pdf',
-                        )
-                        excel_id = fs.put(
-                            excel_bytes,
-                            filename=f"{submission_id}_feedback_commented.xlsx",
-                            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                            submission_id=submission_id,
-                            file_type='spreadsheet_feedback_excel',
-                        )
-                        ai_result = {
-                            'spreadsheet_feedback': result_dict,
-                            'marks_awarded': result_dict.get('marks_awarded'),
-                            'total_marks': result_dict.get('total_marks'),
-                            'percentage': result_dict.get('percentage'),
-                        }
-                        update_fields = {
-                            'ai_feedback': ai_result,
-                            'status': 'ai_reviewed',
-                            'final_marks': result_dict.get('marks_awarded'),
-                            'spreadsheet_feedback_pdf_id': str(pdf_id),
-                            'spreadsheet_feedback_excel_id': str(excel_id),
-                        }
-                        if assignment.get('send_ai_feedback_immediately'):
-                            update_fields['feedback_sent'] = True
-                        Submission.update_one(
-                            {'submission_id': submission_id},
-                            {'$set': update_fields}
-                        )
-                        if update_fields.get('feedback_sent'):
-                            submission_after = Submission.find_one({'submission_id': submission_id})
-                            if submission_after:
-                                _update_profile_and_mastery_from_assignment(session['student_id'], assignment, submission_after)
-                        # Skip the common 413 / update block below for spreadsheet
-                        marking_type = None  # signal we already updated
-            elif marking_type == 'rubric':
+            if marking_type == 'rubric':
                 # For rubric-based essays, use the essay analysis function
                 rubrics_content = None
                 if assignment.get('rubrics_id'):
@@ -1630,45 +1354,43 @@ def student_submit_files():
                 
                 ai_result = analyze_submission_images(pages, assignment, answer_key_content, teacher)
             
-            # If already handled (e.g. spreadsheet), skip standard/rubric update
-            if marking_type is not None:
-                # If AI returned 413 (request too large), auto-reject so student can resubmit with smaller/fewer images
-                is_413 = ai_result.get('error_code') == 'request_too_large' or (
-                    ai_result.get('error') and ('413' in str(ai_result.get('error')) or 'request_too_large' in str(ai_result.get('error')).lower())
+            # If AI returned 413 (request too large), auto-reject so student can resubmit with smaller/fewer images
+            is_413 = ai_result.get('error_code') == 'request_too_large' or (
+                ai_result.get('error') and ('413' in str(ai_result.get('error')) or 'request_too_large' in str(ai_result.get('error')).lower())
+            )
+            if is_413:
+                rejection_reason = (
+                    "Your submission was too large to process. Please resubmit with fewer or smaller images: "
+                    "e.g. one photo per page, lower resolution, or fewer pages. This helps the system process your work."
                 )
-                if is_413:
-                    rejection_reason = (
-                        "Your submission was too large to process. Please resubmit with fewer or smaller images: "
-                        "e.g. one photo per page, lower resolution, or fewer pages. This helps the system process your work."
-                    )
-                    Submission.update_one(
-                        {'submission_id': submission_id},
-                        {'$set': {
-                            'ai_feedback': ai_result,
-                            'status': 'rejected',
-                            'rejection_reason': rejection_reason,
-                            'rejected_at': datetime.utcnow(),
-                            'rejected_by': 'system_413'
-                        }}
-                    )
-                    logger.info(f"Auto-rejected submission {submission_id} due to 413 request_too_large; student can resubmit.")
-                else:
-                    update_fields = {
+                Submission.update_one(
+                    {'submission_id': submission_id},
+                    {'$set': {
                         'ai_feedback': ai_result,
-                        'status': 'ai_reviewed'
-                    }
-                    # If assignment is set to send AI feedback straight away, student can see feedback without teacher review
-                    if assignment.get('send_ai_feedback_immediately') and not ai_result.get('error'):
-                        update_fields['feedback_sent'] = True
-                    Submission.update_one(
-                        {'submission_id': submission_id},
-                        {'$set': update_fields}
-                    )
-                    # Update profile/mastery when assignment is linked to module and feedback is sent
-                    if update_fields.get('feedback_sent'):
-                        submission_after = Submission.find_one({'submission_id': submission_id})
-                        if submission_after:
-                            _update_profile_and_mastery_from_assignment(session['student_id'], assignment, submission_after)
+                        'status': 'rejected',
+                        'rejection_reason': rejection_reason,
+                        'rejected_at': datetime.utcnow(),
+                        'rejected_by': 'system_413'
+                    }}
+                )
+                logger.info(f"Auto-rejected submission {submission_id} due to 413 request_too_large; student can resubmit.")
+            else:
+                update_fields = {
+                    'ai_feedback': ai_result,
+                    'status': 'ai_reviewed'
+                }
+                # If assignment is set to send AI feedback straight away, student can see feedback without teacher review
+                if assignment.get('send_ai_feedback_immediately') and not ai_result.get('error'):
+                    update_fields['feedback_sent'] = True
+                Submission.update_one(
+                    {'submission_id': submission_id},
+                    {'$set': update_fields}
+                )
+                # Update profile/mastery when assignment is linked to module and feedback is sent
+                if update_fields.get('feedback_sent'):
+                    submission_after = Submission.find_one({'submission_id': submission_id})
+                    if submission_after:
+                        _update_profile_and_mastery_from_assignment(session['student_id'], assignment, submission_after)
         except Exception as e:
             logger.error(f"AI feedback error: {e}")
         
@@ -1812,7 +1534,7 @@ def student_preview_feedback():
 @app.route('/student/submission/<submission_id>/file/<int:file_index>')
 @login_required
 def view_student_submission_file(submission_id, file_index):
-    """Serve student's submission file. Optional query param: rotate=90|180|270 to rotate PDF or image."""
+    """Serve student's submission file"""
     from gridfs import GridFS
     from bson import ObjectId
     
@@ -1828,45 +1550,12 @@ def view_student_submission_file(submission_id, file_index):
     if file_index >= len(file_ids):
         return 'File not found', 404
     
-    rotate = request.args.get('rotate', type=int)
-    if rotate not in (90, 180, 270):
-        rotate = None
-    
     fs = GridFS(db.db)
     try:
         file_data = fs.get(ObjectId(file_ids[file_index]))
         content_type = file_data.content_type or 'application/octet-stream'
-        data = file_data.read()
-        
-        if rotate and content_type == 'application/pdf':
-            try:
-                from PyPDF2 import PdfReader, PdfWriter
-                import io
-                reader = PdfReader(io.BytesIO(data))
-                writer = PdfWriter()
-                for page in reader.pages:
-                    page.rotate(rotate)
-                    writer.add_page(page)
-                out = io.BytesIO()
-                writer.write(out)
-                data = out.getvalue()
-            except Exception as rot_e:
-                logger.warning(f"PDF rotation failed: {rot_e}")
-        elif rotate and (content_type.startswith('image/') or content_type == 'application/octet-stream'):
-            try:
-                from PIL import Image
-                import io
-                img = Image.open(io.BytesIO(data)).convert('RGB')
-                rotated = img.rotate(-rotate, expand=True)
-                out = io.BytesIO()
-                rotated.save(out, format='JPEG', quality=95)
-                data = out.getvalue()
-                content_type = 'image/jpeg'
-            except Exception as rot_e:
-                logger.warning(f"Image rotation failed: {rot_e}")
-        
         return Response(
-            data,
+            file_data.read(),
             mimetype=content_type,
             headers={'Content-Disposition': 'inline'}
         )
@@ -1897,17 +1586,6 @@ def download_student_assignment_file(assignment_id, file_type):
     if not can_student_access_assignment(student, assignment):
         logger.error(f"Student {session['student_id']} cannot access assignment {assignment_id} due to target restrictions")
         return 'Unauthorized', 403
-    
-    # Answer key PDF: only allow if teacher enabled release and student has submitted at least once
-    if file_type == 'answer_key':
-        if not assignment.get('release_answer_key_pdf'):
-            return 'Answer key is not available for this assignment', 403
-        has_submission = Submission.find_one({
-            'assignment_id': assignment_id,
-            'student_id': session['student_id']
-        })
-        if not has_submission:
-            return 'Submit your assignment first to access the answer key', 403
     
     file_id_field = f"{file_type}_id"
     file_name_field = f"{file_type}_name"
@@ -1955,18 +1633,11 @@ def download_student_assignment_file(assignment_id, file_type):
         
         logger.info(f"Attempting to get file {file_id} from GridFS")
         file_data = fs.get(file_id)
-        # Use correct mimetype for spreadsheet files
-        if file_type in ('spreadsheet_student_template', 'spreadsheet_answer_key'):
-            mimetype = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-            default_name = 'template.xlsx'
-        else:
-            mimetype = 'application/pdf'
-            default_name = 'document.pdf'
         return Response(
             file_data.read(),
-            mimetype=mimetype,
+            mimetype='application/pdf',
             headers={
-                'Content-Disposition': f'inline; filename="{assignment.get(file_name_field, default_name)}"'
+                'Content-Disposition': f'inline; filename="{assignment.get(file_name_field, "document.pdf")}"'
             }
         )
     except Exception as e:
@@ -2222,8 +1893,6 @@ def student_python_execute():
         code = (data.get('code') or '').strip()
         if not code:
             return jsonify({'error': 'No code provided'}), 400
-        # Normalize smart/curly quotes to straight quotes (iPad and other keyboards insert Unicode quotes)
-        code = code.replace('\u201c', '"').replace('\u201d', '"').replace('\u2018', "'").replace('\u2019', "'")
         with tempfile.TemporaryDirectory() as tmpdir:
             result = subprocess.run(
                 [os.environ.get('PYTHON_EXECUTABLE', 'python3'), '-c', code],
@@ -2245,834 +1914,6 @@ def student_python_execute():
     except Exception as e:
         logger.exception("Python execute error")
         return jsonify({'output': str(e), 'executed': False}), 500
-
-
-# ============================================================================
-# COLLAB SPACE - Teacher settings, spaces, Nanobanana Pro infographic
-# ============================================================================
-
-DEFAULT_MAX_GENERATION_PER_SPACE = 5  # combined limit for students (PDF + infographic)
-
-
-def _get_teacher_collab_settings(teacher_id):
-    """Return { nanobanana_api_key, max_infographic_per_space, max_generation_per_space }."""
-    doc = db.db.teacher_collab_settings.find_one({'teacher_id': teacher_id})
-    if not doc:
-        return {
-            'nanobanana_api_key': None,
-            'max_infographic_per_space': DEFAULT_MAX_INFOGraphic_PER_SPACE,
-            'max_generation_per_space': DEFAULT_MAX_GENERATION_PER_SPACE,
-        }
-    key = None
-    if doc.get('nanobanana_api_key_encrypted'):
-        try:
-            key = decrypt_api_key(doc['nanobanana_api_key_encrypted'])
-        except Exception:
-            pass
-    return {
-        'nanobanana_api_key': key,
-        'max_infographic_per_space': doc.get('max_infographic_per_space', DEFAULT_MAX_INFOGraphic_PER_SPACE),
-        'max_generation_per_space': doc.get('max_generation_per_space', DEFAULT_MAX_GENERATION_PER_SPACE),
-    }
-
-
-def _set_teacher_collab_settings(teacher_id, nanobanana_api_key=None, max_infographic_per_space=None, max_generation_per_space=None):
-    """Save teacher Collab Space settings. Pass None to leave unchanged."""
-    upd = {'updated_at': datetime.utcnow()}
-    if nanobanana_api_key is not None:
-        upd['nanobanana_api_key_encrypted'] = encrypt_api_key(nanobanana_api_key) if nanobanana_api_key else None
-    if max_infographic_per_space is not None:
-        upd['max_infographic_per_space'] = max(1, min(20, int(max_infographic_per_space)))
-    if max_generation_per_space is not None:
-        upd['max_generation_per_space'] = max(1, min(20, int(max_generation_per_space)))
-    db.db.teacher_collab_settings.update_one(
-        {'teacher_id': teacher_id},
-        {'$set': {**upd, 'teacher_id': teacher_id}},
-        upsert=True,
-    )
-
-
-def _generate_join_code():
-    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
-
-
-def _generate_space_id():
-    return f"CS-{uuid.uuid4().hex[:10].upper()}"
-
-
-@app.route('/teacher/collab-space')
-@teacher_required
-def teacher_collab_space():
-    """Collab Space list for teachers with access."""
-    if not _teacher_has_collab_space_access(session['teacher_id']):
-        return redirect(url_for('teacher_dashboard'))
-    spaces = list(db.db.collab_spaces.find({'teacher_id': session['teacher_id']}).sort('created_at', -1))
-    raw_settings = _get_teacher_collab_settings(session['teacher_id'])
-    settings = {
-        'max_infographic_per_space': raw_settings.get('max_infographic_per_space', DEFAULT_MAX_INFOGraphic_PER_SPACE),
-        'max_generation_per_space': raw_settings.get('max_generation_per_space', DEFAULT_MAX_GENERATION_PER_SPACE),
-    }
-    # Get teacher's groups for the create-space modal (My Groups from all classes/teaching groups)
-    my_groups = list(db.db.teacher_groups.find({'teacher_id': session['teacher_id']}).sort('name', 1))
-    return render_template('teacher_collab_space.html', spaces=spaces, settings=settings, my_groups=my_groups)
-
-
-@app.route('/teacher/collab-space/create', methods=['POST'])
-@teacher_required
-def teacher_collab_space_create():
-    if not _teacher_has_collab_space_access(session['teacher_id']):
-        return jsonify({'error': 'Access denied'}), 403
-    data = request.get_json() or request.form
-    name = (data.get('name') or 'New Collab Space').strip()[:200]
-    central_topic = (data.get('central_topic') or '').strip()[:500]
-    settings = _get_teacher_collab_settings(session['teacher_id'])
-    max_infographic = settings.get('max_infographic_per_space') or DEFAULT_MAX_INFOGraphic_PER_SPACE
-    max_generation = settings.get('max_generation_per_space') or DEFAULT_MAX_GENERATION_PER_SPACE
-    space_id = _generate_space_id()
-    join_code = _generate_join_code()
-    while db.db.collab_spaces.find_one({'join_code': join_code}):
-        join_code = _generate_join_code()
-    assigned_group_id = (data.get('assigned_group_id') or '').strip() or None
-    assigned_group_name = None
-    if assigned_group_id:
-        grp = db.db.teacher_groups.find_one({'group_id': assigned_group_id, 'teacher_id': session['teacher_id']})
-        if grp:
-            assigned_group_name = grp.get('name', assigned_group_id)
-    doc = {
-        'space_id': space_id,
-        'teacher_id': session['teacher_id'],
-        'name': name or space_id,
-        'central_topic': central_topic or 'Discussion',
-        'join_code': join_code,
-        'is_active': True,
-        'max_infographic': max_infographic,
-        'max_generation': max_generation,
-        'generation_count': 0,
-        'assigned_group_id': assigned_group_id,
-        'assigned_group_name': assigned_group_name,
-        'discussion_text': '',
-        'infographics': [],
-        'created_at': datetime.utcnow(),
-        'updated_at': datetime.utcnow(),
-    }
-    db.db.collab_spaces.insert_one(doc)
-    return jsonify({'success': True, 'space_id': space_id, 'join_code': join_code})
-
-
-@app.route('/teacher/collab-space/settings', methods=['GET', 'POST'])
-@teacher_required
-def teacher_collab_space_settings():
-    if not _teacher_has_collab_space_access(session['teacher_id']):
-        return redirect(url_for('teacher_dashboard'))
-    if request.method == 'POST':
-        data = request.get_json() or request.form
-        api_key = (data.get('nanobanana_api_key') or '').strip() or None
-        max_val = data.get('max_infographic_per_space')
-        max_infographic = int(max_val) if max_val not in (None, '') else None
-        max_gen_val = data.get('max_generation_per_space')
-        max_generation = int(max_gen_val) if max_gen_val not in (None, '') else None
-        _set_teacher_collab_settings(
-            session['teacher_id'],
-            nanobanana_api_key=api_key,
-            max_infographic_per_space=max_infographic,
-            max_generation_per_space=max_generation,
-        )
-        return jsonify({'success': True})
-    settings = _get_teacher_collab_settings(session['teacher_id'])
-    return jsonify({
-        'nanobanana_api_key_set': bool(settings.get('nanobanana_api_key')),
-        'max_infographic_per_space': settings.get('max_infographic_per_space', DEFAULT_MAX_INFOGraphic_PER_SPACE),
-        'max_generation_per_space': settings.get('max_generation_per_space', DEFAULT_MAX_GENERATION_PER_SPACE),
-    })
-
-
-def _collab_space_render(space, user_role):
-    """Shared render for collab space mind-map view (teacher or student)."""
-    teacher_id = space.get('teacher_id')
-    settings = _get_teacher_collab_settings(teacher_id)
-    teacher = Teacher.find_one({'teacher_id': teacher_id})
-    # Build node tree from stored data or default
-    nodes_data = space.get('nodes_data')
-    if not nodes_data:
-        nodes_data = {
-            'central': {'id': 'central', 'type': 'central', 'label': space.get('central_topic') or 'Discussion',
-                        'content': '', 'studentColor': None, 'layer': 0, 'x': 0, 'y': 0, 'votes': 0, 'comments': []},
-            'layer1': [], 'layer2': [], 'layer3': [],
-        }
-    # Determine current user info
-    if user_role == 'teacher':
-        user_id = session['teacher_id']
-        user_name = (teacher.get('name') if teacher else session['teacher_id'])
-        back_url = url_for('teacher_collab_space')
-    else:
-        user_id = session['student_id']
-        student = Student.find_one({'student_id': session['student_id']})
-        user_name = (student.get('name') if student else session['student_id'])
-        back_url = url_for('student_collab_space')
-    space_json = json.dumps({
-        'space_id': space['space_id'],
-        'name': space.get('name', ''),
-        'central_topic': space.get('central_topic', 'Discussion'),
-        'join_code': space.get('join_code', ''),
-        'is_active': space.get('is_active', True),
-        'max_generation': space.get('max_generation', DEFAULT_MAX_GENERATION_PER_SPACE),
-        'generation_count': space.get('generation_count', 0),
-        'infographics': space.get('infographics', []),
-        'settings': space.get('collab_settings', {'maxLayer1': 6, 'maxTextNodes': 5, 'charLimit': 200}),
-    }, default=str)
-    nodes_json = json.dumps(nodes_data, default=str)
-    # For teachers: pass list of all spaces for the dropdown switcher
-    all_spaces_json = '[]'
-    if user_role == 'teacher':
-        all_spaces = list(db.db.collab_spaces.find(
-            {'teacher_id': teacher_id},
-            {'space_id': 1, 'name': 1, 'assigned_group_name': 1, '_id': 0}
-        ).sort('name', 1))
-        all_spaces_json = json.dumps(all_spaces, default=str)
-    return render_template('collab_space_view.html',
-                           space_json=space_json,
-                           nodes_json=nodes_json,
-                           user_role=user_role,
-                           user_id=user_id,
-                           user_name=user_name,
-                           back_url=back_url,
-                           has_api_key=bool(settings.get('nanobanana_api_key')),
-                           all_spaces_json=all_spaces_json)
-
-
-def _build_tree_summary(nodes_data):
-    """Build text summary from mind-map node tree for infographic/PDF prompt."""
-    if not nodes_data:
-        return ''
-    lines = []
-    central = nodes_data.get('central', {})
-    lines.append(f"Central Topic: {central.get('label', '')}")
-    if central.get('content'):
-        lines.append(f"  {central['content']}")
-    for n1 in nodes_data.get('layer1', []):
-        lines.append(f"\n## {n1.get('label', '')}")
-        if n1.get('content'):
-            lines.append(f"  {n1['content']}")
-        for n2 in nodes_data.get('layer2', []):
-            if n2.get('parentId') == n1.get('id'):
-                lines.append(f"  ### {n2.get('label', '')}")
-                if n2.get('content'):
-                    lines.append(f"    {n2['content']}")
-                for n3 in nodes_data.get('layer3', []):
-                    if n3.get('parentId') == n2.get('id'):
-                        lines.append(f"    - {n3.get('label', '')}")
-                        if n3.get('textContent'):
-                            lines.append(f"      {n3['textContent']}")
-    return '\n'.join(lines)
-
-
-def _build_report_payload(nodes_data, space):
-    """Build a full structured payload for the PDF report AI: topics, subtopics, all text, image markers, infographics."""
-    if not nodes_data:
-        return ''
-    sections = []
-    central = nodes_data.get('central', {})
-    sections.append("=== CENTRAL TOPIC ===")
-    sections.append(central.get('label', ''))
-    if central.get('content'):
-        sections.append(central['content'])
-    sections.append("")
-    layer1 = nodes_data.get('layer1', [])
-    layer2 = nodes_data.get('layer2', [])
-    layer3 = nodes_data.get('layer3', [])
-    for n1 in layer1:
-        sections.append(f"=== TOPIC: {n1.get('label', '')} ===")
-        if n1.get('content'):
-            sections.append(n1['content'])
-        if n1.get('hasImage'):
-            sections.append("[Includes image]")
-        for n2 in layer2:
-            if n2.get('parentId') != n1.get('id'):
-                continue
-            sections.append(f"  --- Subtopic: {n2.get('label', '')} ---")
-            if n2.get('content'):
-                sections.append(f"  {n2['content']}")
-            if n2.get('hasImage'):
-                sections.append("  [Includes image]")
-            for n3 in layer3:
-                if n3.get('parentId') != n2.get('id'):
-                    continue
-                lbl = n3.get('label', '')
-                txt = n3.get('textContent') or n3.get('content') or ''
-                img = " [Includes image]" if n3.get('hasImage') else ""
-                sections.append(f"  • {lbl}: {txt}{img}")
-        sections.append("")
-    infographics = space.get('infographics') or []
-    if infographics:
-        sections.append("=== GENERATED INFOGRAPHICS (from this space) ===")
-        for i, inf in enumerate(infographics, 1):
-            url = inf.get('url', '')
-            if url:
-                sections.append(f"  Infographic {i}: {url}")
-        sections.append("")
-    return '\n'.join(sections)
-
-
-def _get_collab_space_for_api(space_id):
-    """Return (space, error_response). Checks teacher or student access."""
-    space = db.db.collab_spaces.find_one({'space_id': space_id})
-    if not space:
-        return None, (jsonify({'error': 'Space not found'}), 404)
-    tid = session.get('teacher_id')
-    sid = session.get('student_id')
-    if tid and space.get('teacher_id') == tid:
-        return space, None
-    if sid and space.get('is_active'):
-        if _student_has_collab_space_access(sid):
-            return space, None
-    return None, (jsonify({'error': 'Access denied'}), 403)
-
-
-@app.route('/teacher/collab-space/<space_id>/delete', methods=['POST'])
-@teacher_required
-def teacher_collab_space_delete(space_id):
-    """Delete a collab space."""
-    if not _teacher_has_collab_space_access(session['teacher_id']):
-        return jsonify({'error': 'Access denied'}), 403
-    space = db.db.collab_spaces.find_one({'space_id': space_id, 'teacher_id': session['teacher_id']})
-    if not space:
-        return jsonify({'error': 'Space not found'}), 404
-    db.db.collab_spaces.delete_one({'space_id': space_id})
-    return jsonify({'success': True})
-
-
-@app.route('/teacher/collab-space/<space_id>')
-@teacher_required
-def teacher_collab_space_session(space_id):
-    if not _teacher_has_collab_space_access(session['teacher_id']):
-        return redirect(url_for('teacher_dashboard'))
-    space = db.db.collab_spaces.find_one({'space_id': space_id, 'teacher_id': session['teacher_id']})
-    if not space:
-        return redirect(url_for('teacher_collab_space'))
-    return _collab_space_render(space, 'teacher')
-
-
-@app.route('/api/collab-space/<space_id>/save-nodes', methods=['POST'])
-@student_or_teacher_required
-def api_collab_space_save_nodes(space_id):
-    """Save the full node tree and optional settings."""
-    space, err = _get_collab_space_for_api(space_id)
-    if err:
-        return err
-    data = request.get_json() or {}
-    upd = {'updated_at': datetime.utcnow()}
-    if 'nodes_data' in data:
-        upd['nodes_data'] = data['nodes_data']
-    if 'settings' in data and session.get('teacher_id') == space.get('teacher_id'):
-        upd['collab_settings'] = data['settings']
-    db.db.collab_spaces.update_one({'space_id': space_id}, {'$set': upd})
-    return jsonify({'success': True})
-
-
-@app.route('/api/collab-space/<space_id>/nodes', methods=['GET'])
-@student_or_teacher_required
-def api_collab_space_get_nodes(space_id):
-    """Polling endpoint: return current node state and version for sync fallback."""
-    space, err = _get_collab_space_for_api(space_id)
-    if err:
-        return err
-    return jsonify({
-        'nodes_data': space.get('nodes_data'),
-        'version': str(space.get('updated_at', '')),
-        'collab_settings': space.get('collab_settings'),
-    })
-
-
-# ============================================================================
-# COLLAB SPACE – SOCKET.IO REAL-TIME EVENTS
-# ============================================================================
-
-# Server-side room presence tracking (color uniqueness + user list)
-_collab_rooms = {}   # { room: { sid: {user_id, user_name, color, user_role} } }
-_sid_to_room = {}    # { sid: room }
-
-
-@socketio.on('join_space')
-def handle_join_space(data):
-    """Client joins a space room for real-time updates."""
-    space_id = data.get('space_id')
-    user_id = data.get('user_id')
-    user_name = data.get('user_name')
-    user_role = data.get('user_role')
-    color = data.get('color')
-    if not space_id:
-        return
-    room = f'collab_{space_id}'
-    sid = request.sid
-    join_room(room)
-    # Track this user in the room
-    if room not in _collab_rooms:
-        _collab_rooms[room] = {}
-    _collab_rooms[room][sid] = {
-        'user_id': user_id, 'user_name': user_name,
-        'user_role': user_role, 'color': color,
-    }
-    _sid_to_room[sid] = room
-    # Send full list of current room members to the joining user
-    emit('room_users', {'users': list(_collab_rooms[room].values())})
-    # Notify others that someone joined
-    emit('user_joined', {
-        'user_id': user_id, 'user_name': user_name,
-        'user_role': user_role, 'color': color,
-    }, to=room, include_self=False)
-    logger.info(f'[SocketIO] {user_name} ({user_id}) joined room {room}')
-
-
-@socketio.on('leave_space')
-def handle_leave_space(data):
-    space_id = data.get('space_id')
-    user_id = data.get('user_id')
-    user_name = data.get('user_name', '')
-    if not space_id:
-        return
-    room = f'collab_{space_id}'
-    sid = request.sid
-    leave_room(room)
-    if room in _collab_rooms:
-        _collab_rooms[room].pop(sid, None)
-        if not _collab_rooms[room]:
-            del _collab_rooms[room]
-    _sid_to_room.pop(sid, None)
-    emit('user_left', {'user_id': user_id, 'user_name': user_name}, to=room, include_self=False)
-
-
-@socketio.on('disconnect')
-def handle_disconnect():
-    """Clean up room presence on unexpected disconnect."""
-    sid = request.sid
-    room = _sid_to_room.pop(sid, None)
-    if room and room in _collab_rooms:
-        user_info = _collab_rooms[room].pop(sid, None)
-        if not _collab_rooms[room]:
-            del _collab_rooms[room]
-        if user_info:
-            emit('user_left', {
-                'user_id': user_info.get('user_id'),
-                'user_name': user_info.get('user_name', ''),
-            }, to=room)
-
-
-@socketio.on('color_changed')
-def handle_color_changed(data):
-    """User changed their color – update tracking and broadcast."""
-    space_id = data.get('space_id')
-    user_id = data.get('user_id')
-    color = data.get('color')
-    if not space_id:
-        return
-    room = f'collab_{space_id}'
-    sid = request.sid
-    if room in _collab_rooms and sid in _collab_rooms[room]:
-        _collab_rooms[room][sid]['color'] = color
-    emit('color_changed', {'user_id': user_id, 'color': color}, to=room, include_self=False)
-
-
-@socketio.on('node_added')
-def handle_node_added(data):
-    """A user created a new node. Broadcast to others and persist atomically."""
-    space_id = data.get('space_id')
-    node = data.get('node')
-    layer_key = data.get('layer_key')  # e.g. 'layer1', 'layer2', 'layer3'
-    if not space_id or not node or not layer_key:
-        return
-    room = f'collab_{space_id}'
-    # Atomic push into the correct layer array in MongoDB
-    db.db.collab_spaces.update_one(
-        {'space_id': space_id},
-        {'$push': {f'nodes_data.{layer_key}': node}, '$set': {'updated_at': datetime.utcnow()}}
-    )
-    emit('node_added', {'node': node, 'layer_key': layer_key, 'by': data.get('user_id')}, to=room, include_self=False)
-
-
-@socketio.on('node_deleted')
-def handle_node_deleted(data):
-    """A user deleted a node (and its descendants). Broadcast & persist."""
-    space_id = data.get('space_id')
-    node_id = data.get('node_id')
-    deleted_ids = data.get('deleted_ids', [])  # includes the node itself + all descendants
-    if not space_id or not node_id:
-        return
-    room = f'collab_{space_id}'
-    # Remove from all layer arrays atomically
-    for lk in ('layer1', 'layer2', 'layer3'):
-        db.db.collab_spaces.update_one(
-            {'space_id': space_id},
-            {'$pull': {f'nodes_data.{lk}': {'id': {'$in': deleted_ids}}}},
-        )
-    db.db.collab_spaces.update_one({'space_id': space_id}, {'$set': {'updated_at': datetime.utcnow()}})
-    emit('node_deleted', {'node_id': node_id, 'deleted_ids': deleted_ids, 'by': data.get('user_id')}, to=room, include_self=False)
-
-
-@socketio.on('node_voted')
-def handle_node_voted(data):
-    """A user voted on a node."""
-    space_id = data.get('space_id')
-    node_id = data.get('node_id')
-    layer_key = data.get('layer_key')
-    if not space_id or not node_id or not layer_key:
-        return
-    room = f'collab_{space_id}'
-    # Increment vote atomically
-    db.db.collab_spaces.update_one(
-        {'space_id': space_id, f'nodes_data.{layer_key}.id': node_id},
-        {'$inc': {f'nodes_data.{layer_key}.$.votes': 1}, '$set': {'updated_at': datetime.utcnow()}}
-    )
-    emit('node_voted', {'node_id': node_id, 'layer_key': layer_key, 'by': data.get('user_id')}, to=room, include_self=False)
-
-
-@socketio.on('comment_added')
-def handle_comment_added(data):
-    """A user added a comment to a node."""
-    space_id = data.get('space_id')
-    node_id = data.get('node_id')
-    layer_key = data.get('layer_key')
-    comment = data.get('comment')
-    if not space_id or not node_id or not layer_key or not comment:
-        return
-    room = f'collab_{space_id}'
-    # Push comment atomically
-    db.db.collab_spaces.update_one(
-        {'space_id': space_id, f'nodes_data.{layer_key}.id': node_id},
-        {'$push': {f'nodes_data.{layer_key}.$.comments': comment}, '$set': {'updated_at': datetime.utcnow()}}
-    )
-    emit('comment_added', {'node_id': node_id, 'layer_key': layer_key, 'comment': comment, 'by': data.get('user_id')}, to=room, include_self=False)
-
-
-@socketio.on('node_moved')
-def handle_node_moved(data):
-    """A user dragged a node to a new position."""
-    space_id = data.get('space_id')
-    node_id = data.get('node_id')
-    layer_key = data.get('layer_key')  # 'central', 'layer1', 'layer2', 'layer3'
-    x = data.get('x')
-    y = data.get('y')
-    if not space_id or not node_id:
-        return
-    room = f'collab_{space_id}'
-    # Persist position atomically
-    if layer_key == 'central':
-        db.db.collab_spaces.update_one(
-            {'space_id': space_id},
-            {'$set': {'nodes_data.central.x': x, 'nodes_data.central.y': y, 'updated_at': datetime.utcnow()}}
-        )
-    else:
-        db.db.collab_spaces.update_one(
-            {'space_id': space_id, f'nodes_data.{layer_key}.id': node_id},
-            {'$set': {f'nodes_data.{layer_key}.$.x': x, f'nodes_data.{layer_key}.$.y': y, 'updated_at': datetime.utcnow()}}
-        )
-    emit('node_moved', {'node_id': node_id, 'x': x, 'y': y, 'by': data.get('user_id')}, to=room, include_self=False)
-
-
-@socketio.on('node_edited')
-def handle_node_edited(data):
-    """A user edited the text of their node."""
-    space_id = data.get('space_id')
-    node_id = data.get('node_id')
-    layer_key = data.get('layer_key')
-    label = data.get('label')
-    content = data.get('content')
-    if not space_id or not node_id or not layer_key:
-        return
-    room = f'collab_{space_id}'
-    update_fields = {'updated_at': datetime.utcnow()}
-    if label is not None:
-        update_fields[f'nodes_data.{layer_key}.$.label'] = label
-    if content is not None:
-        update_fields[f'nodes_data.{layer_key}.$.content'] = content
-    db.db.collab_spaces.update_one(
-        {'space_id': space_id, f'nodes_data.{layer_key}.id': node_id},
-        {'$set': update_fields}
-    )
-    emit('node_edited', {
-        'node_id': node_id, 'layer_key': layer_key,
-        'label': label, 'content': content, 'by': data.get('user_id'),
-    }, to=room, include_self=False)
-
-
-@socketio.on('cursor_move')
-def handle_cursor_move(data):
-    """Broadcast cursor/pointer position for live presence (like Figma cursors)."""
-    space_id = data.get('space_id')
-    if not space_id:
-        return
-    room = f'collab_{space_id}'
-    emit('cursor_move', {
-        'user_id': data.get('user_id'),
-        'user_name': data.get('user_name'),
-        'color': data.get('color'),
-        'x': data.get('x'),
-        'y': data.get('y'),
-    }, to=room, include_self=False)
-
-
-@socketio.on('settings_changed')
-def handle_settings_changed(data):
-    """Teacher changed space settings – broadcast to all."""
-    space_id = data.get('space_id')
-    settings = data.get('settings')
-    if not space_id or not settings:
-        return
-    room = f'collab_{space_id}'
-    db.db.collab_spaces.update_one(
-        {'space_id': space_id},
-        {'$set': {'collab_settings': settings, 'updated_at': datetime.utcnow()}}
-    )
-    emit('settings_changed', {'settings': settings, 'by': data.get('user_id')}, to=room, include_self=False)
-
-
-def _check_generation_limit(space, space_id):
-    """Check if the combined generation limit has been reached.
-    Teachers have unlimited; students share a pool of DEFAULT_MAX_GENERATION_PER_SPACE.
-    Returns (ok: bool, error_response_or_None)."""
-    is_teacher = bool(session.get('teacher_id') and session['teacher_id'] == space.get('teacher_id'))
-    if is_teacher:
-        return True, None   # teachers are unlimited
-    max_gen = space.get('max_generation', DEFAULT_MAX_GENERATION_PER_SPACE)
-    used = (space.get('generation_count') or 0)
-    if used >= max_gen:
-        return False, (jsonify({'error': f'Your group has used all {max_gen} generations for this space. Only the teacher can generate more.'}), 400)
-    return True, None
-
-
-def _increment_generation_count(space_id):
-    """Atomically increment the generation counter."""
-    db.db.collab_spaces.update_one(
-        {'space_id': space_id},
-        {'$inc': {'generation_count': 1}, '$set': {'updated_at': datetime.utcnow()}}
-    )
-
-
-@app.route('/api/collab-space/<space_id>/generate-infographic', methods=['POST'])
-@student_or_teacher_required
-def api_collab_space_generate_infographic(space_id):
-    """Generate infographic from the mind-map node tree using Nanobanana Pro."""
-    space, err = _get_collab_space_for_api(space_id)
-    if err:
-        return err
-    # Check generation limit (students limited, teachers unlimited)
-    ok, limit_err = _check_generation_limit(space, space_id)
-    if not ok:
-        return limit_err
-    teacher_id = space.get('teacher_id')
-    settings = _get_teacher_collab_settings(teacher_id)
-    api_key = settings.get('nanobanana_api_key')
-    if not api_key:
-        return jsonify({'error': 'The teacher has not set a Nanobanana Pro API key yet.'}), 400
-    central_topic = space.get('central_topic') or 'Discussion'
-    nodes_data = space.get('nodes_data')
-    tree_summary = _build_tree_summary(nodes_data) if nodes_data else ''
-    prompt = f"""Create a professional educational infographic about:
-Topic: {central_topic}
-
-Key subtopics and content:
-{tree_summary or '(No content yet)'}
-
-Style: Clean, modern infographic with icons, sections for each subtopic,
-key facts highlighted, educational and visually engaging.
-Color scheme: Warm educational tones.
-Layout: Vertical infographic format suitable for printing."""
-    try:
-        resp = nanobanana_generate_pro(api_key, prompt, aspect_ratio="4:5")
-        if resp.get('code') != 200:
-            return jsonify({'error': resp.get('message', 'API error')}), 400
-        task_id = (resp.get('data') or {}).get('taskId')
-        if not task_id:
-            return jsonify({'error': 'No task ID returned'}), 500
-        result = nanobanana_wait_for_result(api_key, task_id)
-        if not result.get('success'):
-            return jsonify({'error': result.get('error', 'Generation failed')}), 500
-        image_url = result.get('result_image_url')
-        infographics = list(space.get('infographics') or [])
-        infographics.append({'url': image_url, 'created_at': datetime.utcnow().isoformat()})
-        db.db.collab_spaces.update_one(
-            {'space_id': space_id},
-            {'$set': {'infographics': infographics, 'updated_at': datetime.utcnow()}},
-        )
-        _increment_generation_count(space_id)
-        new_count = (space.get('generation_count') or 0) + 1
-        return jsonify({'success': True, 'image_url': image_url, 'generation_count': new_count})
-    except Exception as e:
-        logger.exception("Collab Space infographic generation error: %s", e)
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/collab-space/<space_id>/generate-pdf', methods=['POST'])
-@student_or_teacher_required
-def api_collab_space_generate_pdf(space_id):
-    """Generate AI-based study notes PDF from the mind-map tree.
-    Uses the teacher's AI service to transform student contributions into
-    well-structured, educational study notes, then renders as PDF."""
-    space, err = _get_collab_space_for_api(space_id)
-    if err:
-        return err
-    # Check generation limit
-    ok, limit_err = _check_generation_limit(space, space_id)
-    if not ok:
-        return limit_err
-    from reportlab.lib.pagesizes import A4
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.lib.units import cm
-    from reportlab.lib import colors
-
-    nodes_data = space.get('nodes_data') or {}
-    central_topic = space.get('central_topic') or 'Discussion'
-    report_payload = _build_report_payload(nodes_data, space) if nodes_data else ''
-
-    # ── AI: generate a complete PDF report (Claude Sonnet preferred) from all topics, subtopics, text, images ──
-    ai_notes = None
-    teacher_id = space.get('teacher_id')
-    teacher = Teacher.find_one({'teacher_id': teacher_id})
-    client, model_name, provider = get_teacher_ai_service(teacher, 'anthropic')
-    if not client:
-        client, model_name, provider = get_teacher_ai_service(teacher, 'openai')
-    if client and report_payload.strip():
-        ai_prompt = f"""You are creating a complete PDF report for students from their Collab Space mind map. Your job is to capture ALL topics, subtopics, texts, and image references below and arrange them into a clear, professional report.
-
-Central topic: {central_topic}
-
-Full structured data from the mind map (topics, subtopics, bullet points; "[Includes image]" means that node has an image):
-{report_payload}
-
-Requirements:
-- Include every topic and subtopic and all text exactly as provided; do not omit any student content
-- Where you see "[Includes image]", note it in the report (e.g. "See image" or "[Image attached]") so the report reflects that visuals were contributed
-- If there are "GENERATED INFOGRAPHICS" listed, add a short "Generated infographics" section at the end that references them
-- Use a clear report structure: main sections for each topic, subheadings for subtopics, bullets for details
-- Use Markdown: headings with # / ## / ###, bullet points with -, bold with **
-- Add a brief "Key takeaways" section at the end summarising the main points
-- Do not invent content — only use what is in the data above"""
-        try:
-            if provider == 'anthropic':
-                resp = client.messages.create(model=model_name, max_tokens=3000,
-                    messages=[{'role': 'user', 'content': ai_prompt}])
-                ai_notes = resp.content[0].text
-            elif provider in ('openai', 'deepseek'):
-                resp = client.chat.completions.create(model=model_name, max_tokens=3000,
-                    messages=[{'role': 'user', 'content': ai_prompt}])
-                ai_notes = resp.choices[0].message.content
-        except Exception as e:
-            logger.warning("AI study notes generation failed, falling back to raw: %s", e)
-
-    # ── Build PDF ──
-    styles = getSampleStyleSheet()
-    title_style = ParagraphStyle('CTitle', parent=styles['Title'], fontSize=22, spaceAfter=8, textColor=colors.HexColor('#0f172a'))
-    subtitle_style = ParagraphStyle('CSub', parent=styles['Normal'], fontSize=11, textColor=colors.HexColor('#64748b'), spaceAfter=16)
-    h1 = ParagraphStyle('CH1', parent=styles['Heading1'], fontSize=16, spaceAfter=8, textColor=colors.HexColor('#1e40af'))
-    h2 = ParagraphStyle('CH2', parent=styles['Heading2'], fontSize=13, spaceAfter=6, leftIndent=0.5 * cm, textColor=colors.HexColor('#0f766e'))
-    h3 = ParagraphStyle('CH3', parent=styles['Heading3'], fontSize=11, spaceAfter=4, leftIndent=1 * cm)
-    body = ParagraphStyle('CBody', parent=styles['Normal'], fontSize=10, spaceAfter=4, leading=14)
-    body_indent = ParagraphStyle('CBodyI', parent=body, leftIndent=0.5 * cm)
-    bullet = ParagraphStyle('CBullet', parent=body, leftIndent=1 * cm, bulletIndent=0.5 * cm, spaceAfter=3)
-    key_style = ParagraphStyle('CKey', parent=styles['Normal'], fontSize=10, spaceAfter=4, leading=14,
-                               backColor=colors.HexColor('#f0f9ff'), borderPadding=8, leftIndent=0.3 * cm, rightIndent=0.3 * cm)
-    buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=2 * cm, bottomMargin=2 * cm)
-    story = []
-    story.append(Paragraph(f"Study Notes: {central_topic}", title_style))
-    story.append(Paragraph(f"Generated from Collab Space: {space.get('name', '')}", subtitle_style))
-    story.append(HRFlowable(width='100%', thickness=1, color=colors.HexColor('#e2e8f0'), spaceAfter=12))
-
-    if ai_notes:
-        # Parse the AI-generated markdown into ReportLab paragraphs
-        for line in ai_notes.split('\n'):
-            stripped = line.strip()
-            if not stripped:
-                story.append(Spacer(1, 0.2 * cm))
-                continue
-            # Convert markdown bold **text** to <b>text</b>
-            import re
-            stripped = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', stripped)
-            stripped = re.sub(r'\*(.+?)\*', r'<i>\1</i>', stripped)
-            if stripped.startswith('### '):
-                story.append(Paragraph(stripped[4:], h3))
-            elif stripped.startswith('## '):
-                story.append(Paragraph(stripped[3:], h2))
-            elif stripped.startswith('# '):
-                story.append(Paragraph(stripped[2:], h1))
-            elif stripped.startswith('- ') or stripped.startswith('* '):
-                story.append(Paragraph(f"• {stripped[2:]}", bullet))
-            elif stripped.startswith('> '):
-                story.append(Paragraph(stripped[2:], key_style))
-            else:
-                story.append(Paragraph(stripped, body))
-    else:
-        # Fallback: structured dump of student content (no AI)
-        story.append(Paragraph("<i>AI study notes unavailable — showing raw contributions.</i>", body))
-        story.append(Spacer(1, 0.3 * cm))
-        central = nodes_data.get('central', {})
-        if central.get('label'):
-            story.append(Paragraph(f"Central Topic: {central['label']}", h1))
-        if central.get('content'):
-            story.append(Paragraph(central['content'], body))
-        story.append(Spacer(1, 0.3 * cm))
-        for n1 in nodes_data.get('layer1', []):
-            story.append(Paragraph(n1.get('label', ''), h1))
-            if n1.get('content'):
-                story.append(Paragraph(n1['content'], body_indent))
-            for n2 in nodes_data.get('layer2', []):
-                if n2.get('parentId') == n1.get('id'):
-                    story.append(Paragraph(n2.get('label', ''), h2))
-                    if n2.get('content'):
-                        story.append(Paragraph(n2['content'], body_indent))
-                    for n3 in nodes_data.get('layer3', []):
-                        if n3.get('parentId') == n2.get('id'):
-                            lbl = n3.get('label', '')
-                            txt = n3.get('textContent') or n3.get('content') or ''
-                            story.append(Paragraph(f"• {lbl}: {txt}" if txt else f"• {lbl}", bullet))
-            story.append(Spacer(1, 0.2 * cm))
-
-    try:
-        doc.build(story)
-    except Exception as e:
-        logger.exception("PDF build error: %s", e)
-        return jsonify({'error': 'Failed to generate PDF'}), 500
-    buf.seek(0)
-    _increment_generation_count(space_id)
-    return send_file(buf, mimetype='application/pdf', as_attachment=True,
-                     download_name=f"{space.get('name', 'study-notes')}.pdf")
-
-
-@app.route('/student/collab-space')
-@login_required
-def student_collab_space():
-    """Collab Space: join or list joined spaces."""
-    if not _student_has_collab_space_access(session['student_id']):
-        return redirect(url_for('dashboard'))
-    return render_template('student_collab_space.html')
-
-
-@app.route('/student/collab-space/join', methods=['POST'])
-@login_required
-def student_collab_space_join():
-    if not _student_has_collab_space_access(session['student_id']):
-        return jsonify({'error': 'Access denied'}), 403
-    data = request.get_json() or request.form
-    join_code = (data.get('join_code') or '').strip().upper()
-    if not join_code:
-        return jsonify({'error': 'Enter a join code'}), 400
-    space = db.db.collab_spaces.find_one({'join_code': join_code, 'is_active': True})
-    if not space:
-        return jsonify({'error': 'Invalid or inactive join code'}), 404
-    session['collab_space_id'] = space['space_id']
-    session.permanent = True
-    return jsonify({'success': True, 'space_id': space['space_id'], 'name': space.get('name')})
-
-
-@app.route('/student/collab-space/<space_id>')
-@login_required
-def student_collab_space_session(space_id):
-    if not _student_has_collab_space_access(session['student_id']):
-        return redirect(url_for('dashboard'))
-    space = db.db.collab_spaces.find_one({'space_id': space_id, 'is_active': True})
-    if not space:
-        return redirect(url_for('student_collab_space'))
-    return _collab_space_render(space, 'student')
 
 
 @app.route('/api/learning/chat', methods=['POST'])
@@ -3442,11 +2283,6 @@ def teacher_dashboard():
                          classes=classes_data,
                          teaching_groups=teaching_groups)
 
-def _generate_teacher_group_id():
-    """Generate unique ID for a teacher-created group (within class or teaching group)."""
-    return f"TGRP-{uuid.uuid4().hex[:8].upper()}"
-
-
 @app.route('/teacher/class/<class_id>')
 @teacher_required
 def view_class(class_id):
@@ -3495,36 +2331,14 @@ def view_class(class_id):
     # Get class info
     class_info = Class.find_one({'class_id': class_id}) or {'class_id': class_id}
     
-    # Get teaching groups from this class (admin-created)
+    # Get teaching groups from this class
     teaching_groups = list(TeachingGroup.find({
         'teacher_id': session['teacher_id'],
         'class_id': class_id
     }))
     
-    # Teacher-created groups within this class
-    my_groups = list(db.db.teacher_groups.find({
-        'teacher_id': session['teacher_id'],
-        'source_type': 'class',
-        'source_id': class_id
-    }).sort('name', 1))
-    
     title = class_id
     subtitle = class_info.get('name') if class_info.get('name') and class_info.get('name') != class_id else None
-    
-    # Optional: assignment statuses server-side (no API) when assignment_id in query
-    selected_assignment_id = request.args.get('assignment_id')
-    student_statuses = {}
-    if selected_assignment_id and selected_assignment_id in assignment_ids:
-        for student in students:
-            sid = student['student_id']
-            submission = Submission.find_one(
-                {'assignment_id': selected_assignment_id, 'student_id': sid},
-                sort=[('submitted_at', -1), ('created_at', -1)]
-            )
-            if submission:
-                student_statuses[sid] = _build_student_status_for_submission(submission)
-            else:
-                student_statuses[sid] = {'status': 'none', 'label': 'No Submission', 'class': 'light', 'submission_id': None}
     
     return render_template('teacher_class_view.html',
                          teacher=teacher,
@@ -3533,12 +2347,7 @@ def view_class(class_id):
                          students=students,
                          assignments=assignments,
                          teaching_groups=teaching_groups,
-                         my_groups=my_groups,
-                         group_source_type='class',
-                         group_source_id=class_id,
-                         is_teaching_group=False,
-                         selected_assignment_id=selected_assignment_id,
-                         student_statuses=student_statuses)
+                         is_teaching_group=False)
 
 @app.route('/teacher/group/<group_id>')
 @teacher_required
@@ -3567,33 +2376,10 @@ def view_teaching_group(group_id):
         'target_type': 'teaching_group',
         'target_group_id': group_id
     }).sort('created_at', -1))
-    assignment_ids = [a['assignment_id'] for a in assignments]
     
     title = group.get('name', group_id)
     subtitle = f"Teaching Group from {group.get('class_id', 'Unknown Class')}"
     
-    # Optional: assignment statuses server-side when assignment_id in query
-    selected_assignment_id = request.args.get('assignment_id')
-    student_statuses = {}
-    if selected_assignment_id and selected_assignment_id in assignment_ids:
-        for student in students:
-            sid = student['student_id']
-            submission = Submission.find_one(
-                {'assignment_id': selected_assignment_id, 'student_id': sid},
-                sort=[('submitted_at', -1), ('created_at', -1)]
-            )
-            if submission:
-                student_statuses[sid] = _build_student_status_for_submission(submission)
-            else:
-                student_statuses[sid] = {'status': 'none', 'label': 'No Submission', 'class': 'light', 'submission_id': None}
-    
-    # Teacher-created groups within this teaching group
-    my_groups = list(db.db.teacher_groups.find({
-        'teacher_id': session['teacher_id'],
-        'source_type': 'teaching_group',
-        'source_id': group_id
-    }).sort('name', 1))
-
     return render_template('teacher_class_view.html',
                          teacher=teacher,
                          title=title,
@@ -3601,90 +2387,7 @@ def view_teaching_group(group_id):
                          students=students,
                          assignments=assignments,
                          teaching_groups=[],
-                         my_groups=my_groups,
-                         group_source_type='teaching_group',
-                         group_source_id=group_id,
-                         is_teaching_group=True,
-                         selected_assignment_id=selected_assignment_id,
-                         student_statuses=student_statuses)
-
-@app.route('/teacher/api/my-groups', methods=['POST'])
-@teacher_required
-def api_teacher_group_create():
-    """Create a group within a class or teaching group. Body: source_type, source_id, name, student_ids."""
-    try:
-        data = request.get_json() or {}
-        source_type = (data.get('source_type') or '').strip()
-        source_id = (data.get('source_id') or '').strip()
-        name = (data.get('name') or '').strip()[:200]
-        student_ids = list(data.get('student_ids') or [])
-        if source_type not in ('class', 'teaching_group') or not source_id or not name:
-            return jsonify({'error': 'source_type, source_id and name are required'}), 400
-        # Verify teacher has access to this source
-        if source_type == 'class':
-            teacher = Teacher.find_one({'teacher_id': session['teacher_id']})
-            if source_id not in (teacher.get('classes') or []):
-                students_in_class = Student.find({'class': source_id, 'teachers': session['teacher_id']})
-                if not any(1 for _ in students_in_class):
-                    return jsonify({'error': 'Access denied to this class'}), 403
-            allowed_ids = set(s['student_id'] for s in Student.find({'class': source_id}))
-        else:
-            tg = TeachingGroup.find_one({'group_id': source_id, 'teacher_id': session['teacher_id']})
-            if not tg:
-                return jsonify({'error': 'Teaching group not found'}), 404
-            allowed_ids = set(tg.get('student_ids') or [])
-        student_ids = [s for s in student_ids if s in allowed_ids]
-        group_id = _generate_teacher_group_id()
-        doc = {
-            'group_id': group_id,
-            'teacher_id': session['teacher_id'],
-            'source_type': source_type,
-            'source_id': source_id,
-            'name': name,
-            'student_ids': student_ids,
-            'created_at': datetime.utcnow(),
-            'updated_at': datetime.utcnow(),
-        }
-        db.db.teacher_groups.insert_one(doc)
-        return jsonify({'success': True, 'group_id': group_id, 'group': {'group_id': group_id, 'name': name, 'student_ids': student_ids}})
-    except Exception as e:
-        logger.exception("Create teacher group: %s", e)
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/teacher/api/my-groups/<group_id>', methods=['PUT', 'DELETE'])
-@teacher_required
-def api_teacher_group_update_or_delete(group_id):
-    """Update or delete a teacher-created group."""
-    doc = db.db.teacher_groups.find_one({'group_id': group_id, 'teacher_id': session['teacher_id']})
-    if not doc:
-        return jsonify({'error': 'Group not found'}), 404
-    if request.method == 'DELETE':
-        db.db.teacher_groups.delete_one({'group_id': group_id})
-        return jsonify({'success': True})
-    try:
-        data = request.get_json() or {}
-        name = (data.get('name') or '').strip()[:200]
-        student_ids = data.get('student_ids')
-        source_type = doc.get('source_type')
-        source_id = doc.get('source_id')
-        if source_type == 'class':
-            allowed_ids = set(s['student_id'] for s in Student.find({'class': source_id}))
-        else:
-            tg = TeachingGroup.find_one({'group_id': source_id, 'teacher_id': session['teacher_id']})
-            allowed_ids = set(tg.get('student_ids') or []) if tg else set()
-        upd = {'updated_at': datetime.utcnow()}
-        if name:
-            upd['name'] = name
-        if student_ids is not None:
-            upd['student_ids'] = [s for s in list(student_ids) if s in allowed_ids]
-        db.db.teacher_groups.update_one({'group_id': group_id}, {'$set': upd})
-        updated = db.db.teacher_groups.find_one({'group_id': group_id})
-        return jsonify({'success': True, 'group': {'group_id': group_id, 'name': updated.get('name'), 'student_ids': updated.get('student_ids', [])}})
-    except Exception as e:
-        logger.exception("Update teacher group: %s", e)
-        return jsonify({'error': str(e)}), 500
-
+                         is_teaching_group=True)
 
 @app.route('/teacher/assignments')
 @teacher_required
@@ -3716,67 +2419,59 @@ def teacher_assignments():
         else:
             a['target_display'] = None
     
-    # Build folder groupings for organise-by-class/subject
-    by_subject = {}
-    by_class = {}
-    by_subject_class = {}
-    for a in assignments:
-        subj = a.get('subject') or 'General'
-        target = a.get('target_display') or 'No class'
-        key_both = f"{subj} » {target}"
-        by_subject.setdefault(subj, []).append(a)
-        by_class.setdefault(target, []).append(a)
-        by_subject_class.setdefault(key_both, []).append(a)
-    folders_by_subject = [{'name': k, 'assignments': v} for k, v in sorted(by_subject.items())]
-    folders_by_class = [{'name': k, 'assignments': v} for k, v in sorted(by_class.items())]
-    folders_by_subject_class = [{'name': k, 'assignments': v} for k, v in sorted(by_subject_class.items())]
-    
     return render_template('teacher_assignments.html',
                          teacher=teacher,
-                         assignments=assignments,
-                         folders_by_subject=folders_by_subject,
-                         folders_by_class=folders_by_class,
-                         folders_by_subject_class=folders_by_subject_class)
-
-def _build_student_status_for_submission(submission):
-    """Build display status dict for one submission (for class view and API)."""
-    status = submission.get('status', 'submitted')
-    sub_id = submission.get('submission_id')
-    feedback_sent = submission.get('feedback_sent', False)
-    if status == 'ai_reviewed' and feedback_sent:
-        return {'status': 'ai_feedback_sent', 'label': 'AI Feedback Sent', 'class': 'info', 'submission_id': sub_id}
-    if status in ['submitted', 'ai_reviewed']:
-        return {'status': 'pending', 'label': 'Pending Review', 'class': 'warning', 'submission_id': sub_id}
-    if status in ['reviewed', 'approved']:
-        return {'status': 'returned', 'label': 'Returned', 'class': 'success', 'submission_id': sub_id}
-    return {'status': status, 'label': status.title(), 'class': 'secondary', 'submission_id': sub_id}
-
+                         assignments=assignments)
 
 @app.route('/teacher/api/student-statuses')
 @teacher_required
 def get_student_statuses():
-    """Get submission statuses for students by assignment (API fallback)."""
+    """Get submission statuses for students by assignment"""
     try:
         assignment_id = request.args.get('assignment_id')
-        student_ids = request.args.getlist('student_ids[]') or request.args.getlist('student_ids')
+        student_ids = request.args.getlist('student_ids[]')
+        
         if not assignment_id or not student_ids:
             return jsonify({'success': False, 'error': 'Missing parameters'}), 400
+        
+        # Verify teacher owns this assignment
         assignment = Assignment.find_one({
             'assignment_id': assignment_id,
             'teacher_id': session['teacher_id']
         })
+        
         if not assignment:
             return jsonify({'success': False, 'error': 'Assignment not found'}), 404
+        
+        # Get latest submission per student (rubric may have multiple versions)
         statuses = {}
         for student_id in student_ids:
             submission = Submission.find_one(
-                {'assignment_id': assignment_id, 'student_id': student_id},
+                {
+                    'assignment_id': assignment_id,
+                    'student_id': student_id
+                },
                 sort=[('submitted_at', -1), ('created_at', -1)]
             )
+            
             if submission:
-                statuses[student_id] = _build_student_status_for_submission(submission)
+                status = submission.get('status', 'submitted')
+                sub_id = submission.get('submission_id')
+                feedback_sent = submission.get('feedback_sent', False)
+                # AI Feedback Sent: AI reviewed and feedback already sent to student
+                if status == 'ai_reviewed' and feedback_sent:
+                    statuses[student_id] = {'status': 'ai_feedback_sent', 'label': 'AI Feedback Sent', 'class': 'info', 'submission_id': sub_id}
+                # Pending Review: waiting for teacher (submitted or ai_reviewed but not sent)
+                elif status in ['submitted', 'ai_reviewed']:
+                    statuses[student_id] = {'status': 'pending', 'label': 'Pending Review', 'class': 'warning', 'submission_id': sub_id}
+                # Returned: teacher has reviewed and returned
+                elif status in ['reviewed', 'approved']:
+                    statuses[student_id] = {'status': 'returned', 'label': 'Returned', 'class': 'success', 'submission_id': sub_id}
+                else:
+                    statuses[student_id] = {'status': status, 'label': status.title(), 'class': 'secondary', 'submission_id': sub_id}
             else:
                 statuses[student_id] = {'status': 'none', 'label': 'No Submission', 'class': 'light', 'submission_id': None}
+        
         return jsonify({'success': True, 'statuses': statuses})
     except Exception as e:
         logger.error(f"Error in get_student_statuses: {e}", exc_info=True)
@@ -4634,13 +3329,6 @@ def create_assignment():
     # Get teaching groups for this teacher
     teaching_groups = list(TeachingGroup.find({'teacher_id': session['teacher_id']}))
     
-    # Teacher's module trees (for linking assignment to module)
-    teacher_modules = []
-    if _teacher_has_module_access(session['teacher_id']):
-        teacher_modules = list(
-            Module.find({'teacher_id': session['teacher_id'], 'parent_id': None}).sort('title', 1)
-        )
-    
     if request.method == 'POST':
         try:
             data = request.form
@@ -4687,32 +3375,7 @@ def create_assignment():
                 return None, None
             
             # Validate required files based on marking type
-            if marking_type == 'spreadsheet':
-                spreadsheet_student_template = request.files.get('spreadsheet_student_template')
-                spreadsheet_answer_key = request.files.get('spreadsheet_answer_key')
-                spreadsheet_question_paper = request.files.get('spreadsheet_question_paper')
-                if not spreadsheet_student_template or not spreadsheet_student_template.filename:
-                    return render_template('teacher_create_assignment.html',
-                                         teacher=teacher,
-                                         classes=classes,
-                                         teaching_groups=teaching_groups,
-                                         teacher_modules=teacher_modules,
-                                         error='Excel student template is required for spreadsheet assignments')
-                if not spreadsheet_answer_key or not spreadsheet_answer_key.filename:
-                    return render_template('teacher_create_assignment.html',
-                                         teacher=teacher,
-                                         classes=classes,
-                                         teaching_groups=teaching_groups,
-                                         teacher_modules=teacher_modules,
-                                         error='Excel answer key (template with correct answers) is required')
-                if not spreadsheet_question_paper or not spreadsheet_question_paper.filename:
-                    return render_template('teacher_create_assignment.html',
-                                         teacher=teacher,
-                                         classes=classes,
-                                         teaching_groups=teaching_groups,
-                                         teacher_modules=teacher_modules,
-                                         error='Question paper (PDF) is required for spreadsheet assignments')
-            elif marking_type == 'rubric':
+            if marking_type == 'rubric':
                 # For rubric-based: question paper and rubrics are required
                 if not question_paper_drive_id and (not question_paper or not question_paper.filename):
                     return render_template('teacher_create_assignment.html',
@@ -4749,107 +3412,75 @@ def create_assignment():
             total_marks = int(data.get('total_marks', 100))
             assignment_title = data.get('title', 'Untitled')
             
+            # Get file contents from Drive or uploads
+            # For Drive files, we download temporarily only for text extraction
+            try:
+                question_paper_content, question_paper_name = get_file_content(question_paper, question_paper_drive_id, 'question paper')
+                answer_key_content, answer_key_name = get_file_content(answer_key, answer_key_drive_id, 'answer key')
+                reference_materials = request.files.get('reference_materials')
+                reference_materials_content, reference_materials_name = get_file_content(reference_materials, reference_materials_drive_id, 'reference materials')
+                rubrics_content, rubrics_name = get_file_content(rubrics, rubrics_drive_id, 'rubrics')
+            except Exception as e:
+                return render_template('teacher_create_assignment.html',
+                                     teacher=teacher,
+                                     classes=classes,
+                                     teaching_groups=teaching_groups,
+                                     teacher_modules=teacher_modules,
+                                     error=str(e))
+            
+            # Extract text from PDFs for cost-effective AI processing
+            question_paper_text = extract_text_from_pdf(question_paper_content) if question_paper_content else ""
+            answer_key_text = extract_text_from_pdf(answer_key_content) if answer_key_content else ""
+            reference_materials_text = extract_text_from_pdf(reference_materials_content) if reference_materials_content else ""
+            rubrics_text = extract_text_from_pdf(rubrics_content) if rubrics_content else ""
+            
+            # Store files in GridFS (only for uploaded files, not Drive files)
             from gridfs import GridFS
             fs = GridFS(db.db)
-            question_paper_id = None
-            answer_key_id = None
-            spreadsheet_student_template_id = None
-            spreadsheet_answer_key_id = None
-            reference_materials_id = None
-            rubrics_id = None
-            question_paper_text = ""
-            answer_key_text = ""
-            reference_materials_text = ""
-            rubrics_text = ""
-            question_paper_name = None
-            answer_key_name = None
             
-            if marking_type == 'spreadsheet':
-                spreadsheet_student_template = request.files.get('spreadsheet_student_template')
-                spreadsheet_answer_key = request.files.get('spreadsheet_answer_key')
-                spreadsheet_question_paper = request.files.get('spreadsheet_question_paper')
-                spreadsheet_student_template_id = fs.put(
-                    spreadsheet_student_template.read(),
-                    filename=f"{assignment_id}_spreadsheet_template.xlsx",
-                    content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                    assignment_id=assignment_id,
-                    file_type='spreadsheet_student_template'
-                )
-                spreadsheet_answer_key_id = fs.put(
-                    spreadsheet_answer_key.read(),
-                    filename=f"{assignment_id}_spreadsheet_answer.xlsx",
-                    content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                    assignment_id=assignment_id,
-                    file_type='spreadsheet_answer_key'
-                )
-                spreadsheet_question_paper_content = spreadsheet_question_paper.read()
+            # Save question paper (only if uploaded, not from Drive)
+            question_paper_id = None
+            if question_paper_content and not question_paper_name.startswith('DRIVE:'):
                 question_paper_id = fs.put(
-                    spreadsheet_question_paper_content,
+                    question_paper_content,
                     filename=f"{assignment_id}_question.pdf",
                     content_type='application/pdf',
                     assignment_id=assignment_id,
                     file_type='question_paper'
                 )
-                question_paper_text = extract_text_from_pdf(spreadsheet_question_paper_content) if spreadsheet_question_paper_content else ""
-                question_paper_name = spreadsheet_question_paper.filename
-                spreadsheet_student_template_name = spreadsheet_student_template.filename
-                spreadsheet_answer_key_name = spreadsheet_answer_key.filename
-            else:
-                spreadsheet_student_template_name = None
-                spreadsheet_answer_key_name = None
-                # Get file contents from Drive or uploads (standard / rubric)
-                try:
-                    question_paper_content, question_paper_name = get_file_content(question_paper, question_paper_drive_id, 'question paper')
-                    answer_key_content, answer_key_name = get_file_content(answer_key, answer_key_drive_id, 'answer key')
-                    reference_materials = request.files.get('reference_materials')
-                    reference_materials_content, reference_materials_name = get_file_content(reference_materials, reference_materials_drive_id, 'reference materials')
-                    rubrics_content, rubrics_name = get_file_content(rubrics, rubrics_drive_id, 'rubrics')
-                except Exception as e:
-                    return render_template('teacher_create_assignment.html',
-                                         teacher=teacher,
-                                         classes=classes,
-                                         teaching_groups=teaching_groups,
-                                         teacher_modules=teacher_modules,
-                                         error=str(e))
-                
-                # Extract text from PDFs for cost-effective AI processing
-                question_paper_text = extract_text_from_pdf(question_paper_content) if question_paper_content else ""
-                answer_key_text = extract_text_from_pdf(answer_key_content) if answer_key_content else ""
-                reference_materials_text = extract_text_from_pdf(reference_materials_content) if reference_materials_content else ""
-                rubrics_text = extract_text_from_pdf(rubrics_content) if rubrics_content else ""
             
-                if question_paper_content and not question_paper_name.startswith('DRIVE:'):
-                    question_paper_id = fs.put(
-                        question_paper_content,
-                        filename=f"{assignment_id}_question.pdf",
-                        content_type='application/pdf',
-                        assignment_id=assignment_id,
-                        file_type='question_paper'
-                    )
-                if answer_key_content and not answer_key_name.startswith('DRIVE:'):
-                    answer_key_id = fs.put(
-                        answer_key_content,
-                        filename=f"{assignment_id}_answer.pdf",
-                        content_type='application/pdf',
-                        assignment_id=assignment_id,
-                        file_type='answer_key'
-                    )
-                if reference_materials_content and not (reference_materials_name and reference_materials_name.startswith('DRIVE:')):
-                    reference_materials_id = fs.put(
-                        reference_materials_content,
-                        filename=f"{assignment_id}_reference.pdf",
-                        content_type='application/pdf',
-                        assignment_id=assignment_id,
-                        file_type='reference_materials'
-                    )
-                if rubrics_content and not (rubrics_name and rubrics_name.startswith('DRIVE:')):
-                    rubrics_id = fs.put(
-                        rubrics_content,
-                        filename=f"{assignment_id}_rubrics.pdf",
-                        content_type='application/pdf',
-                        assignment_id=assignment_id,
-                        file_type='rubrics'
-                    )
+            # Save answer key (only if uploaded, not from Drive)
+            answer_key_id = None
+            if answer_key_content and not answer_key_name.startswith('DRIVE:'):
+                answer_key_id = fs.put(
+                    answer_key_content,
+                    filename=f"{assignment_id}_answer.pdf",
+                    content_type='application/pdf',
+                    assignment_id=assignment_id,
+                    file_type='answer_key'
+                )
+            
+            # Save reference materials (only if uploaded, not from Drive)
+            reference_materials_id = None
+            if reference_materials_content and not (reference_materials_name and reference_materials_name.startswith('DRIVE:')):
+                reference_materials_id = fs.put(
+                    reference_materials_content,
+                    filename=f"{assignment_id}_reference.pdf",
+                    content_type='application/pdf',
+                    assignment_id=assignment_id,
+                    file_type='reference_materials'
+                )
+            
+            # Save rubrics (only if uploaded, not from Drive)
+            rubrics_id = None
+            if rubrics_content and not (rubrics_name and rubrics_name.startswith('DRIVE:')):
+                rubrics_id = fs.put(
+                    rubrics_content,
+                    filename=f"{assignment_id}_rubrics.pdf",
+                    content_type='application/pdf',
+                    assignment_id=assignment_id,
+                    file_type='rubrics'
+                )
             
             # Initialize Google Drive folder IDs and file references
             drive_folders = None
@@ -4906,22 +3537,18 @@ def create_assignment():
                 'subject': data.get('subject', 'General'),
                 'instructions': data.get('instructions', ''),
                 'total_marks': total_marks,
-                'marking_type': marking_type,  # 'standard', 'rubric', or 'spreadsheet'
+                'marking_type': marking_type,  # 'standard' or 'rubric'
                 'award_marks': award_marks,  # True = show marks; False = show Correct/Partial/Incorrect only (standard only)
                 'send_ai_feedback_immediately': send_ai_feedback_immediately,  # True = student sees AI feedback right after submit; False = teacher reviews first
                 'question_paper_id': question_paper_id,
                 'answer_key_id': answer_key_id,
-                'question_paper_name': question_paper.filename if (marking_type != 'spreadsheet' and question_paper and question_paper.filename) else (question_paper_name.replace('DRIVE:', '') if question_paper_name and str(question_paper_name).startswith('DRIVE:') else question_paper_name),
-                'answer_key_name': answer_key.filename if (marking_type != 'spreadsheet' and answer_key and answer_key.filename) else (answer_key_name.replace('DRIVE:', '') if answer_key_name and str(answer_key_name).startswith('DRIVE:') else answer_key_name),
-                'spreadsheet_student_template_id': spreadsheet_student_template_id,
-                'spreadsheet_answer_key_id': spreadsheet_answer_key_id,
-                'spreadsheet_student_template_name': spreadsheet_student_template_name if marking_type == 'spreadsheet' else None,
-                'spreadsheet_answer_key_name': spreadsheet_answer_key_name if marking_type == 'spreadsheet' else None,
+                'question_paper_name': question_paper.filename if question_paper and question_paper.filename else (question_paper_name.replace('DRIVE:', '') if question_paper_name and question_paper_name.startswith('DRIVE:') else None),
+                'answer_key_name': answer_key.filename if answer_key and answer_key.filename else (answer_key_name.replace('DRIVE:', '') if answer_key_name and answer_key_name.startswith('DRIVE:') else None),
                 # New optional document fields
                 'reference_materials_id': reference_materials_id,
-                'reference_materials_name': (reference_materials.filename if reference_materials and reference_materials.filename else (reference_materials_name.replace('DRIVE:', '') if reference_materials_name and str(reference_materials_name).startswith('DRIVE:') else None)) if marking_type != 'spreadsheet' else None,
+                'reference_materials_name': reference_materials.filename if reference_materials and reference_materials.filename else (reference_materials_name.replace('DRIVE:', '') if reference_materials_name and reference_materials_name.startswith('DRIVE:') else None),
                 'rubrics_id': rubrics_id,
-                'rubrics_name': (rubrics.filename if rubrics and rubrics.filename else (rubrics_name.replace('DRIVE:', '') if rubrics_name and str(rubrics_name).startswith('DRIVE:') else None)) if marking_type != 'spreadsheet' else None,
+                'rubrics_name': rubrics.filename if rubrics and rubrics.filename else (rubrics_name.replace('DRIVE:', '') if rubrics_name and rubrics_name.startswith('DRIVE:') else None),
                 # Extracted text for cost-effective AI processing
                 'question_paper_text': question_paper_text,
                 'answer_key_text': answer_key_text,
@@ -4940,7 +3567,6 @@ def create_assignment():
                 'overall_review_limit': int(data.get('overall_review_limit', 1)),
                 'enable_question_help': data.get('enable_question_help') == 'on',
                 'question_help_limit': int(data.get('question_help_limit', 5)),
-                'release_answer_key_pdf': data.get('release_answer_key_pdf') == 'on',  # Students can download answer key PDF after submitting
                 'notify_student_telegram': data.get('notify_student_telegram') == 'on',
                 'linked_module_id': (data.get('linked_module_id') or '').strip() or None,  # Link to module tree for profile/mastery
                 'created_at': datetime.utcnow(),
@@ -5074,7 +3700,6 @@ def edit_assignment(assignment_id):
                 'overall_review_limit': int(data.get('overall_review_limit', 1)),
                 'enable_question_help': data.get('enable_question_help') == 'on',
                 'question_help_limit': int(data.get('question_help_limit', 5)),
-                'release_answer_key_pdf': data.get('release_answer_key_pdf') == 'on',
                 'notify_student_telegram': data.get('notify_student_telegram') == 'on',
                 'linked_module_id': (data.get('linked_module_id') or '').strip() or None,
                 'updated_at': datetime.utcnow()
@@ -5486,37 +4111,6 @@ def teacher_submissions():
             teaching_group_filter = selected_assignment.get('target_group_id') or ''
         elif selected_assignment.get('target_type') == 'class':
             class_filter = selected_assignment.get('target_class_id') or ''
-
-    # Recent submissions: only when coming from dashboard/nav (no assignment pre-selected).
-    # When clicking "Submissions" on an assignment card, show only that assignment's students.
-    recent_submissions = []
-    if not assignment_filter:
-        assignment_ids_teacher = [a['assignment_id'] for a in all_teacher_assignments]
-        recent_submissions_raw = list(
-            Submission.find({'assignment_id': {'$in': assignment_ids_teacher}})
-            .sort('submitted_at', -1)
-            .limit(25)
-        )
-        assignment_map = {a['assignment_id']: a for a in all_teacher_assignments}
-        student_ids_recent = list({s['student_id'] for s in recent_submissions_raw})
-        student_map = {st['student_id']: st for st in Student.find({'student_id': {'$in': student_ids_recent}})}
-        for s in recent_submissions_raw:
-            a = assignment_map.get(s['assignment_id'], {})
-            st = student_map.get(s['student_id'], {})
-            status = (s.get('status') or 'submitted')
-            feedback_sent = s.get('feedback_sent', False)
-            if status == 'ai_reviewed' and feedback_sent:
-                display_status = 'ai_feedback_sent'
-            elif status in ('submitted', 'ai_reviewed'):
-                display_status = 'pending'
-            else:
-                display_status = status
-            recent_submissions.append({
-                'submission': s,
-                'assignment': a,
-                'student': st,
-                'display_status': display_status,
-            })
     
     return render_template('teacher_submissions.html',
                          teacher=teacher,
@@ -5528,8 +4122,7 @@ def teacher_submissions():
                          teaching_groups=teaching_groups,
                          classes_for_dropdown=classes_for_dropdown,
                          teaching_group_filter=teaching_group_filter,
-                         class_filter=class_filter,
-                         recent_submissions=recent_submissions)
+                         class_filter=class_filter)
 
 @app.route('/teacher/submissions/<submission_id>/review', methods=['GET'])
 @app.route('/teacher/review/<submission_id>', methods=['GET'])
@@ -5577,13 +4170,7 @@ def review_submission(submission_id):
 @app.route('/teacher/submission/<submission_id>/file/<int:file_index>')
 @teacher_required
 def view_submission_file(submission_id, file_index):
-    """Serve submission file (image or PDF page).
-
-    Query params:
-        as_image=1  – convert PDF pages to JPEG images (useful for canvas drawing).
-                      For multi-page PDFs the optional `pdf_page` param selects which
-                      page to render (0-based, default 0).
-    """
+    """Serve submission file (image or PDF page)"""
     from gridfs import GridFS
     
     submission = Submission.find_one({'submission_id': submission_id})
@@ -5604,40 +4191,8 @@ def view_submission_file(submission_id, file_index):
         from bson import ObjectId
         file_data = fs.get(ObjectId(file_ids[file_index]))
         content_type = file_data.content_type or 'application/octet-stream'
-        raw = file_data.read()
-
-        # If caller requests an image version and the file is a PDF, convert it
-        as_image = request.args.get('as_image', '0') == '1'
-        is_pdf = 'pdf' in content_type.lower()
-
-        if as_image and is_pdf:
-            try:
-                from utils.ai_marking import convert_pdf_to_images
-                pdf_page = int(request.args.get('pdf_page', 0))
-                # Convert enough pages to reach the requested one (or all to get the count)
-                # First pass: convert a generous number to discover total page count
-                images_b64 = convert_pdf_to_images(raw, max_pages=max(pdf_page + 1, 50))
-                total_pdf_pages = len(images_b64)
-                if images_b64 and pdf_page < total_pdf_pages:
-                    import base64 as b64mod
-                    image_bytes = b64mod.b64decode(images_b64[pdf_page])
-                    return Response(
-                        image_bytes,
-                        mimetype='image/jpeg',
-                        headers={
-                            'Content-Disposition': 'inline',
-                            'X-PDF-Page-Count': str(total_pdf_pages),
-                            'Access-Control-Expose-Headers': 'X-PDF-Page-Count',
-                        }
-                    )
-                else:
-                    # Fallback: return raw PDF if conversion fails
-                    logger.warning(f"PDF page {pdf_page} conversion failed (total={total_pdf_pages}), falling back to raw PDF")
-            except Exception as conv_err:
-                logger.warning(f"PDF-to-image conversion failed: {conv_err}")
-
         return Response(
-            raw,
+            file_data.read(),
             mimetype=content_type,
             headers={'Content-Disposition': 'inline'}
         )
@@ -5776,8 +4331,6 @@ def regenerate_ai_feedback(submission_id):
                 content_type = (file_data.content_type or '').lower()
                 if 'pdf' in content_type:
                     page_type = 'pdf'
-                elif 'spreadsheet' in content_type or 'excel' in content_type or content_type.endswith('xlsx') or content_type.endswith('xls'):
-                    page_type = 'excel'
                 else:
                     page_type = 'image'
                 pages.append({'type': page_type, 'data': raw, 'page_num': i + 1})
@@ -5789,84 +4342,6 @@ def regenerate_ai_feedback(submission_id):
             return jsonify({'success': False, 'error': 'Could not read any submission files'}), 400
         
         marking_type = assignment.get('marking_type', 'standard')
-        
-        if marking_type == 'spreadsheet':
-            # Re-run spreadsheet evaluation (answer key vs student Excel); do not call image AI
-            answer_key_bytes = None
-            if assignment.get('spreadsheet_answer_key_id'):
-                try:
-                    oid = assignment['spreadsheet_answer_key_id']
-                    if isinstance(oid, str):
-                        oid = ObjectId(oid)
-                    ans_file = fs.get(oid)
-                    answer_key_bytes = ans_file.read()
-                except Exception as e:
-                    logger.warning(f"Could not read spreadsheet answer key: {e}")
-            student_bytes = None
-            for p in pages:
-                if p.get('type') == 'excel':
-                    student_bytes = p['data']
-                    break
-            if not student_bytes:
-                student_bytes = pages[0]['data']
-            if not answer_key_bytes or not student_bytes:
-                return jsonify({
-                    'success': False,
-                    'error': 'Missing answer key or Excel file. Ensure the assignment has an answer key and the submission is an Excel file.'
-                }), 400
-            try:
-                from utils.spreadsheet_evaluator import (
-                    evaluate_spreadsheet_submission,
-                    generate_pdf_report as generate_spreadsheet_pdf,
-                    generate_commented_excel,
-                )
-            except ImportError as e:
-                logger.exception("Spreadsheet evaluator import failed")
-                return jsonify({'success': False, 'error': f'Spreadsheet evaluator unavailable: {e}'}), 500
-            student = Student.find_one({'student_id': submission['student_id']})
-            student_name = (student.get('name') or 'Student') if student else 'Student'
-            result_dict = evaluate_spreadsheet_submission(
-                answer_key_bytes=answer_key_bytes,
-                student_bytes=student_bytes,
-                student_name=student_name,
-                student_filename='submission.xlsx',
-            )
-            if result_dict is None:
-                return jsonify({'success': False, 'error': 'Spreadsheet evaluation failed. Check that the file is a valid Excel workbook.'}), 400
-            pdf_bytes = generate_spreadsheet_pdf(result_dict)
-            excel_bytes = generate_commented_excel(student_bytes, result_dict)
-            pdf_id = fs.put(
-                pdf_bytes,
-                filename=f"{submission_id}_feedback_report.pdf",
-                content_type='application/pdf',
-                submission_id=submission_id,
-                file_type='spreadsheet_feedback_pdf',
-            )
-            excel_id = fs.put(
-                excel_bytes,
-                filename=f"{submission_id}_feedback_commented.xlsx",
-                content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                submission_id=submission_id,
-                file_type='spreadsheet_feedback_excel',
-            )
-            ai_result = {
-                'spreadsheet_feedback': result_dict,
-                'marks_awarded': result_dict.get('marks_awarded'),
-                'total_marks': result_dict.get('total_marks'),
-                'percentage': result_dict.get('percentage'),
-            }
-            Submission.update_one(
-                {'submission_id': submission_id},
-                {'$set': {
-                    'ai_feedback': ai_result,
-                    'status': 'ai_reviewed',
-                    'final_marks': result_dict.get('marks_awarded'),
-                    'spreadsheet_feedback_pdf_id': str(pdf_id),
-                    'spreadsheet_feedback_excel_id': str(excel_id),
-                    'updated_at': datetime.utcnow(),
-                }}
-            )
-            return jsonify({'success': True, 'message': 'Spreadsheet evaluated successfully. View feedback via "View spreadsheet feedback".'})
         
         if marking_type == 'rubric':
             rubrics_content = None
@@ -5936,85 +4411,6 @@ def regenerate_ai_feedback(submission_id):
     except Exception as e:
         logger.error(f"Error regenerating AI feedback: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/teacher/review/<submission_id>/reevaluate-row', methods=['POST'])
-@teacher_required
-def reevaluate_row(submission_id):
-    """Re-evaluate a single feedback row (question/criterion/correction) using a cropped image region and optional teacher instructions."""
-    from gridfs import GridFS
-    from bson import ObjectId
-    from utils.ai_marking import reevaluate_single_item
-
-    try:
-        data = request.get_json() or {}
-        item_type = data.get('item_type')  # 'question' | 'criterion' | 'correction'
-        item_context = data.get('item_context', {})
-        additional_prompt = data.get('additional_prompt', '')
-        cropped_image = data.get('cropped_image')  # base64 JPEG (data URL or raw)
-        page_index = data.get('page_index')  # optional: include this page as full context
-        include_full_page = data.get('include_full_page', True)
-
-        if not item_type:
-            return jsonify({'success': False, 'error': 'item_type is required'}), 400
-        if not cropped_image and not additional_prompt:
-            return jsonify({'success': False, 'error': 'Provide a cropped image region or additional instructions'}), 400
-
-        submission = Submission.find_one({'submission_id': submission_id})
-        if not submission:
-            return jsonify({'success': False, 'error': 'Submission not found'}), 404
-
-        assignment = Assignment.find_one({'assignment_id': submission['assignment_id']})
-        if not assignment or assignment['teacher_id'] != session['teacher_id']:
-            return jsonify({'success': False, 'error': 'Unauthorized'}), 403
-
-        teacher = Teacher.find_one({'teacher_id': session['teacher_id']})
-
-        # Strip data URL prefix if present
-        cropped_b64 = None
-        if cropped_image:
-            if ',' in cropped_image:
-                cropped_b64 = cropped_image.split(',', 1)[1]
-            else:
-                cropped_b64 = cropped_image
-
-        # Optionally load a full page for context
-        full_page_images = None
-        if include_full_page and page_index is not None:
-            fs = GridFS(db.db)
-            file_ids = submission.get('file_ids', [])
-            idx = int(page_index)
-            if 0 <= idx < len(file_ids):
-                try:
-                    file_data = fs.get(ObjectId(file_ids[idx]))
-                    raw = file_data.read()
-                    ct = (file_data.content_type or '').lower()
-                    ptype = 'pdf' if 'pdf' in ct else 'image'
-                    full_page_images = [{'type': ptype, 'data': raw}]
-                except Exception as e:
-                    logger.warning(f"Could not read page {idx} for context: {e}")
-
-        result = reevaluate_single_item(
-            cropped_image_b64=cropped_b64,
-            item_type=item_type,
-            item_context=item_context,
-            additional_prompt=additional_prompt,
-            assignment=assignment,
-            teacher=teacher,
-            full_page_images=full_page_images,
-        )
-
-        if result.get('error') and not result.get('feedback') and not result.get('reasoning') and not result.get('correction'):
-            return jsonify({'success': False, 'error': result['error']}), 200
-
-        # Remove raw_response from client payload (large)
-        result.pop('raw_response', None)
-        return jsonify({'success': True, 'result': result})
-
-    except Exception as e:
-        logger.error(f"Error in reevaluate_row: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
 
 @app.route('/teacher/review/<submission_id>/extract-answer-key', methods=['POST'])
 @teacher_required
@@ -6895,78 +5291,16 @@ def _student_has_python_lab_access(student_id):
     return False
 
 
-# ============================================================================
-# COLLAB SPACE ACCESS - Which teachers/classes/teaching groups can use Collab Space (admin-set)
-# ============================================================================
-
-COLLAB_SPACE_ACCESS_CONFIG_ID = 'default'
-DEFAULT_MAX_INFOGraphic_PER_SPACE = 5
-
-def _get_collab_space_access_config():
-    """Return { teacher_ids: [], class_ids: [], teaching_group_ids: [] } from admin allocation."""
-    doc = db.db.collab_space_access.find_one({'config_id': COLLAB_SPACE_ACCESS_CONFIG_ID})
-    if not doc:
-        return {'teacher_ids': [], 'class_ids': [], 'teaching_group_ids': []}
-    return {
-        'teacher_ids': list(doc.get('teacher_ids') or []),
-        'class_ids': list(doc.get('class_ids') or []),
-        'teaching_group_ids': list(doc.get('teaching_group_ids') or []),
-    }
-
-def _save_collab_space_access_config(teacher_ids, class_ids, teaching_group_ids):
-    """Save which teachers, classes and teaching groups have access to Collab Space."""
-    db.db.collab_space_access.update_one(
-        {'config_id': COLLAB_SPACE_ACCESS_CONFIG_ID},
-        {'$set': {
-            'config_id': COLLAB_SPACE_ACCESS_CONFIG_ID,
-            'teacher_ids': list(teacher_ids or []),
-            'class_ids': list(class_ids or []),
-            'teaching_group_ids': list(teaching_group_ids or []),
-            'updated_at': datetime.utcnow(),
-        }},
-        upsert=True,
-    )
-
-def _teacher_has_collab_space_access(teacher_id):
-    """True if this teacher is allocated access to Collab Space (admin-set)."""
-    config = _get_collab_space_access_config()
-    return teacher_id in (config.get('teacher_ids') or [])
-
-def _student_has_collab_space_access(student_id):
-    """True if this student is in an allowed class OR in an allowed teaching group."""
-    config = _get_collab_space_access_config()
-    student = Student.find_one({'student_id': student_id})
-    if not student:
-        return False
-    student_classes = student.get('classes', [])
-    if not student_classes and student.get('class'):
-        student_classes = [student.get('class')]
-    if config['class_ids'] and set(student_classes) & set(config['class_ids']):
-        return True
-    if config['teaching_group_ids']:
-        for gid in config['teaching_group_ids']:
-            group = TeachingGroup.find_one({'group_id': gid})
-            if group and student_id in group.get('student_ids', []):
-                return True
-    return False
-
-
 @app.context_processor
 def inject_module_access():
-    """Make teacher_has_module_access, student_has_module_access, student_has_python_lab_access, teacher_has_python_lab_access, collab_space available in all templates."""
-    out = {
-        'teacher_has_module_access': False, 'student_has_module_access': False,
-        'student_has_python_lab_access': False, 'teacher_has_python_lab_access': False,
-        'teacher_has_collab_space_access': False, 'student_has_collab_space_access': False,
-    }
+    """Make teacher_has_module_access, student_has_module_access, student_has_python_lab_access, teacher_has_python_lab_access available in all templates."""
+    out = {'teacher_has_module_access': False, 'student_has_module_access': False, 'student_has_python_lab_access': False, 'teacher_has_python_lab_access': False}
     if session.get('teacher_id'):
         out['teacher_has_module_access'] = _teacher_has_module_access(session['teacher_id'])
         out['teacher_has_python_lab_access'] = _teacher_has_python_lab_access(session['teacher_id'])
-        out['teacher_has_collab_space_access'] = _teacher_has_collab_space_access(session['teacher_id'])
     if session.get('student_id'):
         out['student_has_module_access'] = _student_has_module_access(session['student_id'])
         out['student_has_python_lab_access'] = _student_has_python_lab_access(session['student_id'])
-        out['student_has_collab_space_access'] = _student_has_collab_space_access(session['student_id'])
     return out
 
 
@@ -7508,7 +5842,7 @@ def module_textbook(module_id):
         if len(pdf_bytes) < 100:
             return jsonify({'error': 'File is too small or empty'}), 400
         # Limit size to reduce OOM risk on memory-constrained deploys (e.g. Railway)
-        max_textbook_mb = 8
+        max_textbook_mb = 15
         if len(pdf_bytes) > max_textbook_mb * 1024 * 1024:
             return jsonify({'error': f'PDF must be {max_textbook_mb} MB or smaller. Upload chapters separately.'}), 400
         result = rag_service.ingest_textbook(module_id, pdf_bytes, title=title, append=True)
@@ -7537,90 +5871,6 @@ def module_textbook(module_id):
         })
     except Exception as e:
         logger.exception("Error uploading textbook: %s", e)
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/teacher/modules/<module_id>/textbook/embeddings', methods=['POST'])
-@teacher_required
-def module_textbook_embeddings(module_id):
-    """Upload pre-computed embeddings (JSON or JSONL) for RAG. No OpenAI call on Railway."""
-    if not _teacher_has_module_access(session['teacher_id']):
-        return jsonify({'error': 'Access denied'}), 403
-    root = Module.find_one({'module_id': module_id, 'teacher_id': session['teacher_id']})
-    if not root:
-        return jsonify({'error': 'Module not found'}), 404
-
-    if 'embeddings_file' not in request.files:
-        return jsonify({'error': 'No file provided. Use form field "embeddings_file".'}), 400
-    f = request.files['embeddings_file']
-    if not f or not f.filename:
-        return jsonify({'error': 'Please select an embeddings file (.json or .jsonl)'}), 400
-    fn = (f.filename or '').lower()
-    if not (fn.endswith('.json') or fn.endswith('.jsonl')):
-        return jsonify({'error': 'File must be .json or .jsonl (array of {"text": "...", "embedding": [float, ...]}).'}), 400
-
-    title = (request.form.get('title') or f.filename or 'Textbook').strip()[:200]
-    append = request.form.get('append', 'true').strip().lower() in ('1', 'true', 'yes')
-
-    try:
-        raw = f.read()
-        if len(raw) < 10:
-            return jsonify({'error': 'File is too small or empty'}), 400
-        # 50 MB max for embeddings file
-        if len(raw) > 50 * 1024 * 1024:
-            return jsonify({'error': 'Embeddings file must be 50 MB or smaller.'}), 400
-
-        items = []
-        if fn.endswith('.jsonl'):
-            import json as json_mod
-            for line in raw.decode('utf-8').splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    items.append(json_mod.loads(line))
-                except Exception as e:
-                    return jsonify({'error': f'Invalid JSONL line: {e}'}), 400
-        else:
-            import json as json_mod
-            try:
-                data = json_mod.loads(raw.decode('utf-8'))
-            except Exception as e:
-                return jsonify({'error': f'Invalid JSON: {e}'}), 400
-            if not isinstance(data, list):
-                return jsonify({'error': 'JSON must be an array of {"text": "...", "embedding": [...]}.'}), 400
-            items = data
-
-        if not items:
-            return jsonify({'error': 'No items in file.'}), 400
-
-        result = rag_service.ingest_precomputed_embeddings(module_id, items, title=title, append=append)
-        if not result.get('success'):
-            return jsonify({'error': result.get('error', 'Ingest failed')}), 500
-
-        total_chunks = result.get('total_chunk_count', result.get('chunk_count', 0))
-        ModuleTextbook.update_one(
-            {'module_id': module_id},
-            {
-                '$set': {
-                    'module_id': module_id,
-                    'name': title,
-                    'file_name': f.filename,
-                    'chunk_count': total_chunks,
-                    'updated_at': datetime.utcnow(),
-                },
-                '$inc': {'upload_count': 1},
-            },
-            upsert=True,
-        )
-        return jsonify({
-            'success': True,
-            'chunk_count': result.get('chunk_count', 0),
-            'total_chunk_count': total_chunks,
-            'name': title,
-        })
-    except Exception as e:
-        logger.exception("Error uploading embeddings: %s", e)
         return jsonify({'error': str(e)}), 500
 
 
@@ -8160,8 +6410,6 @@ def admin_dashboard():
     module_access = _get_module_access_config()
     # Python Lab access (which teachers/classes/teaching groups can use Python Lab)
     python_lab_access = _get_python_lab_access_config()
-    # Collab Space access
-    collab_space_access = _get_collab_space_access_config()
     teaching_groups = list(TeachingGroup.find({}))
     for g in teaching_groups:
         g['student_count'] = len(g.get('student_ids') or [])
@@ -8175,10 +6423,7 @@ def admin_dashboard():
                          module_access_class_ids=module_access['class_ids'],
                          python_lab_teacher_ids=python_lab_access['teacher_ids'],
                          python_lab_class_ids=python_lab_access['class_ids'],
-                         python_lab_teaching_group_ids=python_lab_access['teaching_group_ids'],
-                         collab_space_teacher_ids=collab_space_access['teacher_ids'],
-                         collab_space_class_ids=collab_space_access['class_ids'],
-                         collab_space_teaching_group_ids=collab_space_access['teaching_group_ids'])
+                         python_lab_teaching_group_ids=python_lab_access['teaching_group_ids'])
 
 
 @app.route('/admin/module-access', methods=['POST'])
@@ -8209,22 +6454,6 @@ def admin_save_python_lab_access():
         return jsonify({'success': True, 'message': 'Python Lab access updated.'})
     except Exception as e:
         logger.error("Error saving Python Lab access: %s", e)
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/admin/collab-space-access', methods=['POST'])
-@admin_required
-def admin_save_collab_space_access():
-    """Save which teachers, classes and teaching groups have access to Collab Space."""
-    try:
-        data = request.get_json()
-        teacher_ids = list(data.get('teacher_ids') or [])
-        class_ids = list(data.get('class_ids') or [])
-        teaching_group_ids = list(data.get('teaching_group_ids') or [])
-        _save_collab_space_access_config(teacher_ids, class_ids, teaching_group_ids)
-        return jsonify({'success': True, 'message': 'Collab Space access updated.'})
-    except Exception as e:
-        logger.error("Error saving Collab Space access: %s", e)
         return jsonify({'error': str(e)}), 500
 
 
@@ -8482,12 +6711,7 @@ def get_students():
             ]
         
         if search:
-            query['$and'] = query.get('$and', []) + [{
-                '$or': [
-                    {'name': {'$regex': search, '$options': 'i'}},
-                    {'student_id': {'$regex': search, '$options': 'i'}}
-                ]
-            }]
+            query['name'] = {'$regex': search, '$options': 'i'}
         
         students = list(Student.find(query))
         
@@ -9993,4 +8217,4 @@ def rate_limit(e):
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))
     debug = os.getenv('FLASK_DEBUG', 'false').lower() == 'true'
-    socketio.run(app, host='0.0.0.0', port=port, debug=debug)
+    app.run(host='0.0.0.0', port=port, debug=debug)
