@@ -166,19 +166,43 @@
                             </a>
                         </div>
                         {% elif submission.file_type == 'pdf' %}
-                        <!-- PDF Viewer - Full scrollable document -->
+                        <!-- PDF Viewer with rotation -->
+                        <div class="d-flex justify-content-between align-items-center mb-2 px-2 pt-2">
+                            <small class="text-muted fw-semibold">Your submission (PDF)</small>
+                            <div class="btn-group btn-group-sm">
+                                <button type="button" class="btn btn-outline-secondary" onclick="rotateSubmissionPdf(-90)" title="Rotate 90° counter-clockwise">
+                                    <i class="bi bi-arrow-counterclockwise"></i> Rotate left
+                                </button>
+                                <button type="button" class="btn btn-outline-secondary" onclick="rotateSubmissionPdf(90)" title="Rotate 90° clockwise">
+                                    <i class="bi bi-arrow-clockwise"></i> Rotate right
+                                </button>
+                            </div>
+                        </div>
                         <iframe id="submission-viewer" 
+                                data-base-url="{{ url_for('view_student_submission_file', submission_id=submission.submission_id, file_index=0) }}"
                                 src="{{ url_for('view_student_submission_file', submission_id=submission.submission_id, file_index=0) }}"
                                 style="width: 100%; height: 100%; border: none;"></iframe>
                         {% else %}
-                        <!-- Image Viewer - All pages stacked for scrolling -->
+                        <!-- Image Viewer - All pages stacked with rotation -->
                         <div class="image-pages p-3">
                             {% for i in range(submission.page_count or 1) %}
                             <div class="page-container mb-3 {% if i > 0 %}border-top pt-3{% endif %}">
                                 <div class="d-flex justify-content-between align-items-center mb-2">
                                     <small class="text-muted fw-semibold">Page {{ i + 1 }} of {{ submission.page_count }}</small>
+                                    <div class="btn-group btn-group-sm">
+                                        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="rotateSubmissionImage({{ i }}, -90)" title="Rotate 90° left">
+                                            <i class="bi bi-arrow-counterclockwise"></i>
+                                        </button>
+                                        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="rotateSubmissionImage({{ i }}, 90)" title="Rotate 90° right">
+                                            <i class="bi bi-arrow-clockwise"></i>
+                                        </button>
+                                    </div>
                                 </div>
-                                <img src="{{ url_for('view_student_submission_file', submission_id=submission.submission_id, file_index=i) }}"
+                                <img data-page-index="{{ i }}"
+                                     data-base-url="{{ url_for('view_student_submission_file', submission_id=submission.submission_id, file_index=i) }}"
+                                     data-rotation="0"
+                                     src="{{ url_for('view_student_submission_file', submission_id=submission.submission_id, file_index=i) }}"
+                                     class="submission-page-img"
                                      style="width: 100%; height: auto; border-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);" 
                                      alt="Submission page {{ i + 1 }}"
                                      loading="lazy">
@@ -481,13 +505,21 @@
                     {% endif %}
                 </div>
                 
-                <!-- Download Button -->
-                {% if submission.get('feedback_sent', False) %}
+                <!-- Download Buttons -->
+                {% if submission.get('feedback_sent', False) or (assignment.get('release_answer_key_pdf') and (assignment.get('answer_key_id') or assignment.get('drive_file_refs', {}).get('answer_key_drive_id'))) %}
                 <div class="card-footer">
+                    {% if submission.get('feedback_sent', False) %}
                     <a href="{{ url_for('download_student_feedback_pdf', submission_id=submission.submission_id) }}" 
-                       class="btn btn-primary w-100">
+                       class="btn btn-primary me-2">
                         <i class="bi bi-download me-1"></i>Download Feedback PDF
                     </a>
+                    {% endif %}
+                    {% if assignment.get('release_answer_key_pdf') and (assignment.get('answer_key_id') or assignment.get('drive_file_refs', {}).get('answer_key_drive_id')) %}
+                    <a href="{{ url_for('download_student_assignment_file', assignment_id=assignment.assignment_id, file_type='answer_key') }}" 
+                       class="btn btn-outline-success" download>
+                        <i class="bi bi-file-pdf me-1"></i>Download Answer Key PDF
+                    </a>
+                    {% endif %}
                 </div>
                 {% endif %}
             </div>
@@ -579,6 +611,28 @@
 
 {% block scripts %}
 <script>
+// PDF rotation (used when submission is PDF)
+function rotateSubmissionPdf(delta) {
+    var iframe = document.getElementById('submission-viewer');
+    if (!iframe) return;
+    var base = iframe.getAttribute('data-base-url') || iframe.src.split('?')[0];
+    var current = parseInt(iframe.getAttribute('data-rotation') || '0', 10);
+    current = (current + delta + 360) % 360;
+    iframe.setAttribute('data-rotation', current);
+    iframe.src = current ? base + '?rotate=' + current : base;
+}
+
+// Image rotation per page (used when submission is images)
+function rotateSubmissionImage(pageIndex, delta) {
+    var img = document.querySelector('.submission-page-img[data-page-index="' + pageIndex + '"]');
+    if (!img) return;
+    var base = img.getAttribute('data-base-url') || img.src.split('?')[0];
+    var current = parseInt(img.getAttribute('data-rotation') || '0', 10);
+    current = (current + delta + 360) % 360;
+    img.setAttribute('data-rotation', current);
+    img.src = current ? base + '?rotate=' + current : base;
+}
+
 (function() {
     // Send Corrections / Challenge
     var btnSend = document.getElementById('btn-send-corrections');

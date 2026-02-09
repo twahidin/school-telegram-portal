@@ -137,6 +137,18 @@
                             </div>
                         </div>
                         
+                        <!-- Release answer key PDF to students after they submit (standard/rubric only) -->
+                        <div class="mb-3" id="release-answer-key-container">
+                            <label class="form-label">Answer key visibility</label>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="release_answer_key_pdf" id="release_answer_key_pdf" value="on">
+                                <label class="form-check-label" for="release_answer_key_pdf">
+                                    <i class="bi bi-file-pdf me-1"></i>Release answer key PDF to students after they submit
+                                </label>
+                                <small class="text-muted d-block ms-4">When enabled, students can download the answer key PDF once they have submitted (while AI or teacher is reviewing, and after feedback). Only applies to assignments with an answer key PDF.</small>
+                            </div>
+                        </div>
+                        
                         <div class="mb-3">
                             <label for="instructions" class="form-label">Instructions (optional)</label>
                             <textarea class="form-control" id="instructions" name="instructions" rows="3"
@@ -775,6 +787,8 @@
             awardMarksContainer.style.display = (isRubric || isSpreadsheet) ? 'none' : 'block';
             if (isRubric) document.getElementById('award_marks_yes').checked = true;
         }
+        const releaseAnswerKeyContainer = document.getElementById('release-answer-key-container');
+        if (releaseAnswerKeyContainer) releaseAnswerKeyContainer.style.display = isSpreadsheet ? 'none' : 'block';
         // Update answer key section
         const answerKeyTitle = document.getElementById('answer-key-title');
         const answerKeyDesc = document.getElementById('answer-key-desc');

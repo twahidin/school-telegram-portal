@@ -139,10 +139,15 @@
                         <p class="mb-2">You submitted this assignment on {{ (existing_submission.submitted_at|sgt).strftime('%d %B %Y at %H:%M') }} SGT</p>
                         {% endif %}
                         <hr>
-                        <div class="d-flex gap-2">
+                        <div class="d-flex flex-wrap gap-2 align-items-center">
                             <a href="{{ url_for('view_submission', submission_id=existing_submission.submission_id) }}" class="btn btn-success btn-sm">
                                 <i class="bi bi-eye me-1"></i>View Submission & Feedback
                             </a>
+                            {% if assignment.get('release_answer_key_pdf') and (assignment.get('answer_key_id') or assignment.get('drive_file_refs', {}).get('answer_key_drive_id')) %}
+                            <a href="{{ url_for('download_student_assignment_file', assignment_id=assignment.assignment_id, file_type='answer_key') }}" class="btn btn-outline-secondary btn-sm" download>
+                                <i class="bi bi-file-pdf me-1"></i>Download Answer Key PDF
+                            </a>
+                            {% endif %}
                         </div>
                     </div>
                     {% elif rejected_submission %}
@@ -152,7 +157,7 @@
                         {% if rejected_submission.get('rejection_reason') %}
                         <p class="mb-2"><strong>Reason:</strong> {{ rejected_submission.rejection_reason }}</p>
                         {% endif %}
-                        <p class="mb-2 small text-muted">You can resubmit using the form on the right. Please follow any instructions from your teacher above.</p>
+                        <p class="mb-2 small text-muted">You can resubmit using the Final Submission form below. Please follow any instructions from your teacher above.</p>
                         <hr>
                         <div class="d-flex gap-2">
                             <a href="{{ url_for('view_submission', submission_id=rejected_submission.submission_id) }}" class="btn btn-outline-danger btn-sm">
@@ -163,6 +168,116 @@
                     {% endif %}
                 </div>
             </div>
+            
+            <!-- Final Submission Section (left column, under Assignment Details) -->
+            {% if not existing_submission %}
+            <div class="card mt-4">
+                <div class="card-header bg-success text-white">
+                    <h5 class="mb-0"><i class="bi bi-send-check me-2"></i>Final Submission</h5>
+                </div>
+                <div class="card-body">
+                    <form id="submission-form" enctype="multipart/form-data">
+                        <input type="hidden" name="assignment_id" value="{{ assignment.assignment_id }}">
+                        
+                        <!-- Upload Method Tabs -->
+                        <ul class="nav nav-pills nav-fill mb-3" role="tablist">
+                            {% if assignment.marking_type == 'spreadsheet' %}
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link active" data-bs-toggle="pill" data-bs-target="#excel-upload" type="button">
+                                    <i class="bi bi-file-earmark-excel me-1"></i>Excel
+                                </button>
+                            </li>
+                            {% else %}
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link active" data-bs-toggle="pill" data-bs-target="#photo-upload" type="button">
+                                    <i class="bi bi-camera me-1"></i>Photos
+                                </button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" data-bs-toggle="pill" data-bs-target="#pdf-upload" type="button">
+                                    <i class="bi bi-file-pdf me-1"></i>PDF
+                                </button>
+                            </li>
+                            {% endif %}
+                        </ul>
+                        
+                        <div class="tab-content">
+                            {% if assignment.marking_type == 'spreadsheet' %}
+                            <!-- Excel Upload (spreadsheet assignments only) -->
+                            <div class="tab-pane fade show active" id="excel-upload">
+                                <div class="upload-zone" id="excel-zone">
+                                    <input type="file" class="d-none" id="excel-input" name="files" accept=".xlsx,.xls">
+                                    <label for="excel-input" class="upload-label">
+                                        <i class="bi bi-file-earmark-excel" style="font-size: 2.5rem; color: #217346;"></i>
+                                        <h6 class="mt-2">Click to upload your Excel spreadsheet</h6>
+                                        <p class="text-muted small mb-0">Upload your completed .xlsx file</p>
+                                    </label>
+                                </div>
+                                <div id="excel-preview" class="mt-3" style="display: none;">
+                                    <div class="alert alert-success">
+                                        <i class="bi bi-check-circle me-2"></i>
+                                        <span id="excel-filename">file.xlsx</span>
+                                        <button type="button" class="btn-close float-end" onclick="clearExcel()"></button>
+                                    </div>
+                                </div>
+                            </div>
+                            {% else %}
+                            <!-- Photo Upload -->
+                            <div class="tab-pane fade show active" id="photo-upload">
+                                <div class="upload-zone" id="photo-zone">
+                                    <input type="file" class="d-none" id="photo-input" name="photos" 
+                                           accept="image/*" multiple capture="environment">
+                                    <label for="photo-input" class="upload-label">
+                                        <i class="bi bi-camera" style="font-size: 2.5rem; color: #28a745;"></i>
+                                        <h6 class="mt-2">Click to upload final submission</h6>
+                                        <p class="text-muted small mb-0">Or drag and drop images here</p>
+                                    </label>
+                                </div>
+                                
+                                <!-- Preview -->
+                                <div id="photo-preview" class="photo-preview mt-3" style="display: none;">
+                                    <h6 class="small"><i class="bi bi-images me-1"></i>Pages to submit:</h6>
+                                    <div class="preview-grid" id="preview-grid"></div>
+                                </div>
+                            </div>
+                            
+                            <!-- PDF Upload -->
+                            <div class="tab-pane fade" id="pdf-upload">
+                                <div class="upload-zone" id="pdf-zone">
+                                    <input type="file" class="d-none" id="pdf-input" name="pdf" accept=".pdf">
+                                    <label for="pdf-input" class="upload-label">
+                                        <i class="bi bi-file-earmark-pdf" style="font-size: 2.5rem; color: #dc3545;"></i>
+                                        <h6 class="mt-2">Click to upload PDF</h6>
+                                        <p class="text-muted small mb-0">Or drag and drop here</p>
+                                    </label>
+                                </div>
+                                
+                                <div id="pdf-preview" class="mt-3" style="display: none;">
+                                    <div class="alert alert-success">
+                                        <i class="bi bi-check-circle me-2"></i>
+                                        <span id="pdf-filename">file.pdf</span>
+                                        <button type="button" class="btn-close float-end" onclick="clearPdf()"></button>
+                                    </div>
+                                </div>
+                            </div>
+                            {% endif %}
+                        </div>
+                        
+                        <!-- Submit Button -->
+                        <div class="d-grid gap-2 mt-3">
+                            <button type="submit" class="btn btn-success btn-lg" id="submit-btn" disabled>
+                                <i class="bi bi-send-fill me-1"></i>Submit Assignment
+                            </button>
+                        </div>
+                        
+                        <div class="alert alert-warning mt-3 small py-2">
+                            <i class="bi bi-exclamation-triangle me-1"></i>
+                            <strong>Note:</strong> Once submitted, you cannot change your answers. {% if assignment.marking_type == 'spreadsheet' %}Your spreadsheet will be evaluated and you will receive a PDF report and a commented Excel file.{% else %}AI will provide feedback, then your teacher will review.{% endif %}
+                        </div>
+                    </form>
+                </div>
+            </div>
+            {% endif %}
             
             <!-- Ask for Help Section -->
             <div class="card mt-4" id="question-help-card">
@@ -326,7 +441,7 @@
                 {% else %}
                 <p class="mb-2">Your teacher rejected your submission. Please resubmit with the correct work.</p>
                 {% endif %}
-                <p class="mb-0 small text-muted">You can resubmit using the form below. Please follow any instructions from your teacher.</p>
+                <p class="mb-0 small text-muted">You can resubmit using the Final Submission form in the left column. Please follow any instructions from your teacher.</p>
             </div>
             {% endif %}
             <!-- Review My Work Section -->
@@ -436,114 +551,6 @@
                             </div>
                         </div>
                     </div>
-                </div>
-            </div>
-            
-            <!-- Final Submission Section -->
-            <div class="card">
-                <div class="card-header bg-success text-white">
-                    <h5 class="mb-0"><i class="bi bi-send-check me-2"></i>Final Submission</h5>
-                </div>
-                <div class="card-body">
-                    <form id="submission-form" enctype="multipart/form-data">
-                        <input type="hidden" name="assignment_id" value="{{ assignment.assignment_id }}">
-                        
-                        <!-- Upload Method Tabs -->
-                        <ul class="nav nav-pills nav-fill mb-3" role="tablist">
-                            {% if assignment.marking_type == 'spreadsheet' %}
-                            <li class="nav-item" role="presentation">
-                                <button class="nav-link active" data-bs-toggle="pill" data-bs-target="#excel-upload" type="button">
-                                    <i class="bi bi-file-earmark-excel me-1"></i>Excel
-                                </button>
-                            </li>
-                            {% else %}
-                            <li class="nav-item" role="presentation">
-                                <button class="nav-link active" data-bs-toggle="pill" data-bs-target="#photo-upload" type="button">
-                                    <i class="bi bi-camera me-1"></i>Photos
-                                </button>
-                            </li>
-                            <li class="nav-item" role="presentation">
-                                <button class="nav-link" data-bs-toggle="pill" data-bs-target="#pdf-upload" type="button">
-                                    <i class="bi bi-file-pdf me-1"></i>PDF
-                                </button>
-                            </li>
-                            {% endif %}
-                        </ul>
-                        
-                        <div class="tab-content">
-                            {% if assignment.marking_type == 'spreadsheet' %}
-                            <!-- Excel Upload (spreadsheet assignments only) -->
-                            <div class="tab-pane fade show active" id="excel-upload">
-                                <div class="upload-zone" id="excel-zone">
-                                    <input type="file" class="d-none" id="excel-input" name="files" accept=".xlsx,.xls">
-                                    <label for="excel-input" class="upload-label">
-                                        <i class="bi bi-file-earmark-excel" style="font-size: 2.5rem; color: #217346;"></i>
-                                        <h6 class="mt-2">Click to upload your Excel spreadsheet</h6>
-                                        <p class="text-muted small mb-0">Upload your completed .xlsx file</p>
-                                    </label>
-                                </div>
-                                <div id="excel-preview" class="mt-3" style="display: none;">
-                                    <div class="alert alert-success">
-                                        <i class="bi bi-check-circle me-2"></i>
-                                        <span id="excel-filename">file.xlsx</span>
-                                        <button type="button" class="btn-close float-end" onclick="clearExcel()"></button>
-                                    </div>
-                                </div>
-                            </div>
-                            {% else %}
-                            <!-- Photo Upload -->
-                            <div class="tab-pane fade show active" id="photo-upload">
-                                <div class="upload-zone" id="photo-zone">
-                                    <input type="file" class="d-none" id="photo-input" name="photos" 
-                                           accept="image/*" multiple capture="environment">
-                                    <label for="photo-input" class="upload-label">
-                                        <i class="bi bi-camera" style="font-size: 2.5rem; color: #28a745;"></i>
-                                        <h6 class="mt-2">Click to upload final submission</h6>
-                                        <p class="text-muted small mb-0">Or drag and drop images here</p>
-                                    </label>
-                                </div>
-                                
-                                <!-- Preview -->
-                                <div id="photo-preview" class="photo-preview mt-3" style="display: none;">
-                                    <h6 class="small"><i class="bi bi-images me-1"></i>Pages to submit:</h6>
-                                    <div class="preview-grid" id="preview-grid"></div>
-                                </div>
-                            </div>
-                            
-                            <!-- PDF Upload -->
-                            <div class="tab-pane fade" id="pdf-upload">
-                                <div class="upload-zone" id="pdf-zone">
-                                    <input type="file" class="d-none" id="pdf-input" name="pdf" accept=".pdf">
-                                    <label for="pdf-input" class="upload-label">
-                                        <i class="bi bi-file-earmark-pdf" style="font-size: 2.5rem; color: #dc3545;"></i>
-                                        <h6 class="mt-2">Click to upload PDF</h6>
-                                        <p class="text-muted small mb-0">Or drag and drop here</p>
-                                    </label>
-                                </div>
-                                
-                                <div id="pdf-preview" class="mt-3" style="display: none;">
-                                    <div class="alert alert-success">
-                                        <i class="bi bi-check-circle me-2"></i>
-                                        <span id="pdf-filename">file.pdf</span>
-                                        <button type="button" class="btn-close float-end" onclick="clearPdf()"></button>
-                                    </div>
-                                </div>
-                            </div>
-                            {% endif %}
-                        </div>
-                        
-                        <!-- Submit Button -->
-                        <div class="d-grid gap-2 mt-3">
-                            <button type="submit" class="btn btn-success btn-lg" id="submit-btn" disabled>
-                                <i class="bi bi-send-fill me-1"></i>Submit Assignment
-                            </button>
-                        </div>
-                        
-                        <div class="alert alert-warning mt-3 small py-2">
-                            <i class="bi bi-exclamation-triangle me-1"></i>
-                            <strong>Note:</strong> Once submitted, you cannot change your answers. {% if assignment.marking_type == 'spreadsheet' %}Your spreadsheet will be evaluated and you will receive a PDF report and a commented Excel file.{% else %}AI will provide feedback, then your teacher will review.{% endif %}
-                        </div>
-                    </form>
                 </div>
             </div>
             {% endif %}
