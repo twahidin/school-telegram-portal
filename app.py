@@ -1916,6 +1916,182 @@ def student_python_execute():
         return jsonify({'output': str(e), 'executed': False}), 500
 
 
+# ============================================================================
+# COLLAB SPACE - Teacher and student list/join pages (access controlled by admin)
+# ============================================================================
+
+@app.route('/teacher/collab-space')
+@teacher_required
+def teacher_collab_space():
+    """Collab Space list for teachers. Access controlled by admin (Tool Access)."""
+    if not _teacher_has_collab_space_access(session['teacher_id']):
+        return redirect(url_for('teacher_dashboard'))
+    teacher_id = session['teacher_id']
+    spaces = list(db.db.collab_spaces.find({'teacher_id': teacher_id}).sort('created_at', -1))
+    for s in spaces:
+        s['_id'] = str(s.get('_id'))
+        if s.get('assigned_group_id'):
+            tg = TeachingGroup.find_one({'group_id': s['assigned_group_id']})
+            s['assigned_group_name'] = tg.get('name', s['assigned_group_id']) if tg else s['assigned_group_id']
+    my_groups = list(TeachingGroup.find({'teacher_id': teacher_id}))
+    for g in my_groups:
+        g['student_ids'] = g.get('student_ids') or []
+    settings_doc = db.db.teacher_collab_settings.find_one({'teacher_id': teacher_id}) or {}
+    settings = {
+        'max_infographic_per_space': settings_doc.get('max_infographic_per_space', 5),
+        'max_generation_per_space': settings_doc.get('max_generation_per_space', 5),
+    }
+    return render_template('teacher_collab_space.html', spaces=spaces, my_groups=my_groups, settings=settings)
+
+
+def _generate_join_code():
+    """Generate a 6-character alphanumeric join code for a collab space."""
+    import random
+    import string
+    chars = string.ascii_uppercase + string.digits
+    for _ in range(10):
+        code = ''.join(random.choice(chars) for _ in range(6))
+        if not db.db.collab_spaces.find_one({'join_code': code}):
+            return code
+    return ''.join(random.choice(chars) for _ in range(6))
+
+
+@app.route('/teacher/collab-space/create', methods=['POST'])
+@teacher_required
+def teacher_collab_space_create():
+    """Create a new Collab Space."""
+    if not _teacher_has_collab_space_access(session['teacher_id']):
+        return jsonify({'error': 'Access denied'}), 403
+    try:
+        data = request.get_json() or {}
+        name = (data.get('name') or 'New Collab Space').strip()[:200]
+        central_topic = (data.get('central_topic') or '').strip()[:500]
+        assigned_group_id = (data.get('assigned_group_id') or '').strip() or None
+        space_id = f"CS-{uuid.uuid4().hex[:10].upper()}"
+        join_code = _generate_join_code()
+        teacher_id = session['teacher_id']
+        space_doc = {
+            'space_id': space_id,
+            'teacher_id': teacher_id,
+            'join_code': join_code,
+            'name': name,
+            'central_topic': central_topic or 'Discussion',
+            'assigned_group_id': assigned_group_id,
+            'is_active': True,
+            'created_at': datetime.utcnow(),
+            'updated_at': datetime.utcnow(),
+            'nodes_data': {
+                'central': {'id': 'central', 'label': central_topic or 'Discussion', 'layer': 0, 'x': 500, 'y': 350},
+                'layer1': [], 'layer2': [], 'layer3': [],
+            },
+            'infographic_count': 0,
+            'max_infographic': 5,
+            'max_generation': 5,
+        }
+        db.db.collab_spaces.insert_one(space_doc)
+        return jsonify({'success': True, 'space_id': space_id})
+    except Exception as e:
+        logger.error("Error creating collab space: %s", e)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/teacher/collab-space/settings', methods=['POST'])
+@teacher_required
+def teacher_collab_space_settings():
+    """Save teacher Collab Space settings (API key, max infographic)."""
+    if not _teacher_has_collab_space_access(session['teacher_id']):
+        return jsonify({'error': 'Access denied'}), 403
+    try:
+        data = request.get_json() or {}
+        teacher_id = session['teacher_id']
+        set_fields = {'updated_at': datetime.utcnow()}
+        unset_fields = {}
+        if 'nanobanana_api_key' in data:
+            key = data.get('nanobanana_api_key')
+            if key:
+                set_fields['nanobanana_api_key_encrypted'] = encrypt_api_key(key)
+            else:
+                unset_fields['nanobanana_api_key_encrypted'] = ''
+        if 'max_infographic_per_space' in data:
+            set_fields['max_infographic_per_space'] = max(1, min(20, int(data.get('max_infographic_per_space', 5))))
+        if 'max_generation_per_space' in data:
+            set_fields['max_generation_per_space'] = max(1, min(20, int(data.get('max_generation_per_space', 5))))
+        update_doc = {'$set': set_fields}
+        if unset_fields:
+            update_doc['$unset'] = unset_fields
+        db.db.teacher_collab_settings.update_one(
+            {'teacher_id': teacher_id},
+            update_doc,
+            upsert=True,
+        )
+        return jsonify({'success': True})
+    except Exception as e:
+        logger.error("Error saving collab settings: %s", e)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/teacher/collab-space/<space_id>')
+@teacher_required
+def teacher_collab_space_session(space_id):
+    """Open a Collab Space (teacher session view)."""
+    if not _teacher_has_collab_space_access(session['teacher_id']):
+        return redirect(url_for('teacher_dashboard'))
+    space = db.db.collab_spaces.find_one({'space_id': space_id, 'teacher_id': session['teacher_id']})
+    if not space:
+        return redirect(url_for('teacher_collab_space'))
+    settings_doc = db.db.teacher_collab_settings.find_one({'teacher_id': session['teacher_id']}) or {}
+    settings = {
+        'has_api_key': bool(settings_doc.get('nanobanana_api_key_encrypted')),
+        'max_infographic_per_space': settings_doc.get('max_infographic_per_space', 5),
+        'max_generation_per_space': settings_doc.get('max_generation_per_space', 5),
+    }
+    return render_template('teacher_collab_space_session.html', space=space, settings=settings)
+
+
+@app.route('/teacher/collab-space/<space_id>/delete', methods=['POST'])
+@teacher_required
+def teacher_collab_space_delete(space_id):
+    """Delete a Collab Space."""
+    if not _teacher_has_collab_space_access(session['teacher_id']):
+        return jsonify({'error': 'Access denied'}), 403
+    result = db.db.collab_spaces.delete_one({'space_id': space_id, 'teacher_id': session['teacher_id']})
+    if result.deleted_count:
+        return jsonify({'success': True})
+    return jsonify({'error': 'Space not found'}), 404
+
+
+@app.route('/student/collab-space/join', methods=['POST'])
+@login_required
+def student_collab_space_join():
+    """Join a Collab Space by join code."""
+    if not _student_has_collab_space_access(session['student_id']):
+        return jsonify({'error': 'Access denied'}), 403
+    try:
+        data = request.get_json() or {}
+        code = (data.get('join_code') or '').strip().upper()
+        if not code:
+            return jsonify({'success': False, 'error': 'Enter a join code'}), 400
+        space = db.db.collab_spaces.find_one({'join_code': code, 'is_active': True})
+        if not space:
+            return jsonify({'success': False, 'error': 'Invalid or inactive join code'}), 404
+        return jsonify({'success': True, 'space_id': space['space_id']})
+    except Exception as e:
+        logger.error("Error joining collab space: %s", e)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/student/collab-space/<space_id>')
+@login_required
+def student_collab_space_session(space_id):
+    """Open a Collab Space (student session view)."""
+    if not _student_has_collab_space_access(session['student_id']):
+        return redirect(url_for('dashboard'))
+    space = db.db.collab_spaces.find_one({'space_id': space_id, 'is_active': True})
+    if not space:
+        return redirect(url_for('student_collab_space'))
+    return render_template('student_collab_space_session.html', space=space)
+
+
 @app.route('/api/learning/chat', methods=['POST'])
 @login_required
 def learning_chat():
@@ -5323,16 +5499,51 @@ def _save_collab_space_access_config(teacher_ids, class_ids, teaching_group_ids)
     )
 
 
+def _teacher_has_collab_space_access(teacher_id):
+    """True if this teacher is allocated access to Collab Space (admin-set)."""
+    config = _get_collab_space_access_config()
+    return teacher_id in (config.get('teacher_ids') or [])
+
+
+def _student_has_collab_space_access(student_id):
+    """True if this student is in an allowed class OR in an allowed teaching group."""
+    config = _get_collab_space_access_config()
+    student = Student.find_one({'student_id': student_id})
+    if not student:
+        return False
+    # Check class access
+    student_classes = student.get('classes', [])
+    if not student_classes and student.get('class'):
+        student_classes = [student.get('class')]
+    if config.get('class_ids') and set(student_classes) & set(config['class_ids']):
+        return True
+    # Check teaching group access
+    for gid in (config.get('teaching_group_ids') or []):
+        group = TeachingGroup.find_one({'group_id': gid})
+        if group and student_id in group.get('student_ids', []):
+            return True
+    return False
+
+
 @app.context_processor
 def inject_module_access():
-    """Make teacher_has_module_access, student_has_module_access, student_has_python_lab_access, teacher_has_python_lab_access available in all templates."""
-    out = {'teacher_has_module_access': False, 'student_has_module_access': False, 'student_has_python_lab_access': False, 'teacher_has_python_lab_access': False}
+    """Make teacher_has_module_access, student_has_module_access, student_has_python_lab_access, teacher_has_python_lab_access, teacher_has_collab_space_access, student_has_collab_space_access available in all templates."""
+    out = {
+        'teacher_has_module_access': False,
+        'student_has_module_access': False,
+        'student_has_python_lab_access': False,
+        'teacher_has_python_lab_access': False,
+        'teacher_has_collab_space_access': False,
+        'student_has_collab_space_access': False,
+    }
     if session.get('teacher_id'):
         out['teacher_has_module_access'] = _teacher_has_module_access(session['teacher_id'])
         out['teacher_has_python_lab_access'] = _teacher_has_python_lab_access(session['teacher_id'])
+        out['teacher_has_collab_space_access'] = _teacher_has_collab_space_access(session['teacher_id'])
     if session.get('student_id'):
         out['student_has_module_access'] = _student_has_module_access(session['student_id'])
         out['student_has_python_lab_access'] = _student_has_python_lab_access(session['student_id'])
+        out['student_has_collab_space_access'] = _student_has_collab_space_access(session['student_id'])
     return out
 
 
