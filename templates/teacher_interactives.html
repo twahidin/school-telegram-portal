@@ -137,7 +137,7 @@
 
             listContainer.querySelectorAll('.view-interactive-btn').forEach(btn => {
                 btn.addEventListener('click', () => {
-                    window.open('{{ url_for("student_interactives") }}?view=' + btn.dataset.id, '_blank', 'width=900,height=700');
+                    window.open('{{ url_for("teacher_interactive_preview", interactive_id="__ID__") }}'.replace('__ID__', btn.dataset.id), '_blank', 'width=900,height=700');
                 });
             });
             listContainer.querySelectorAll('.delete-interactive-btn').forEach(btn => {

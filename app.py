@@ -2467,6 +2467,19 @@ def teacher_interactives():
     return render_template('teacher_interactives.html', classes=classes)
 
 
+@app.route('/teacher/interactives/<interactive_id>/preview')
+@teacher_required
+def teacher_interactive_preview(interactive_id):
+    """Preview an interactive (teacher must own it). Serves HTML directly."""
+    if not _teacher_has_interactives_access(session['teacher_id']):
+        return 'Forbidden', 403
+    doc = Interactive.find_one({'interactive_id': interactive_id, 'teacher_id': session['teacher_id']})
+    if not doc:
+        return 'Not found', 404
+    html = doc.get('html_content') or ''
+    return Response(html, mimetype='text/html')
+
+
 @app.route('/student/interactives')
 @login_required
 def student_interactives():
