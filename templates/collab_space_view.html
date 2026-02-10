@@ -269,8 +269,10 @@ function App() {
   // Derived: taken colors (by other online users)
   const takenColors = onlineUsers.filter(u => u.user_id !== FD.user_id).map(u => u.color).filter(Boolean);
 
-  // ─── Polling fallback: fetch latest state every 3s ───
+  // ─── Polling fallback: fetch latest state (5s base, backoff to 10s when idle) ───
   useEffect(() => {
+    let intervalMs = 5000;
+    let unchangedCount = 0;
     const poll = async () => {
       // Skip if user is actively dragging
       if (dragNodeRef.current) return;
@@ -282,6 +284,12 @@ function App() {
         // Only update if version changed (something new from server)
         if (data.version && data.version !== pollVersion.current) {
           pollVersion.current = data.version;
+          unchangedCount = 0;
+          if (intervalMs > 5000) {
+            intervalMs = 5000;
+            clearInterval(pollTimer.current);
+            pollTimer.current = setInterval(poll, intervalMs);
+          }
           setNodes(prev => {
             const remote = data.nodes_data;
             // Merge: use remote state but preserve local positions of nodes being viewed
@@ -290,10 +298,18 @@ function App() {
           if (data.collab_settings) {
             setSettings(prev => ({...prev, ...data.collab_settings}));
           }
+        } else {
+          unchangedCount++;
+          // Backoff to 10s when no changes for 30s to reduce rate-limit pressure
+          if (unchangedCount >= 6 && intervalMs < 10000) {
+            intervalMs = 10000;
+            clearInterval(pollTimer.current);
+            pollTimer.current = setInterval(poll, intervalMs);
+          }
         }
       } catch(e) { /* silent */ }
     };
-    pollTimer.current = setInterval(poll, 3000);
+    pollTimer.current = setInterval(poll, intervalMs);
     return () => clearInterval(pollTimer.current);
   }, []);
 

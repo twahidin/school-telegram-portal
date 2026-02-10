@@ -2469,6 +2469,7 @@ def api_collab_space_save_nodes(space_id):
 
 
 @app.route('/api/collab-space/<space_id>/nodes', methods=['GET'])
+@limiter.limit("120 per minute")  # generous for polling; default 50/hr exhausted with 20+ students
 @student_or_teacher_required
 def api_collab_space_get_nodes(space_id):
     """Polling endpoint: return current node state and version for sync fallback."""
