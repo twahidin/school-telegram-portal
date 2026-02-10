@@ -84,6 +84,52 @@
     </div>
 </div>
 
+<!-- Edit Interactive Modal -->
+<div class="modal fade" id="edit-interactive-modal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-pencil me-2"></i>Edit Interactive</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="edit-interactive-form">
+                    <input type="hidden" id="edit-interactive-id">
+                    <div class="mb-3">
+                        <label class="form-label">Title</label>
+                        <input type="text" class="form-control" id="edit-title" placeholder="Display name for the interactive">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Subject *</label>
+                        <input type="text" class="form-control" id="edit-subject" list="subject-list" placeholder="e.g., Mathematics" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Topic *</label>
+                        <input type="text" class="form-control" id="edit-topic" list="topic-list" placeholder="e.g., Fractions" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Classes that can see this *</label>
+                        <div class="border rounded p-3" style="max-height: 180px; overflow-y: auto;" id="edit-classes-container">
+                            {% for c in classes %}
+                            <div class="form-check">
+                                <input class="form-check-input edit-class-cb" type="checkbox" value="{{ c.class_id }}" id="edit-ic-{{ c.class_id }}">
+                                <label class="form-check-label" for="edit-ic-{{ c.class_id }}">{{ c.class_id }}{% if c.name and c.name != c.class_id %} ({{ c.name }}){% endif %}</label>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="edit-save-btn">
+                    <i class="bi bi-check2 me-1"></i>Save Changes
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <style>
 .interactive-card { transition: transform 0.2s; }
 .interactive-card:hover { transform: translateY(-2px); }
@@ -123,6 +169,9 @@
                                 <small class="text-muted">Classes: ${(i.class_ids || []).join(', ') || '—'}</small>
                             </div>
                             <div class="d-flex gap-1">
+                                <button type="button" class="btn btn-outline-secondary btn-sm edit-interactive-btn" data-id="${i.interactive_id}" data-title="${escapeHtml(i.title || i.topic || '')}" data-subject="${escapeHtml(i.subject || '')}" data-topic="${escapeHtml(i.topic || '')}" data-class-ids="${(i.class_ids || []).join('|')}" title="Edit">
+                                    <i class="bi bi-pencil"></i>
+                                </button>
                                 <button type="button" class="btn btn-outline-primary btn-sm view-interactive-btn" data-id="${i.interactive_id}" title="Preview">
                                     <i class="bi bi-eye"></i>
                                 </button>
@@ -139,6 +188,9 @@
                 btn.addEventListener('click', () => {
                     window.open('{{ url_for("teacher_interactive_preview", interactive_id="__ID__") }}'.replace('__ID__', btn.dataset.id), '_blank', 'width=900,height=700');
                 });
+            });
+            listContainer.querySelectorAll('.edit-interactive-btn').forEach(btn => {
+                btn.addEventListener('click', () => openEditModal(btn.dataset));
             });
             listContainer.querySelectorAll('.delete-interactive-btn').forEach(btn => {
                 btn.addEventListener('click', () => {
@@ -185,6 +237,59 @@
             alert('Error deleting');
         }
     }
+
+    const editModal = document.getElementById('edit-interactive-modal');
+    const editForm = document.getElementById('edit-interactive-form');
+    const editSaveBtn = document.getElementById('edit-save-btn');
+
+    function openEditModal(data) {
+        document.getElementById('edit-interactive-id').value = data.id;
+        document.getElementById('edit-title').value = data.title || '';
+        document.getElementById('edit-subject').value = data.subject || '';
+        document.getElementById('edit-topic').value = data.topic || '';
+        const classIds = (data.classIds || '').split('|').filter(Boolean);
+        document.querySelectorAll('.edit-class-cb').forEach(cb => {
+            cb.checked = classIds.indexOf(cb.value) >= 0;
+        });
+        new bootstrap.Modal(editModal).show();
+    }
+
+    editSaveBtn.addEventListener('click', async () => {
+        const id = document.getElementById('edit-interactive-id').value;
+        const title = document.getElementById('edit-title').value.trim();
+        const subject = document.getElementById('edit-subject').value.trim();
+        const topic = document.getElementById('edit-topic').value.trim();
+        const classIds = [...document.querySelectorAll('.edit-class-cb:checked')].map(cb => cb.value);
+
+        if (!subject || !topic) {
+            alert('Subject and topic are required');
+            return;
+        }
+        if (classIds.length === 0) {
+            alert('Select at least one class');
+            return;
+        }
+
+        editSaveBtn.disabled = true;
+        try {
+            const res = await fetch('{{ url_for("api_interactive_update", interactive_id="__ID__") }}'.replace('__ID__', id), {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ title: title || topic, subject, topic, class_ids: classIds })
+            });
+            const data = await res.json();
+            if (data.success) {
+                bootstrap.Modal.getInstance(editModal).hide();
+                loadInteractives();
+                loadSubjectTopicOptions();
+            } else {
+                alert(data.error || 'Failed to update');
+            }
+        } catch (e) {
+            alert('Error updating');
+        }
+        editSaveBtn.disabled = false;
+    });
 
     form.addEventListener('submit', async (e) => {
         e.preventDefault();

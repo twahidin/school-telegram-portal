@@ -2592,6 +2592,41 @@ def api_interactive_delete(interactive_id):
     return jsonify({'error': 'Not found'}), 404
 
 
+@app.route('/api/interactives/<interactive_id>/update', methods=['PATCH', 'PUT'])
+@teacher_required
+def api_interactive_update(interactive_id):
+    """Update an interactive's title, subject, topic, and class_ids (teacher must own it)."""
+    if not _teacher_has_interactives_access(session['teacher_id']):
+        return jsonify({'error': 'Access denied'}), 403
+    try:
+        data = request.get_json() or {}
+        title = (data.get('title') or '').strip()
+        subject = (data.get('subject') or '').strip()
+        topic = (data.get('topic') or '').strip()
+        class_ids = data.get('class_ids')
+        if class_ids is not None and not isinstance(class_ids, list):
+            class_ids = list(class_ids) if class_ids else []
+        update = {'updated_at': datetime.utcnow()}
+        if subject:
+            update['subject'] = subject
+        if topic:
+            update['topic'] = topic
+        if title is not None:
+            update['title'] = title or None
+        if class_ids is not None:
+            update['class_ids'] = list(class_ids)
+        result = Interactive.update_one(
+            {'interactive_id': interactive_id, 'teacher_id': session['teacher_id']},
+            {'$set': update}
+        )
+        if result.matched_count:
+            return jsonify({'success': True})
+        return jsonify({'error': 'Not found'}), 404
+    except Exception as e:
+        logger.error("Error updating interactive: %s", e)
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/student/interactives/list')
 @login_required
 def api_student_interactives_list():
