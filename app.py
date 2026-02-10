@@ -7389,7 +7389,7 @@ def module_textbook(module_id):
         if len(file_bytes) < 100:
             return jsonify({'error': 'File is too small or empty'}), 400
         # Limit size to reduce OOM risk on memory-constrained deploys (e.g. Railway)
-        max_textbook_mb = int(os.getenv("RAG_MAX_PDF_MB", "8"))
+        max_textbook_mb = int(os.getenv("RAG_MAX_PDF_MB", "15"))
         if len(file_bytes) > max_textbook_mb * 1024 * 1024:
             return jsonify({'error': f'File must be {max_textbook_mb} MB or smaller. Upload chapters separately.'}), 400
         if fn_lower.endswith('.txt'):

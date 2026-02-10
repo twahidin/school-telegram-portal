@@ -24,8 +24,8 @@ logger = logging.getLogger(__name__)
 CHUNK_SIZE = 600
 CHUNK_OVERLAP = 100
 MAX_CHUNKS_QUERY = 5
-INGEST_BATCH_SIZE = int(os.getenv("RAG_INGEST_BATCH_SIZE", "3"))  # Smaller batches = less OOM risk
-RAG_MAX_PAGES = int(os.getenv("RAG_MAX_PAGES", "25"))  # Limit pages per upload to avoid OOM
+INGEST_BATCH_SIZE = int(os.getenv("RAG_INGEST_BATCH_SIZE", "10"))  # Batch size for OpenAI embedding calls
+RAG_MAX_PAGES = int(os.getenv("RAG_MAX_PAGES", "60"))  # Max pages per PDF upload
 
 # OpenAI embedding model (1536 dimensions)
 EMBEDDING_MODEL = "text-embedding-3-small"
@@ -384,17 +384,17 @@ def ingest_text_content(
     namespace = _namespace_name(module_id)
     upload_title = (title or "Textbook").strip()[:200]
 
+    total_chunks = len(chunks)
     try:
         cur = conn.cursor()
         if not append:
             cur.execute(f"DELETE FROM {RAG_TABLE} WHERE namespace = %s", (namespace,))
 
-        import numpy as np
         batch_size = INGEST_BATCH_SIZE
         total_upserted = 0
 
-        for start in range(0, len(chunks), batch_size):
-            end = min(start + batch_size, len(chunks))
+        for start in range(0, total_chunks, batch_size):
+            end = min(start + batch_size, total_chunks)
             batch_chunks = chunks[start:end]
             
             embeddings = _get_embeddings(batch_chunks, openai_client)
@@ -406,20 +406,20 @@ def ingest_text_content(
             for i, (chunk, embedding) in enumerate(zip(batch_chunks, embeddings)):
                 meta = {
                     "page_chunk": start + i + 1,
-                    "total_chunks": len(chunks),
+                    "total_chunks": total_chunks,
                     "upload_title": upload_title,
                 }
-                # Use minimal numpy usage: create array only for this row, let it be GC'd
-                emb_arr = np.array(embedding, dtype="float32")
+                # Pass embedding as pgvector string literal — avoids importing numpy (~30-40 MB)
+                emb_str = "[" + ",".join(str(v) for v in embedding) + "]"
                 cur.execute(
                     f"""
                     INSERT INTO {RAG_TABLE} (id, namespace, embedding, content, metadata)
-                    VALUES (%s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s::vector, %s, %s)
                     """,
                     (
                         str(uuid.uuid4()),
                         namespace,
-                        emb_arr,
+                        emb_str,
                         chunk,
                         json.dumps(meta),
                     ),
@@ -427,7 +427,101 @@ def ingest_text_content(
                 total_upserted += 1
             
             conn.commit()  # Commit each batch to release memory
+            logger.info(f"Ingested batch {start}-{end} of {total_chunks} chunks ({total_upserted} total)")
             del batch_chunks, embeddings
+            gc.collect()
+
+        # Free chunks list before final query
+        del chunks
+        gc.collect()
+
+        cur.execute(f"SELECT COUNT(*) FROM {RAG_TABLE} WHERE namespace = %s", (namespace,))
+        total_count = cur.fetchone()[0]
+        cur.close()
+        conn.commit()
+        conn.close()
+
+        _log_memory_usage("After ingest complete")
+        return {
+            "success": True,
+            "chunk_count": total_chunks,
+            "total_chunk_count": total_count,
+            "title": title or "Textbook",
+        }
+    except Exception as e:
+        logger.exception("Error ingesting textbook for module %s: %s", module_id, e)
+        conn.rollback()
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return {"success": False, "error": str(e), "chunk_count": 0, "total_chunk_count": 0}
+
+
+def ingest_precomputed_embeddings(
+    module_id: str,
+    items: List[Dict[str, Any]],
+    title: Optional[str] = None,
+    append: bool = True,
+) -> Dict[str, Any]:
+    """
+    Ingest pre-computed embeddings (from generate_textbook_embeddings.py).
+    Each item: {"text": "...", "embedding": [float, ...]}.
+    Skips OpenAI calls — ideal for memory-constrained hosts.
+    """
+    logger.info(f"=== Ingesting {len(items)} pre-computed embeddings ===")
+
+    conn = _get_pg_conn()
+    if not conn:
+        return {"success": False, "error": _pgvector_not_available_message()}
+
+    if not _ensure_table(conn):
+        conn.close()
+        return {"success": False, "error": "Could not create RAG table."}
+
+    namespace = _namespace_name(module_id)
+    upload_title = (title or "Textbook").strip()[:200]
+    total_items = len(items)
+
+    try:
+        cur = conn.cursor()
+        if not append:
+            cur.execute(f"DELETE FROM {RAG_TABLE} WHERE namespace = %s", (namespace,))
+
+        total_upserted = 0
+        batch_size = INGEST_BATCH_SIZE
+
+        for start in range(0, total_items, batch_size):
+            end = min(start + batch_size, total_items)
+            for i in range(start, end):
+                item = items[i]
+                text = item.get("text", "").strip()
+                embedding = item.get("embedding")
+                if not text or not embedding:
+                    continue
+                meta = {
+                    "page_chunk": i + 1,
+                    "total_chunks": total_items,
+                    "upload_title": upload_title,
+                }
+                emb_str = "[" + ",".join(str(v) for v in embedding) + "]"
+                cur.execute(
+                    f"""
+                    INSERT INTO {RAG_TABLE} (id, namespace, embedding, content, metadata)
+                    VALUES (%s, %s, %s::vector, %s, %s)
+                    """,
+                    (
+                        str(uuid.uuid4()),
+                        namespace,
+                        emb_str,
+                        text,
+                        json.dumps(meta),
+                    ),
+                )
+                total_upserted += 1
+
+            conn.commit()
+            logger.info(f"Ingested pre-computed batch {start}-{end} of {total_items}")
             gc.collect()
 
         cur.execute(f"SELECT COUNT(*) FROM {RAG_TABLE} WHERE namespace = %s", (namespace,))
@@ -438,12 +532,12 @@ def ingest_text_content(
 
         return {
             "success": True,
-            "chunk_count": len(chunks),
+            "chunk_count": total_upserted,
             "total_chunk_count": total_count,
             "title": title or "Textbook",
         }
     except Exception as e:
-        logger.exception("Error ingesting textbook for module %s: %s", module_id, e)
+        logger.exception("Error ingesting precomputed embeddings for module %s: %s", module_id, e)
         conn.rollback()
         try:
             conn.close()
@@ -486,18 +580,18 @@ def query_textbook(
         if not embeddings:
             return {"success": False, "chunks": [], "error": "Failed to generate query embedding."}
         
-        import numpy as np
-        query_embedding = np.array(embeddings[0], dtype="float32")
+        # Pass as pgvector string literal — avoids importing numpy
+        query_emb_str = "[" + ",".join(str(v) for v in embeddings[0]) + "]"
 
         cur = conn.cursor()
         cur.execute(
             f"""
             SELECT content, metadata FROM {RAG_TABLE}
             WHERE namespace = %s
-            ORDER BY embedding <=> %s
+            ORDER BY embedding <=> %s::vector
             LIMIT %s
             """,
-            (namespace, query_embedding, min(k, 10)),
+            (namespace, query_emb_str, min(k, 10)),
         )
         rows = cur.fetchall()
         cur.close()
