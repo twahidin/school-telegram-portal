@@ -6,7 +6,7 @@ from functools import wraps
 import os
 import io
 from datetime import datetime, timedelta, timezone
-from models import db, Student, Teacher, Message, Class, TeachingGroup, Assignment, Submission, Module, ModuleResource, ModuleTextbook, StudentModuleMastery, StudentLearningProfile, LearningSession
+from models import db, Student, Teacher, Message, Class, TeachingGroup, Assignment, Submission, Module, ModuleResource, ModuleTextbook, StudentModuleMastery, StudentLearningProfile, LearningSession, Interactive
 from utils.auth import hash_password, verify_password, validate_password, generate_assignment_id, generate_submission_id, encrypt_api_key, decrypt_api_key
 from utils.ai_marking import get_teacher_ai_service, mark_submission
 from utils.google_drive import get_teacher_drive_manager, upload_assignment_file
@@ -2445,6 +2445,184 @@ def student_collab_space_session(space_id):
     if not space:
         return redirect(url_for('student_collab_space'))
     return _collab_space_render(space, 'student')
+
+
+# ============================================================================
+# INTERACTIVES – Teacher upload & student view
+# ============================================================================
+
+def _generate_interactive_id():
+    return f"INT-{uuid.uuid4().hex[:8].upper()}"
+
+
+@app.route('/teacher/interactives')
+@teacher_required
+def teacher_interactives():
+    """Teacher page to upload and manage HTML interactives."""
+    if not _teacher_has_interactives_access(session['teacher_id']):
+        return redirect(url_for('teacher_dashboard'))
+    classes = list(Class.find({}))
+    for c in classes:
+        c['student_count'] = Student.count({'$or': [{'class': c['class_id']}, {'classes': c['class_id']}]})
+    return render_template('teacher_interactives.html', classes=classes)
+
+
+@app.route('/student/interactives')
+@login_required
+def student_interactives():
+    """Student page to browse and open interactives (filter by class and topic)."""
+    if not _student_has_interactives_access(session['student_id']):
+        return redirect(url_for('dashboard'))
+    student = Student.find_one({'student_id': session['student_id']})
+    student_classes = student.get('classes', [])
+    if not student_classes and student.get('class'):
+        student_classes = [student.get('class')]
+    return render_template('student_interactives.html', student_classes=student_classes or [])
+
+
+@app.route('/interactive/<interactive_id>')
+@login_required
+def serve_interactive(interactive_id):
+    """Serve HTML content of an interactive (for iframe). Student must have access."""
+    if not _student_has_interactives_access(session['student_id']):
+        return 'Forbidden', 403
+    doc = Interactive.find_one({'interactive_id': interactive_id})
+    if not doc:
+        return 'Not found', 404
+    student = Student.find_one({'student_id': session['student_id']})
+    student_classes = student.get('classes', [])
+    if not student_classes and student.get('class'):
+        student_classes = [student.get('class')]
+    allowed = doc.get('class_ids') or []
+    if allowed and not (set(student_classes) & set(allowed)):
+        return 'Forbidden', 403
+    html = doc.get('html_content') or ''
+    return Response(html, mimetype='text/html')
+
+
+@app.route('/api/interactives/upload', methods=['POST'])
+@teacher_required
+def api_interactive_upload():
+    """Upload a new HTML interactive."""
+    if not _teacher_has_interactives_access(session['teacher_id']):
+        return jsonify({'error': 'Access denied'}), 403
+    try:
+        subject = (request.form.get('subject') or '').strip()
+        topic = (request.form.get('topic') or '').strip()
+        title = (request.form.get('title') or topic or '').strip()
+        class_ids_raw = request.form.get('class_ids', '[]')
+        try:
+            class_ids = json.loads(class_ids_raw) if class_ids_raw else []
+        except json.JSONDecodeError:
+            class_ids = []
+        f = request.files.get('html_file')
+        if not f or not f.filename:
+            return jsonify({'error': 'No HTML file provided'}), 400
+        if not subject or not topic:
+            return jsonify({'error': 'Subject and topic are required'}), 400
+        if not class_ids:
+            return jsonify({'error': 'Select at least one class'}), 400
+        raw = f.read()
+        try:
+            html_content = raw.decode('utf-8')
+        except UnicodeDecodeError:
+            html_content = raw.decode('latin-1', errors='replace')
+        interactive_id = _generate_interactive_id()
+        Interactive.insert_one({
+            'interactive_id': interactive_id,
+            'teacher_id': session['teacher_id'],
+            'subject': subject,
+            'topic': topic,
+            'title': title or topic,
+            'class_ids': list(class_ids),
+            'html_content': html_content,
+            'created_at': datetime.utcnow(),
+        })
+        return jsonify({'success': True, 'interactive_id': interactive_id})
+    except Exception as e:
+        logger.error("Error uploading interactive: %s", e)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/interactives/list')
+@teacher_required
+def api_interactives_list():
+    """List interactives created by this teacher."""
+    if not _teacher_has_interactives_access(session['teacher_id']):
+        return jsonify({'error': 'Access denied'}), 403
+    items = list(Interactive.find({'teacher_id': session['teacher_id']}).sort('created_at', -1))
+    interactives = [{'interactive_id': i['interactive_id'], 'subject': i.get('subject'), 'topic': i.get('topic'),
+                    'title': i.get('title'), 'class_ids': i.get('class_ids', [])} for i in items]
+    return jsonify({'interactives': interactives})
+
+
+@app.route('/api/interactives/subjects-topics')
+@teacher_required
+def api_interactives_subjects_topics():
+    """Get distinct subjects and topics for dropdown suggestions."""
+    if not _teacher_has_interactives_access(session['teacher_id']):
+        return jsonify({'error': 'Access denied'}), 403
+    subjects = Interactive.distinct('subject', {'teacher_id': session['teacher_id']})
+    topics = Interactive.distinct('topic', {'teacher_id': session['teacher_id']})
+    return jsonify({'subjects': sorted(s for s in subjects if s), 'topics': sorted(t for t in topics if t)})
+
+
+@app.route('/api/interactives/<interactive_id>/delete', methods=['DELETE'])
+@teacher_required
+def api_interactive_delete(interactive_id):
+    """Delete an interactive (teacher must own it)."""
+    if not _teacher_has_interactives_access(session['teacher_id']):
+        return jsonify({'error': 'Access denied'}), 403
+    result = Interactive.delete_one({'interactive_id': interactive_id, 'teacher_id': session['teacher_id']})
+    if result.deleted_count:
+        return jsonify({'success': True})
+    return jsonify({'error': 'Not found'}), 404
+
+
+@app.route('/api/student/interactives/list')
+@login_required
+def api_student_interactives_list():
+    """List interactives for student, filtered by class and topic."""
+    if not _student_has_interactives_access(session['student_id']):
+        return jsonify({'error': 'Access denied'}), 403
+    student = Student.find_one({'student_id': session['student_id']})
+    student_classes = student.get('classes', [])
+    if not student_classes and student.get('class'):
+        student_classes = [student.get('class')]
+    class_id = request.args.get('class_id', '').strip()
+    topic = request.args.get('topic', '').strip()
+    query = {}
+    if class_id:
+        query['class_ids'] = class_id
+    elif student_classes:
+        query['class_ids'] = {'$in': student_classes}
+    if topic:
+        query['topic'] = topic
+    items = list(Interactive.find(query).sort('created_at', -1))
+    interactives = [{'interactive_id': i['interactive_id'], 'subject': i.get('subject'), 'topic': i.get('topic'),
+                    'title': i.get('title')} for i in items]
+    return jsonify({'interactives': interactives})
+
+
+@app.route('/api/student/interactives/topics')
+@login_required
+def api_interactives_topics_for_class():
+    """Get topics available for a class (for student filter dropdown)."""
+    if not _student_has_interactives_access(session['student_id']):
+        return jsonify({'error': 'Access denied'}), 403
+    class_id = request.args.get('class_id', '').strip()
+    query = {}
+    if class_id:
+        query['class_ids'] = class_id
+    else:
+        student = Student.find_one({'student_id': session['student_id']})
+        student_classes = student.get('classes', [])
+        if not student_classes and student.get('class'):
+            student_classes = [student.get('class')]
+        if student_classes:
+            query['class_ids'] = {'$in': student_classes}
+    topics = Interactive.distinct('topic', query) if query else []
+    return jsonify({'topics': sorted(t for t in topics if t)})
 
 
 # ============================================================================
@@ -6827,9 +7005,65 @@ def _student_has_collab_space_access(student_id):
     return False
 
 
+# ============================================================================
+# INTERACTIVES ACCESS - Which teachers/classes/teaching groups can use Interactives (admin-set)
+# ============================================================================
+
+INTERACTIVES_ACCESS_CONFIG_ID = 'default'
+
+def _get_interactives_access_config():
+    """Return { teacher_ids: [], class_ids: [], teaching_group_ids: [] } from admin allocation."""
+    doc = db.db.interactives_access.find_one({'config_id': INTERACTIVES_ACCESS_CONFIG_ID})
+    if not doc:
+        return {'teacher_ids': [], 'class_ids': [], 'teaching_group_ids': []}
+    return {
+        'teacher_ids': list(doc.get('teacher_ids') or []),
+        'class_ids': list(doc.get('class_ids') or []),
+        'teaching_group_ids': list(doc.get('teaching_group_ids') or []),
+    }
+
+def _save_interactives_access_config(teacher_ids, class_ids, teaching_group_ids):
+    """Save which teachers, classes and teaching groups have access to Interactives."""
+    db.db.interactives_access.update_one(
+        {'config_id': INTERACTIVES_ACCESS_CONFIG_ID},
+        {'$set': {
+            'config_id': INTERACTIVES_ACCESS_CONFIG_ID,
+            'teacher_ids': list(teacher_ids or []),
+            'class_ids': list(class_ids or []),
+            'teaching_group_ids': list(teaching_group_ids or []),
+            'updated_at': datetime.utcnow(),
+        }},
+        upsert=True,
+    )
+
+
+def _teacher_has_interactives_access(teacher_id):
+    """True if this teacher is allocated access to Interactives (admin-set)."""
+    config = _get_interactives_access_config()
+    return teacher_id in (config.get('teacher_ids') or [])
+
+
+def _student_has_interactives_access(student_id):
+    """True if this student is in an allowed class OR in an allowed teaching group."""
+    config = _get_interactives_access_config()
+    student = Student.find_one({'student_id': student_id})
+    if not student:
+        return False
+    student_classes = student.get('classes', [])
+    if not student_classes and student.get('class'):
+        student_classes = [student.get('class')]
+    if config.get('class_ids') and set(student_classes) & set(config['class_ids']):
+        return True
+    for gid in (config.get('teaching_group_ids') or []):
+        group = TeachingGroup.find_one({'group_id': gid})
+        if group and student_id in group.get('student_ids', []):
+            return True
+    return False
+
+
 @app.context_processor
 def inject_module_access():
-    """Make teacher_has_module_access, student_has_module_access, student_has_python_lab_access, teacher_has_python_lab_access, teacher_has_collab_space_access, student_has_collab_space_access available in all templates."""
+    """Make teacher_has_module_access, student_has_module_access, student_has_python_lab_access, teacher_has_python_lab_access, teacher_has_collab_space_access, student_has_collab_space_access, teacher_has_interactives_access, student_has_interactives_access available in all templates."""
     out = {
         'teacher_has_module_access': False,
         'student_has_module_access': False,
@@ -6837,15 +7071,19 @@ def inject_module_access():
         'teacher_has_python_lab_access': False,
         'teacher_has_collab_space_access': False,
         'student_has_collab_space_access': False,
+        'teacher_has_interactives_access': False,
+        'student_has_interactives_access': False,
     }
     if session.get('teacher_id'):
         out['teacher_has_module_access'] = _teacher_has_module_access(session['teacher_id'])
         out['teacher_has_python_lab_access'] = _teacher_has_python_lab_access(session['teacher_id'])
         out['teacher_has_collab_space_access'] = _teacher_has_collab_space_access(session['teacher_id'])
+        out['teacher_has_interactives_access'] = _teacher_has_interactives_access(session['teacher_id'])
     if session.get('student_id'):
         out['student_has_module_access'] = _student_has_module_access(session['student_id'])
         out['student_has_python_lab_access'] = _student_has_python_lab_access(session['student_id'])
         out['student_has_collab_space_access'] = _student_has_collab_space_access(session['student_id'])
+        out['student_has_interactives_access'] = _student_has_interactives_access(session['student_id'])
     return out
 
 
@@ -8051,6 +8289,8 @@ def admin_dashboard():
     python_lab_access = _get_python_lab_access_config()
     # Collab Space access (which teachers/classes/teaching groups can use Collab Space)
     collab_space_access = _get_collab_space_access_config()
+    # Interactives access (which teachers/classes/teaching groups can use Interactives)
+    interactives_access = _get_interactives_access_config()
     teaching_groups = list(TeachingGroup.find({}))
     for g in teaching_groups:
         g['student_count'] = len(g.get('student_ids') or [])
@@ -8067,7 +8307,10 @@ def admin_dashboard():
                          python_lab_teaching_group_ids=python_lab_access['teaching_group_ids'],
                          collab_space_teacher_ids=collab_space_access['teacher_ids'],
                          collab_space_class_ids=collab_space_access['class_ids'],
-                         collab_space_teaching_group_ids=collab_space_access['teaching_group_ids'])
+                         collab_space_teaching_group_ids=collab_space_access['teaching_group_ids'],
+                         interactives_teacher_ids=interactives_access['teacher_ids'],
+                         interactives_class_ids=interactives_access['class_ids'],
+                         interactives_teaching_group_ids=interactives_access['teaching_group_ids'])
 
 
 @app.route('/admin/module-access', methods=['POST'])
@@ -8114,6 +8357,22 @@ def admin_save_collab_space_access():
         return jsonify({'success': True, 'message': 'Collab Space access updated.'})
     except Exception as e:
         logger.error("Error saving Collab Space access: %s", e)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/admin/interactives-access', methods=['POST'])
+@admin_required
+def admin_save_interactives_access():
+    """Save which teachers, classes and teaching groups have access to Interactives."""
+    try:
+        data = request.get_json()
+        teacher_ids = list(data.get('teacher_ids') or [])
+        class_ids = list(data.get('class_ids') or [])
+        teaching_group_ids = list(data.get('teaching_group_ids') or [])
+        _save_interactives_access_config(teacher_ids, class_ids, teaching_group_ids)
+        return jsonify({'success': True, 'message': 'Interactives access updated.'})
+    except Exception as e:
+        logger.error("Error saving Interactives access: %s", e)
         return jsonify({'error': str(e)}), 500
 
 

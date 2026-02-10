@@ -620,6 +620,7 @@
                             <option value="python_lab">Python Lab</option>
                             <option value="modules">Learning Modules</option>
                             <option value="collab_space">Collab Space</option>
+                            <option value="interactives">Interactives</option>
                         </select>
                     </div>
                 </div>
@@ -713,6 +714,53 @@
                                         <input class="form-check-input collab-space-access-group" type="checkbox" value="{{ g.group_id }}" id="csa-g-{{ g.group_id }}"
                                             {% if g.group_id in collab_space_teaching_group_ids %}checked{% endif %}>
                                         <label class="form-check-label" for="csa-g-{{ g.group_id }}">{{ g.name or g.group_id }} — {{ g.student_count or 0 }} students</label>
+                                    </div>
+                                    {% else %}
+                                    <p class="text-muted small mb-0">No teaching groups yet</p>
+                                    {% endfor %}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Interactives panels (shown when Interactives selected) -->
+                    <div id="tool-access-interactives" class="tool-access-panel" style="display: none;">
+                        <div class="row">
+                            <div class="col-md-4">
+                                <h6 class="mb-2">Teachers allowed to create Interactives</h6>
+                                <div class="border rounded p-3 mb-3" style="max-height: 280px; overflow-y: auto;">
+                                    {% for t in teachers %}
+                                    <div class="form-check">
+                                        <input class="form-check-input interactives-access-teacher" type="checkbox" value="{{ t.teacher_id }}" id="ia-t-{{ t.teacher_id }}"
+                                            {% if t.teacher_id in interactives_teacher_ids %}checked{% endif %}>
+                                        <label class="form-check-label" for="ia-t-{{ t.teacher_id }}">{{ t.name }} ({{ t.teacher_id }})</label>
+                                    </div>
+                                    {% else %}
+                                    <p class="text-muted small mb-0">No teachers yet</p>
+                                    {% endfor %}
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <h6 class="mb-2">Classes allowed to use Interactives</h6>
+                                <div class="border rounded p-3 mb-3" style="max-height: 280px; overflow-y: auto;">
+                                    {% for c in classes %}
+                                    <div class="form-check">
+                                        <input class="form-check-input interactives-access-class" type="checkbox" value="{{ c.class_id }}" id="ia-c-{{ c.class_id }}"
+                                            {% if c.class_id in interactives_class_ids %}checked{% endif %}>
+                                        <label class="form-check-label" for="ia-c-{{ c.class_id }}">{{ c.class_id }}{% if c.name and c.name != c.class_id %} ({{ c.name }}){% endif %} — {{ c.student_count or 0 }} students</label>
+                                    </div>
+                                    {% else %}
+                                    <p class="text-muted small mb-0">No classes yet</p>
+                                    {% endfor %}
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <h6 class="mb-2">Teaching groups allowed to use Interactives</h6>
+                                <div class="border rounded p-3 mb-3" style="max-height: 280px; overflow-y: auto;">
+                                    {% for g in teaching_groups %}
+                                    <div class="form-check">
+                                        <input class="form-check-input interactives-access-group" type="checkbox" value="{{ g.group_id }}" id="ia-g-{{ g.group_id }}"
+                                            {% if g.group_id in interactives_teaching_group_ids %}checked{% endif %}>
+                                        <label class="form-check-label" for="ia-g-{{ g.group_id }}">{{ g.name or g.group_id }} — {{ g.student_count or 0 }} students</label>
                                     </div>
                                     {% else %}
                                     <p class="text-muted small mb-0">No teaching groups yet</p>
@@ -2863,6 +2911,7 @@
     const toolAccessStatus = document.getElementById('tool-access-status');
 
     const toolAccessCollabSpace = document.getElementById('tool-access-collabspace');
+    const toolAccessInteractives = document.getElementById('tool-access-interactives');
 
     const TOOL_ACCESS_CONFIG = {
         python_lab: {
@@ -2876,6 +2925,10 @@
         collab_space: {
             description: 'Choose which <strong>teachers</strong>, <strong>classes</strong>, and <strong>teaching groups</strong> can use Collab Space. Teachers can create collaboration sessions and use Nanobanana Pro to generate infographics from discussion content (up to 5 per space by default).',
             saveLabel: 'Save Collab Space access'
+        },
+        interactives: {
+            description: 'Choose which <strong>teachers</strong> can upload HTML interactives, and which <strong>classes</strong> and <strong>teaching groups</strong> can view them. Teachers will see "Interactives" under Learning Tools. Students can filter by class and topic.',
+            saveLabel: 'Save Interactives access'
         }
     };
 
@@ -2887,6 +2940,7 @@
         if (toolAccessPythonLab) toolAccessPythonLab.style.display = tool === 'python_lab' ? '' : 'none';
         if (toolAccessModules) toolAccessModules.style.display = tool === 'modules' ? '' : 'none';
         if (toolAccessCollabSpace) toolAccessCollabSpace.style.display = tool === 'collab_space' ? '' : 'none';
+        if (toolAccessInteractives) toolAccessInteractives.style.display = tool === 'interactives' ? '' : 'none';
     }
 
     if (toolAccessSelect) {
@@ -2912,6 +2966,12 @@
                     const classIds = [...document.querySelectorAll('.collab-space-access-class:checked')].map(cb => cb.value);
                     const teachingGroupIds = [...document.querySelectorAll('.collab-space-access-group:checked')].map(cb => cb.value);
                     url = '{{ url_for("admin_save_collab_space_access") }}';
+                    body = JSON.stringify({ teacher_ids: teacherIds, class_ids: classIds, teaching_group_ids: teachingGroupIds });
+                } else if (tool === 'interactives') {
+                    const teacherIds = [...document.querySelectorAll('.interactives-access-teacher:checked')].map(cb => cb.value);
+                    const classIds = [...document.querySelectorAll('.interactives-access-class:checked')].map(cb => cb.value);
+                    const teachingGroupIds = [...document.querySelectorAll('.interactives-access-group:checked')].map(cb => cb.value);
+                    url = '{{ url_for("admin_save_interactives_access") }}';
                     body = JSON.stringify({ teacher_ids: teacherIds, class_ids: classIds, teaching_group_ids: teachingGroupIds });
                 } else {
                     const teacherIds = [...document.querySelectorAll('.python-lab-access-teacher:checked')].map(cb => cb.value);

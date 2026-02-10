@@ -80,6 +80,12 @@ class Database:
         # Teacher-created groups within a class or teaching group
         self.db.teacher_groups.create_index('group_id', unique=True)
         self.db.teacher_groups.create_index([('teacher_id', 1), ('source_type', 1), ('source_id', 1)])
+        # Interactives (teacher-uploaded HTML learning tools)
+        self.db.interactives.create_index('interactive_id', unique=True)
+        self.db.interactives.create_index([('teacher_id', 1), ('subject', 1), ('topic', 1)])
+        self.db.interactives.create_index([('subject', 1), ('topic', 1)])
+        # Interactives access (admin: which teachers/classes/teaching groups can use)
+        self.db.interactives_access.create_index('config_id', unique=True)
 
 db = Database()
 
@@ -407,3 +413,30 @@ class LearningSession:
     @staticmethod
     def delete_many(query):
         return db.db.learning_sessions.delete_many(query)
+
+
+class Interactive:
+    """Teacher-uploaded HTML interactive learning content. Tagged by subject and topic."""
+    @staticmethod
+    def find_one(query):
+        return db.db.interactives.find_one(query)
+
+    @staticmethod
+    def find(query):
+        return db.db.interactives.find(query)
+
+    @staticmethod
+    def insert_one(document):
+        return db.db.interactives.insert_one(document).inserted_id
+
+    @staticmethod
+    def update_one(query, update):
+        return db.db.interactives.update_one(query, update)
+
+    @staticmethod
+    def delete_one(query):
+        return db.db.interactives.delete_one(query)
+
+    @staticmethod
+    def distinct(field, query=None):
+        return db.db.interactives.distinct(field, query or {})

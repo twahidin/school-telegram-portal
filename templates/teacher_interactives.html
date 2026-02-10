@@ -1,0 +1,252 @@
+{% extends "base.html" %}
+
+{% block title %}Interactives - Teacher Portal{% endblock %}
+
+{% block navbar %}
+{% set active_nav = 'learning_tools' %}
+{% include 'partials/teacher_navbar.html' %}
+{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h1><i class="bi bi-joystick me-2"></i>Interactives</h1>
+            <p class="text-muted">Upload HTML interactives for students. Create subjects and topics as you go.</p>
+        </div>
+    </div>
+
+    <div class="row g-4">
+        <!-- Upload Form -->
+        <div class="col-lg-5">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-upload me-2"></i>Upload New Interactive</h5>
+                </div>
+                <div class="card-body">
+                    <form id="upload-interactive-form">
+                        <div class="mb-3">
+                            <label class="form-label">Subject *</label>
+                            <input type="text" class="form-control" id="interactive-subject" list="subject-list" placeholder="e.g., Mathematics" required>
+                            <datalist id="subject-list"></datalist>
+                            <small class="text-muted">Type to create new or select from existing</small>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Topic *</label>
+                            <input type="text" class="form-control" id="interactive-topic" list="topic-list" placeholder="e.g., Fractions" required>
+                            <datalist id="topic-list"></datalist>
+                            <small class="text-muted">Type to create new or select from existing</small>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Title <span class="text-muted">(optional)</span></label>
+                            <input type="text" class="form-control" id="interactive-title" placeholder="Display name for the interactive">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Classes that can see this *</label>
+                            <div class="border rounded p-3" style="max-height: 180px; overflow-y: auto;">
+                                {% for c in classes %}
+                                <div class="form-check">
+                                    <input class="form-check-input interactive-class-cb" type="checkbox" value="{{ c.class_id }}" id="ic-{{ c.class_id }}">
+                                    <label class="form-check-label" for="ic-{{ c.class_id }}">{{ c.class_id }}{% if c.name and c.name != c.class_id %} ({{ c.name }}){% endif %}</label>
+                                </div>
+                                {% else %}
+                                <p class="text-muted small mb-0">No classes yet</p>
+                                {% endfor %}
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">HTML File *</label>
+                            <input type="file" class="form-control" id="interactive-html-file" accept=".html,.htm" required>
+                        </div>
+                        <button type="submit" class="btn btn-primary" id="upload-btn">
+                            <i class="bi bi-upload me-1"></i>Upload Interactive
+                        </button>
+                        <span id="upload-status" class="ms-3 text-muted small"></span>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Existing Interactives -->
+        <div class="col-lg-7">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0"><i class="bi bi-collection me-2"></i>My Interactives</h5>
+                    <span class="badge bg-primary" id="interactive-count">0</span>
+                </div>
+                <div class="card-body">
+                    <div id="interactives-list">
+                        <p class="text-muted text-center py-4">Loading...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.interactive-card { transition: transform 0.2s; }
+.interactive-card:hover { transform: translateY(-2px); }
+</style>
+
+<script>
+(function() {
+    const form = document.getElementById('upload-interactive-form');
+    const uploadBtn = document.getElementById('upload-btn');
+    const uploadStatus = document.getElementById('upload-status');
+    const listContainer = document.getElementById('interactives-list');
+    const countBadge = document.getElementById('interactive-count');
+
+    async function loadInteractives() {
+        try {
+            const res = await fetch('{{ url_for("api_interactives_list") }}');
+            const data = await res.json();
+            if (data.error) {
+                listContainer.innerHTML = '<p class="text-danger">' + (data.error || 'Failed to load') + '</p>';
+                return;
+            }
+            const items = data.interactives || [];
+            countBadge.textContent = items.length;
+
+            if (items.length === 0) {
+                listContainer.innerHTML = '<p class="text-muted text-center py-4">No interactives yet. Upload your first one above.</p>';
+                return;
+            }
+
+            listContainer.innerHTML = items.map(i => `
+                <div class="card interactive-card mb-3">
+                    <div class="card-body py-3">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <h6 class="mb-1">${escapeHtml(i.title || i.topic || 'Untitled')}</h6>
+                                <p class="text-muted small mb-0">${escapeHtml(i.subject)} › ${escapeHtml(i.topic)}</p>
+                                <small class="text-muted">Classes: ${(i.class_ids || []).join(', ') || '—'}</small>
+                            </div>
+                            <div class="d-flex gap-1">
+                                <button type="button" class="btn btn-outline-primary btn-sm view-interactive-btn" data-id="${i.interactive_id}" title="Preview">
+                                    <i class="bi bi-eye"></i>
+                                </button>
+                                <button type="button" class="btn btn-outline-danger btn-sm delete-interactive-btn" data-id="${i.interactive_id}" data-title="${escapeHtml(i.title || i.topic || '')}" title="Delete">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+
+            listContainer.querySelectorAll('.view-interactive-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    window.open('{{ url_for("student_interactives") }}?view=' + btn.dataset.id, '_blank', 'width=900,height=700');
+                });
+            });
+            listContainer.querySelectorAll('.delete-interactive-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    if (confirm('Delete interactive "' + btn.dataset.title + '"?')) {
+                        deleteInteractive(btn.dataset.id);
+                    }
+                });
+            });
+        } catch (e) {
+            listContainer.innerHTML = '<p class="text-danger">Error loading interactives</p>';
+        }
+    }
+
+    function escapeHtml(s) {
+        if (!s) return '';
+        const div = document.createElement('div');
+        div.textContent = s;
+        return div.innerHTML;
+    }
+
+    async function loadSubjectTopicOptions() {
+        try {
+            const res = await fetch('{{ url_for("api_interactives_subjects_topics") }}');
+            const data = await res.json();
+            const subjectList = document.getElementById('subject-list');
+            const topicList = document.getElementById('topic-list');
+            subjectList.innerHTML = (data.subjects || []).map(s => '<option value="' + escapeHtml(s) + '">').join('');
+            topicList.innerHTML = (data.topics || []).map(t => '<option value="' + escapeHtml(t) + '">').join('');
+        } catch (e) {}
+    }
+
+    async function deleteInteractive(id) {
+        try {
+            const res = await fetch('{{ url_for("api_interactive_delete", interactive_id="__ID__") }}'.replace('__ID__', id), {
+                method: 'DELETE'
+            });
+            const data = await res.json();
+            if (data.success) {
+                loadInteractives();
+            } else {
+                alert(data.error || 'Failed to delete');
+            }
+        } catch (e) {
+            alert('Error deleting');
+        }
+    }
+
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const subject = document.getElementById('interactive-subject').value.trim();
+        const topic = document.getElementById('interactive-topic').value.trim();
+        const title = document.getElementById('interactive-title').value.trim();
+        const classIds = [...document.querySelectorAll('.interactive-class-cb:checked')].map(cb => cb.value);
+        const fileInput = document.getElementById('interactive-html-file');
+
+        if (!subject || !topic) {
+            uploadStatus.textContent = 'Subject and topic are required';
+            uploadStatus.className = 'ms-3 text-danger small';
+            return;
+        }
+        if (!fileInput.files || !fileInput.files[0]) {
+            uploadStatus.textContent = 'Please select an HTML file';
+            uploadStatus.className = 'ms-3 text-danger small';
+            return;
+        }
+        if (classIds.length === 0) {
+            uploadStatus.textContent = 'Select at least one class';
+            uploadStatus.className = 'ms-3 text-danger small';
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append('subject', subject);
+        formData.append('topic', topic);
+        formData.append('title', title || topic);
+        formData.append('class_ids', JSON.stringify(classIds));
+        formData.append('html_file', fileInput.files[0]);
+
+        uploadBtn.disabled = true;
+        uploadStatus.textContent = 'Uploading...';
+        uploadStatus.className = 'ms-3 text-muted small';
+
+        try {
+            const res = await fetch('{{ url_for("api_interactive_upload") }}', {
+                method: 'POST',
+                body: formData
+            });
+            const data = await res.json();
+            if (data.success) {
+                uploadStatus.textContent = 'Uploaded!';
+                uploadStatus.className = 'ms-3 text-success small';
+                form.reset();
+                document.querySelectorAll('.interactive-class-cb:checked').forEach(cb => { cb.checked = false; });
+                loadInteractives();
+                loadSubjectTopicOptions();
+            } else {
+                uploadStatus.textContent = data.error || 'Upload failed';
+                uploadStatus.className = 'ms-3 text-danger small';
+            }
+        } catch (e) {
+            uploadStatus.textContent = 'Error uploading';
+            uploadStatus.className = 'ms-3 text-danger small';
+        }
+        uploadBtn.disabled = false;
+    });
+
+    loadInteractives();
+    loadSubjectTopicOptions();
+})();
+</script>
+{% endblock %}

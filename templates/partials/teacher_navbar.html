@@ -27,7 +27,7 @@
                         {% endif %}
                     </a>
                 </li>
-                {% if teacher_has_module_access or teacher_has_python_lab_access or teacher_has_collab_space_access %}
+                {% if teacher_has_module_access or teacher_has_python_lab_access or teacher_has_collab_space_access or teacher_has_interactives_access %}
                 <li class="nav-item dropdown">
                     <a class="nav-link dropdown-toggle {{ 'active' if active_nav == 'learning_tools' else '' }}" href="#" id="navbarLearningTools" role="button" data-bs-toggle="dropdown" aria-expanded="false">
                         <i class="bi bi-tools me-1"></i>Learning Tools
@@ -41,6 +41,9 @@
                         {% endif %}
                         {% if teacher_has_collab_space_access %}
                         <li><a class="dropdown-item" href="{{ url_for('teacher_collab_space') }}"><i class="bi bi-people me-1"></i>Collab Space</a></li>
+                        {% endif %}
+                        {% if teacher_has_interactives_access %}
+                        <li><a class="dropdown-item" href="{{ url_for('teacher_interactives') }}"><i class="bi bi-joystick me-1"></i>Interactives</a></li>
                         {% endif %}
                     </ul>
                 </li>

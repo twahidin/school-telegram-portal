@@ -1,0 +1,182 @@
+{% extends "base.html" %}
+
+{% block title %}Interactives - School Portal{% endblock %}
+
+{% block navbar %}
+<nav class="navbar navbar-expand-lg navbar-dark">
+    <div class="container">
+        <a class="navbar-brand" href="{{ url_for('dashboard') }}">
+            <i class="bi bi-mortarboard-fill me-2"></i>School Portal
+        </a>
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+            <span class="navbar-toggler-icon"></span>
+        </button>
+        <div class="collapse navbar-collapse" id="navbarNav">
+            <ul class="navbar-nav me-auto">
+                <li class="nav-item"><a class="nav-link" href="{{ url_for('dashboard') }}"><i class="bi bi-house me-1"></i>Dashboard</a></li>
+                <li class="nav-item"><a class="nav-link active" href="{{ url_for('student_interactives') }}"><i class="bi bi-joystick me-1"></i>Interactives</a></li>
+                <li class="nav-item"><a class="nav-link" href="{{ url_for('assignments_list') }}"><i class="bi bi-journal-text me-1"></i>Assignments</a></li>
+                <li class="nav-item"><a class="nav-link" href="{{ url_for('student_submissions') }}"><i class="bi bi-check2-square me-1"></i>Submissions</a></li>
+            </ul>
+            <span class="navbar-text"><i class="bi bi-person-circle me-1"></i>{{ session.student_name }}</span>
+        </div>
+    </div>
+</nav>
+{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <h1 class="mb-4"><i class="bi bi-joystick me-2"></i>Interactives</h1>
+
+    <!-- Filter -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <h6 class="mb-3"><i class="bi bi-funnel me-1"></i>Filter by Class & Topic</h6>
+            <div class="row g-3 align-items-end">
+                <div class="col-md-4">
+                    <label class="form-label">Class</label>
+                    <select class="form-select" id="filter-class">
+                        <option value="">All Classes</option>
+                        {% for c in student_classes %}
+                        <option value="{{ c }}">{{ c }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">Topic</label>
+                    <select class="form-select" id="filter-topic">
+                        <option value="">All Topics</option>
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <button type="button" class="btn btn-primary" id="apply-filter-btn">
+                        <i class="bi bi-funnel me-1"></i>Apply
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Interactives Grid -->
+    <div id="interactives-container">
+        <p class="text-muted text-center py-4">Select class and topic above, then click Apply to see interactives.</p>
+    </div>
+
+    <!-- Preview Modal -->
+    <div class="modal fade" id="preview-modal" tabindex="-1">
+        <div class="modal-dialog modal-xl modal-fullscreen-lg-down">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="preview-modal-title">Interactive</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body p-0">
+                    <iframe id="preview-iframe" style="width:100%;height:70vh;border:none;"></iframe>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+(function() {
+    const filterClass = document.getElementById('filter-class');
+    const filterTopic = document.getElementById('filter-topic');
+    const applyBtn = document.getElementById('apply-filter-btn');
+    const container = document.getElementById('interactives-container');
+    const previewModal = document.getElementById('preview-modal');
+    const previewIframe = document.getElementById('preview-iframe');
+    const previewTitle = document.getElementById('preview-modal-title');
+
+    const studentClasses = {{ student_classes | tojson }};
+
+    async function loadTopics() {
+        const classId = filterClass.value;
+        try {
+            const res = await fetch('{{ url_for("api_interactives_topics_for_class") }}?class_id=' + encodeURIComponent(classId || ''));
+            const data = await res.json();
+            filterTopic.innerHTML = '<option value="">All Topics</option>' +
+                (data.topics || []).map(t => '<option value="' + escapeHtml(t) + '">' + escapeHtml(t) + '</option>').join('');
+        } catch (e) {
+            filterTopic.innerHTML = '<option value="">All Topics</option>';
+        }
+    }
+
+    function escapeHtml(s) {
+        if (!s) return '';
+        const div = document.createElement('div');
+        div.textContent = s;
+        return div.innerHTML;
+    }
+
+    async function loadInteractives() {
+        const classId = filterClass.value;
+        const topic = filterTopic.value;
+        container.innerHTML = '<p class="text-muted text-center py-4">Loading...</p>';
+
+        try {
+            const params = new URLSearchParams();
+            if (classId) params.set('class_id', classId);
+            if (topic) params.set('topic', topic);
+            const res = await fetch('{{ url_for("api_student_interactives_list") }}?' + params.toString());
+            const data = await res.json();
+
+            if (data.error) {
+                container.innerHTML = '<p class="text-danger">' + (data.error || 'Failed to load') + '</p>';
+                return;
+            }
+
+            const items = data.interactives || [];
+            if (items.length === 0) {
+                container.innerHTML = '<p class="text-muted text-center py-4">No interactives match your filter. Try selecting a different class or topic.</p>';
+                return;
+            }
+
+            container.innerHTML = '<div class="row g-4">' + items.map(i => `
+                <div class="col-md-6 col-lg-4">
+                    <div class="card h-100 interactive-card">
+                        <div class="card-body">
+                            <h6 class="card-title">${escapeHtml(i.title || i.topic || 'Untitled')}</h6>
+                            <p class="text-muted small mb-2">${escapeHtml(i.subject)} › ${escapeHtml(i.topic)}</p>
+                            <button type="button" class="btn btn-primary btn-sm open-interactive-btn" data-id="${i.interactive_id}" data-title="${escapeHtml(i.title || i.topic || '')}">
+                                <i class="bi bi-box-arrow-up-right me-1"></i>Open
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `).join('') + '</div>';
+
+            container.querySelectorAll('.open-interactive-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    previewTitle.textContent = btn.dataset.title;
+                    previewIframe.src = '{{ url_for("serve_interactive", interactive_id="__ID__") }}'.replace('__ID__', btn.dataset.id);
+                    new bootstrap.Modal(previewModal).show();
+                });
+            });
+        } catch (e) {
+            container.innerHTML = '<p class="text-danger">Error loading interactives</p>';
+        }
+    }
+
+    filterClass.addEventListener('change', loadTopics);
+    applyBtn.addEventListener('click', loadInteractives);
+
+    // Check for view= in URL (direct link from teacher preview)
+    const urlParams = new URLSearchParams(window.location.search);
+    const viewId = urlParams.get('view');
+    if (viewId) {
+        previewIframe.src = '{{ url_for("serve_interactive", interactive_id="__ID__") }}'.replace('__ID__', viewId);
+        previewTitle.textContent = 'Interactive';
+        new bootstrap.Modal(previewModal).show();
+    }
+
+    // Load topics on init
+    loadTopics();
+})();
+</script>
+
+<style>
+.interactive-card { transition: transform 0.2s; cursor: pointer; }
+.interactive-card:hover { transform: translateY(-4px); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+</style>
+{% endblock %}
