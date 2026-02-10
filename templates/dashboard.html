@@ -365,7 +365,7 @@
                         <input type="password" class="form-control" id="confirm-password" required>
                     </div>
                 </form>
-                <div id="password-change-result"></div>
+                <div id="password-change-result" class="mt-2" style="min-height: 1.5rem;"></div>
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" id="change-password-cancel-btn">Cancel</button>
@@ -581,8 +581,16 @@ if (window.mustChangePassword) {
 }
 
 // ============================================================================
-// Password Change (run when DOM is ready so modal/button exist)
+// Password Change (event delegation so button always works)
 // ============================================================================
+function showPasswordResult(html) {
+    const resultDiv = document.getElementById('password-change-result');
+    if (resultDiv) {
+        resultDiv.innerHTML = html;
+        resultDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+}
+
 function doChangePassword() {
     const currentPassword = document.getElementById('current-password')?.value ?? '';
     const newPassword = document.getElementById('new-password')?.value ?? '';
@@ -591,70 +599,81 @@ function doChangePassword() {
     if (!resultDiv) return;
 
     if (!currentPassword || !newPassword || !confirmPassword) {
-        resultDiv.innerHTML = '<div class="alert alert-warning">Please fill in all fields</div>';
+        showPasswordResult('<div class="alert alert-warning mb-0">Please fill in all fields</div>');
         return;
     }
     if (newPassword !== confirmPassword) {
-        resultDiv.innerHTML = '<div class="alert alert-warning">New passwords do not match</div>';
+        showPasswordResult('<div class="alert alert-warning mb-0">New passwords do not match</div>');
         return;
     }
     if (newPassword.length < 6) {
-        resultDiv.innerHTML = '<div class="alert alert-warning">Password must be at least 6 characters</div>';
+        showPasswordResult('<div class="alert alert-warning mb-0">Password must be at least 6 characters</div>');
         return;
     }
     if (!/[a-zA-Z]/.test(newPassword) || !/\d/.test(newPassword)) {
-        resultDiv.innerHTML = '<div class="alert alert-warning">Password must contain both letters and numbers</div>';
+        showPasswordResult('<div class="alert alert-warning mb-0">Password must contain both letters and numbers</div>');
         return;
     }
-    try {
-        fetch('/student/change_password', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                current_password: currentPassword,
-                new_password: newPassword
-            })
+    showPasswordResult('<div class="alert alert-info mb-0"><i class="bi bi-hourglass-split me-1"></i>Changing password...</div>');
+    fetch('/student/change_password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            current_password: currentPassword,
+            new_password: newPassword
         })
-        .then(res => res.json())
-        .then(data => {
-            if (data.success) {
-                resultDiv.innerHTML = '<div class="alert alert-success"><i class="bi bi-check-circle me-1"></i>Password changed successfully!</div>';
-                const cur = document.getElementById('current-password');
-                const newP = document.getElementById('new-password');
-                const conf = document.getElementById('confirm-password');
-                if (cur) cur.value = '';
-                if (newP) newP.value = '';
-                if (conf) conf.value = '';
-                if (window.mustChangePassword) {
-                    setTimeout(() => location.reload(), 1500);
-                    return;
-                }
-                setTimeout(() => {
-                    const modalEl = document.getElementById('change-password-modal');
-                    if (modalEl) {
-                        const inst = bootstrap.Modal.getInstance(modalEl);
-                        if (inst) inst.hide();
-                    }
-                    resultDiv.innerHTML = '';
-                }, 2000);
-            } else {
-                resultDiv.innerHTML = `<div class="alert alert-danger"><i class="bi bi-x-circle me-1"></i>${data.error || 'Failed to change password'}</div>`;
-            }
-        })
-        .catch(() => {
-            resultDiv.innerHTML = '<div class="alert alert-danger">Error changing password</div>';
+    })
+    .then(function(res) {
+        return res.json().then(function(data) {
+            return { ok: res.ok, data: data };
+        }).catch(function() {
+            return { ok: false, data: { error: 'Invalid response from server' } };
         });
-    } catch (e) {
-        resultDiv.innerHTML = '<div class="alert alert-danger">Error changing password</div>';
-    }
+    })
+    .then(function(result) {
+        var data = result.data;
+        if (result.ok && data.success) {
+            showPasswordResult('<div class="alert alert-success mb-0"><i class="bi bi-check-circle me-1"></i>Password changed successfully!</div>');
+            var cur = document.getElementById('current-password');
+            var newP = document.getElementById('new-password');
+            var conf = document.getElementById('confirm-password');
+            if (cur) cur.value = '';
+            if (newP) newP.value = '';
+            if (conf) conf.value = '';
+            if (window.mustChangePassword) {
+                setTimeout(function() { location.reload(); }, 1500);
+                return;
+            }
+            setTimeout(function() {
+                var modalEl = document.getElementById('change-password-modal');
+                if (modalEl) {
+                    var inst = bootstrap.Modal.getInstance(modalEl);
+                    if (inst) inst.hide();
+                }
+                showPasswordResult('');
+            }, 2000);
+        } else {
+            var msg = (data && data.error) ? data.error : 'Failed to change password';
+            showPasswordResult('<div class="alert alert-danger mb-0"><i class="bi bi-x-circle me-1"></i>' + msg + '</div>');
+        }
+    })
+    .catch(function() {
+        showPasswordResult('<div class="alert alert-danger mb-0">Error changing password. Please try again.</div>');
+    });
 }
 
 function initPasswordChange() {
-    const btn = document.getElementById('save-password-btn');
-    const form = document.getElementById('change-password-form');
-    if (btn) btn.addEventListener('click', doChangePassword);
+    document.addEventListener('click', function(e) {
+        var btn = e.target && (e.target.id === 'save-password-btn' || e.target.closest('#save-password-btn'));
+        if (btn) {
+            e.preventDefault();
+            e.stopPropagation();
+            doChangePassword();
+        }
+    });
+    var form = document.getElementById('change-password-form');
     if (form) {
-        form.addEventListener('submit', (e) => {
+        form.addEventListener('submit', function(e) {
             e.preventDefault();
             doChangePassword();
         });
