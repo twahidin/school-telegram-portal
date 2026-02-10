@@ -62,19 +62,29 @@
                 <span class="text-muted">Loading…</span>
             </div>
             <div id="textbook-upload-area">
+                <div id="textbook-upload-progress" class="d-none mb-3">
+                    <div class="d-flex align-items-center gap-2 mb-2">
+                        <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
+                        <span class="text-muted" id="textbook-progress-text">Uploading and processing…</span>
+                    </div>
+                    <div class="progress" style="height: 6px;">
+                        <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 100%"></div>
+                    </div>
+                    <small class="text-muted d-block mt-1">Processing text → chunking → generating embeddings. This may take 1–2 minutes for larger files.</small>
+                </div>
                 <form id="textbook-upload-form" enctype="multipart/form-data">
                     <div class="mb-2">
                         <label class="form-label small">Title (optional)</label>
                         <input type="text" class="form-control form-control-sm" id="textbook-title" name="title" placeholder="e.g. Chapter 1 or Mathematics Year 3">
                     </div>
                     <div class="mb-2">
-                        <input type="file" class="form-control form-control-sm" id="textbook-file" name="textbook_file" accept=".pdf" required>
+                        <input type="file" class="form-control form-control-sm" id="textbook-file" name="textbook_file" accept=".pdf,.txt" required>
                     </div>
                     <button type="submit" class="btn btn-primary btn-sm" id="textbook-upload-btn">
-                        <i class="bi bi-upload me-1"></i>Add PDF (chapter or full book)
+                        <i class="bi bi-upload me-1"></i>Add PDF or TXT (chapter or full book)
                     </button>
                 </form>
-                <p class="form-text small mb-0">Upload as many PDFs as you like—each upload is added to the RAG (e.g. chapter by chapter). Requires OPENAI_API_KEY.</p>
+                <p class="form-text small mb-0">Upload PDFs or TXT files—each upload is added to the RAG (e.g. chapter by chapter). TXT must be UTF-8. Requires OPENAI_API_KEY.</p>
             </div>
             <div id="textbook-delete-area" style="display: none;">
                 <button type="button" class="btn btn-outline-danger btn-sm" id="textbook-delete-btn">
@@ -603,7 +613,7 @@
                     textbookUploadArea.style.display = 'block';
                     textbookDeleteArea.style.display = 'block';
                 } else {
-                    textbookStatus.innerHTML = '<span class="text-muted">No content yet. Upload a PDF (or add chapters one at a time) so the AI tutor can answer from it.</span>';
+                    textbookStatus.innerHTML = '<span class="text-muted">No content yet. Upload a PDF or TXT (or add chapters one at a time) so the AI tutor can answer from it.</span>';
                     textbookUploadArea.style.display = 'block';
                     textbookDeleteArea.style.display = 'none';
                 }
@@ -615,13 +625,25 @@
     document.getElementById('textbook-upload-form') && document.getElementById('textbook-upload-form').addEventListener('submit', function(e) {
         e.preventDefault();
         const file = document.getElementById('textbook-file').files[0];
-        if (!file) { showTextbookMessage('Please select a PDF file', true); return; }
+        if (!file) { showTextbookMessage('Please select a PDF or TXT file', true); return; }
         const formData = new FormData();
         formData.append('textbook_file', file);
         formData.append('title', document.getElementById('textbook-title').value.trim());
         const btn = document.getElementById('textbook-upload-btn');
+        const progressEl = document.getElementById('textbook-upload-progress');
+        const progressText = document.getElementById('textbook-progress-text');
+        const formEl = document.getElementById('textbook-upload-form');
         btn.disabled = true;
         hideTextbookMessage();
+        progressEl.classList.remove('d-none');
+        formEl.style.opacity = '0.6';
+        formEl.style.pointerEvents = 'none';
+        var statusSteps = ['Uploading file…', 'Processing text…', 'Chunking content…', 'Generating embeddings…', 'Storing in vector DB…'];
+        var stepIdx = 0;
+        var statusInterval = setInterval(function() {
+            progressText.textContent = statusSteps[stepIdx % statusSteps.length];
+            stepIdx++;
+        }, 8000);
         fetch('/teacher/modules/' + encodeURIComponent(moduleId) + '/textbook', { method: 'POST', body: formData })
             .then(function(r) { return r.json().catch(function() { return {}; }); })
             .then(function(d) {
@@ -636,7 +658,13 @@
                 else showTextbookMessage(d.error || 'Upload failed', true);
             })
             .catch(function() { showTextbookMessage('Network error', true); })
-            .finally(function() { btn.disabled = false; });
+            .finally(function() {
+                clearInterval(statusInterval);
+                progressEl.classList.add('d-none');
+                formEl.style.opacity = '';
+                formEl.style.pointerEvents = '';
+                btn.disabled = false;
+            });
     });
 
     document.getElementById('textbook-delete-btn') && document.getElementById('textbook-delete-btn').addEventListener('click', function() {

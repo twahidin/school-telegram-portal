@@ -7374,22 +7374,32 @@ def module_textbook(module_id):
         ModuleTextbook.delete_one({'module_id': module_id})
         return jsonify({'success': True})
 
-    # POST: upload PDF
+    # POST: upload PDF or TXT
     if 'textbook_file' not in request.files:
         return jsonify({'error': 'No file provided'}), 400
     f = request.files['textbook_file']
-    if not f or not f.filename or not f.filename.lower().endswith('.pdf'):
-        return jsonify({'error': 'Please upload a PDF file'}), 400
+    if not f or not f.filename:
+        return jsonify({'error': 'Please select a file'}), 400
+    fn_lower = f.filename.lower()
+    if not (fn_lower.endswith('.pdf') or fn_lower.endswith('.txt')):
+        return jsonify({'error': 'Please upload a PDF or TXT file'}), 400
     title = (request.form.get('title') or f.filename or 'Textbook').strip()[:200]
     try:
-        pdf_bytes = f.read()
-        if len(pdf_bytes) < 100:
+        file_bytes = f.read()
+        if len(file_bytes) < 100:
             return jsonify({'error': 'File is too small or empty'}), 400
         # Limit size to reduce OOM risk on memory-constrained deploys (e.g. Railway)
-        max_textbook_mb = 15
-        if len(pdf_bytes) > max_textbook_mb * 1024 * 1024:
-            return jsonify({'error': f'PDF must be {max_textbook_mb} MB or smaller. Upload chapters separately.'}), 400
-        result = rag_service.ingest_textbook(module_id, pdf_bytes, title=title, append=True)
+        max_textbook_mb = int(os.getenv("RAG_MAX_PDF_MB", "8"))
+        if len(file_bytes) > max_textbook_mb * 1024 * 1024:
+            return jsonify({'error': f'File must be {max_textbook_mb} MB or smaller. Upload chapters separately.'}), 400
+        if fn_lower.endswith('.txt'):
+            try:
+                text = file_bytes.decode('utf-8')
+            except UnicodeDecodeError:
+                return jsonify({'error': 'TXT file must be UTF-8 encoded'}), 400
+            result = rag_service.ingest_text_content(module_id, text, title=title, append=True)
+        else:
+            result = rag_service.ingest_textbook(module_id, file_bytes, title=title, append=True)
         if not result.get('success'):
             return jsonify({'error': result.get('error', 'Ingest failed')}), 500
         total_chunks = result.get('total_chunk_count', result.get('chunk_count', 0))

@@ -24,7 +24,8 @@ logger = logging.getLogger(__name__)
 CHUNK_SIZE = 600
 CHUNK_OVERLAP = 100
 MAX_CHUNKS_QUERY = 5
-INGEST_BATCH_SIZE = 5
+INGEST_BATCH_SIZE = int(os.getenv("RAG_INGEST_BATCH_SIZE", "3"))  # Smaller batches = less OOM risk
+RAG_MAX_PAGES = int(os.getenv("RAG_MAX_PAGES", "25"))  # Limit pages per upload to avoid OOM
 
 # OpenAI embedding model (1536 dimensions)
 EMBEDDING_MODEL = "text-embedding-3-small"
@@ -131,22 +132,30 @@ def _extract_text_from_pdf(pdf_bytes: bytes) -> str:
     """Extract text from PDF using PyPDF2 (lightweight, low memory).
     
     Works well for text-based PDFs. For scanned/image PDFs, may return empty text.
+    Limits to RAG_MAX_PAGES to avoid OOM on memory-constrained hosts.
     """
     try:
         import PyPDF2
         reader = PyPDF2.PdfReader(io.BytesIO(pdf_bytes))
         total_pages = len(reader.pages)
-        logger.info(f"PyPDF2: Processing {total_pages} pages")
+        max_pages = min(RAG_MAX_PAGES, total_pages)
+        if total_pages > RAG_MAX_PAGES:
+            logger.warning(f"PyPDF2: Limiting to first {max_pages} of {total_pages} pages (RAG_MAX_PAGES) to avoid OOM")
+        logger.info(f"PyPDF2: Processing {max_pages} pages")
         
         parts = []
         pages_with_text = 0
-        for i, page in enumerate(reader.pages):
+        for i in range(max_pages):
+            page = reader.pages[i]
             text = page.extract_text()
             if text and text.strip():
                 parts.append(f"--- Page {i + 1} ---\n{text.strip()}")
                 pages_with_text += 1
+            del page  # Release page object promptly
+        del reader
+        gc.collect()
         
-        logger.info(f"PyPDF2: Extracted text from {pages_with_text}/{total_pages} pages")
+        logger.info(f"PyPDF2: Extracted text from {pages_with_text}/{max_pages} pages")
         if pages_with_text == 0:
             logger.warning("PyPDF2: No text extracted - PDF may be scanned/image-only")
         
@@ -311,31 +320,9 @@ def ingest_textbook(
     """
     Ingest a textbook PDF for a module tree: extract text, chunk, embed, store in PGvector.
     By default appends to existing content so you can upload chapters one at a time.
-
-    Args:
-        module_id: Root module_id of the module tree.
-        pdf_bytes: Raw PDF file bytes.
-        title: Optional display name for this upload (e.g. chapter name).
-        append: If True (default), add to existing RAG content. If False, replace all content.
-
-    Returns:
-        Dict with success, chunk_count (this upload), total_chunk_count (total in RAG), error.
     """
-    logger.info(f"=== Starting textbook ingest: {len(pdf_bytes)} bytes ===")
+    logger.info(f"=== Starting textbook ingest (PDF): {len(pdf_bytes)} bytes ===")
     _log_memory_usage("Start of ingest")
-    
-    conn = _get_pg_conn()
-    if not conn:
-        return {"success": False, "error": _pgvector_not_available_message()}
-
-    openai_client = _get_openai_client()
-    if not openai_client:
-        return {"success": False, "error": "Embeddings not available (set OPENAI_API_KEY)."}
-
-    if not _ensure_table(conn):
-        return {"success": False, "error": "Could not create RAG table."}
-
-    _log_memory_usage("Before PDF extraction")
     
     use_vision = os.getenv("USE_ANTHROPIC_VISION_FOR_PDF", "").strip().lower() in ("1", "true", "yes")
     
@@ -348,21 +335,51 @@ def ingest_textbook(
         logger.info("PDF extraction: Using PyPDF2")
         text = _extract_text_from_pdf(pdf_bytes)
     
-    _log_memory_usage("After PDF extraction")
-    
     del pdf_bytes
     gc.collect()
+    _log_memory_usage("After PDF extraction")
     logger.info(f"Extracted {len(text)} characters")
     
     if not text or len(text.strip()) < 100:
         return {"success": False, "error": "Could not extract enough text from the PDF (may be image-only or corrupted)."}
+
+    return ingest_text_content(module_id, text, title=title, append=append)
+
+
+def ingest_text_content(
+    module_id: str,
+    text: str,
+    title: Optional[str] = None,
+    append: bool = True,
+) -> Dict[str, Any]:
+    """
+    Ingest raw text into RAG: chunk, embed, store in PGvector.
+    Used for TXT files or after PDF extraction.
+    """
+    logger.info(f"=== Ingesting text content: {len(text)} characters ===")
+    if not text or len(text.strip()) < 100:
+        return {"success": False, "error": "Text is too short (need at least 100 characters)."}
+
+    conn = _get_pg_conn()
+    if not conn:
+        return {"success": False, "error": _pgvector_not_available_message()}
+
+    openai_client = _get_openai_client()
+    if not openai_client:
+        conn.close()
+        return {"success": False, "error": "Embeddings not available (set OPENAI_API_KEY)."}
+
+    if not _ensure_table(conn):
+        conn.close()
+        return {"success": False, "error": "Could not create RAG table."}
 
     chunks = _chunk_text(text)
     del text
     gc.collect()
     
     if not chunks:
-        return {"success": False, "error": "No text chunks produced from PDF."}
+        conn.close()
+        return {"success": False, "error": "No text chunks produced."}
 
     namespace = _namespace_name(module_id)
     upload_title = (title or "Textbook").strip()[:200]
@@ -392,6 +409,8 @@ def ingest_textbook(
                     "total_chunks": len(chunks),
                     "upload_title": upload_title,
                 }
+                # Use minimal numpy usage: create array only for this row, let it be GC'd
+                emb_arr = np.array(embedding, dtype="float32")
                 cur.execute(
                     f"""
                     INSERT INTO {RAG_TABLE} (id, namespace, embedding, content, metadata)
@@ -400,13 +419,14 @@ def ingest_textbook(
                     (
                         str(uuid.uuid4()),
                         namespace,
-                        np.array(embedding, dtype="float32"),
+                        emb_arr,
                         chunk,
                         json.dumps(meta),
                     ),
                 )
                 total_upserted += 1
             
+            conn.commit()  # Commit each batch to release memory
             del batch_chunks, embeddings
             gc.collect()
 
