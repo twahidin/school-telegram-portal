@@ -2061,6 +2061,7 @@ def teacher_collab_space_delete(space_id):
 
 
 @app.route('/student/collab-space/join', methods=['POST'])
+@limiter.limit("200 per hour")
 @login_required
 def student_collab_space_join():
     """Join a Collab Space by join code."""
@@ -2081,6 +2082,7 @@ def student_collab_space_join():
 
 
 @app.route('/student/collab-space/<space_id>')
+@limiter.limit("200 per hour")
 @login_required
 def student_collab_space_session(space_id):
     """Open a Collab Space (student session view)."""
