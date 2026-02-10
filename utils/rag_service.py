@@ -73,6 +73,11 @@ def _get_pg_conn():
         from pgvector.psycopg2 import register_vector
 
         conn = psycopg2.connect(url)
+        conn.autocommit = True  # CREATE EXTENSION requires autocommit
+        cur = conn.cursor()
+        cur.execute("CREATE EXTENSION IF NOT EXISTS vector")
+        cur.close()
+        conn.autocommit = False
         register_vector(conn)
         return conn
     except ImportError as e:
