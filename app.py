@@ -4666,6 +4666,13 @@ def create_assignment():
     # Get teaching groups for this teacher
     teaching_groups = list(TeachingGroup.find({'teacher_id': session['teacher_id']}))
     
+    # Teacher's module trees (for linking assignment to module)
+    teacher_modules = []
+    if _teacher_has_module_access(session['teacher_id']):
+        teacher_modules = list(
+            Module.find({'teacher_id': session['teacher_id'], 'parent_id': None}).sort('title', 1)
+        )
+    
     if request.method == 'POST':
         try:
             data = request.form
