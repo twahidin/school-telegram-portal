@@ -55,7 +55,9 @@
         <div class="submission-card">
             <div class="submission-status">
                 {% set feedback_sent = submission.get('feedback_sent', False) %}
-                {% if submission.status == 'approved' or submission.status == 'reviewed' or feedback_sent %}
+                {% if feedback_sent and submission.status == 'ai_reviewed' %}
+                <span class="status-icon info"><i class="bi bi-robot"></i></span>
+                {% elif submission.status == 'approved' or submission.status == 'reviewed' or feedback_sent %}
                 <span class="status-icon success"><i class="bi bi-check-circle-fill"></i></span>
                 {% elif submission.status in ['submitted', 'ai_reviewed'] %}
                 <span class="status-icon warning"><i class="bi bi-hourglass-split"></i></span>
@@ -80,7 +82,9 @@
                 
                 <div class="status-text mt-2">
                     {% set feedback_sent = submission.get('feedback_sent', False) %}
-                    {% if submission.status == 'approved' or submission.status == 'reviewed' or feedback_sent %}
+                    {% if feedback_sent and submission.status == 'ai_reviewed' %}
+                    <span class="text-info"><i class="bi bi-robot me-1"></i>AI Feedback Received</span>
+                    {% elif submission.status == 'approved' or submission.status == 'reviewed' or feedback_sent %}
                     <span class="text-success"><i class="bi bi-check-circle me-1"></i>Feedback received</span>
                     {% elif submission.status == 'ai_reviewed' %}
                     <span class="text-info"><i class="bi bi-robot me-1"></i>AI reviewed - awaiting teacher</span>

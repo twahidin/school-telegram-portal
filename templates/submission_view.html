@@ -54,6 +54,8 @@
                     <div>
                         {% if submission.status == 'reviewed' %}
                         <span class="badge bg-success"><i class="bi bi-check-circle me-1"></i>Reviewed by Teacher</span>
+                        {% elif submission.status == 'ai_reviewed' and submission.get('feedback_sent', False) %}
+                        <span class="badge bg-info"><i class="bi bi-robot me-1"></i>AI Feedback Received</span>
                         {% elif submission.status == 'ai_reviewed' %}
                         <span class="badge bg-info"><i class="bi bi-robot me-1"></i>AI Reviewed - Awaiting Teacher</span>
                         {% else %}

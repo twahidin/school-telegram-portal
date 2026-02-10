@@ -643,13 +643,18 @@ def assignments_by_subject(subject):
             a['status_display'] = 'Rejected'
             a['status_class'] = 'danger'
             submitted_count += 1  # Rejected still counts as submitted (can resubmit)
+        elif submission.get('feedback_sent', False) or submission.get('status') in ['reviewed', 'approved']:
+            # Distinguish AI-only feedback from teacher-reviewed feedback
+            if submission.get('status') == 'ai_reviewed' and submission.get('feedback_sent', False):
+                a['status_display'] = 'AI Feedback Received'
+                a['status_class'] = 'info'
+            else:
+                a['status_display'] = 'Feedback Received'
+                a['status_class'] = 'success'
+            submitted_count += 1
         elif submission.get('status') in ['submitted', 'ai_reviewed']:
             a['status_display'] = 'Pending Review'
             a['status_class'] = 'warning'
-            submitted_count += 1
-        elif submission.get('feedback_sent', False) or submission.get('status') in ['reviewed', 'approved']:
-            a['status_display'] = 'Feedback Received'
-            a['status_class'] = 'success'
             submitted_count += 1
         else:
             a['status_display'] = 'Not Submitted'
@@ -2597,9 +2602,36 @@ def teacher_assignments():
         else:
             a['target_display'] = None
     
+    # Build folder groupings for the template
+    # Group by subject
+    subject_map = {}
+    for a in assignments:
+        key = a.get('subject', 'Other')
+        subject_map.setdefault(key, []).append(a)
+    folders_by_subject = [{'name': k, 'assignments': v} for k, v in subject_map.items()]
+    
+    # Group by class
+    class_map = {}
+    for a in assignments:
+        key = a.get('target_display') or a.get('target_class_id') or 'All Students'
+        class_map.setdefault(key, []).append(a)
+    folders_by_class = [{'name': k, 'assignments': v} for k, v in class_map.items()]
+    
+    # Group by subject & class
+    subject_class_map = {}
+    for a in assignments:
+        subj = a.get('subject', 'Other')
+        cls = a.get('target_display') or a.get('target_class_id') or 'All Students'
+        key = f"{subj} — {cls}"
+        subject_class_map.setdefault(key, []).append(a)
+    folders_by_subject_class = [{'name': k, 'assignments': v} for k, v in subject_class_map.items()]
+    
     return render_template('teacher_assignments.html',
                          teacher=teacher,
-                         assignments=assignments)
+                         assignments=assignments,
+                         folders_by_subject=folders_by_subject,
+                         folders_by_class=folders_by_class,
+                         folders_by_subject_class=folders_by_subject_class)
 
 @app.route('/teacher/api/student-statuses')
 @teacher_required
