@@ -125,13 +125,13 @@
                             </button>
                         </div>
                         <div class="btn-group btn-group-sm">
-                            <button class="btn btn-outline-secondary" onclick="submissionZoomOut()" title="Zoom Out">
+                            <button type="button" class="btn btn-outline-secondary" id="submission-zoom-out-btn" onclick="submissionZoomOut()" title="Zoom Out">
                                 <i class="bi bi-zoom-out"></i>
                             </button>
-                            <button class="btn btn-outline-secondary" onclick="submissionZoomIn()" title="Zoom In">
+                            <button type="button" class="btn btn-outline-secondary" id="submission-zoom-in-btn" onclick="submissionZoomIn()" title="Zoom In">
                                 <i class="bi bi-zoom-in"></i>
                             </button>
-                            <button class="btn btn-outline-secondary" onclick="submissionToggleFullscreen()" title="Toggle Fullscreen" id="submission-fullscreen-btn">
+                            <button type="button" class="btn btn-outline-secondary" id="submission-fullscreen-btn" onclick="submissionToggleFullscreen()" title="Toggle Fullscreen">
                                 <i class="bi bi-arrows-fullscreen"></i>
                             </button>
                         </div>
@@ -612,12 +612,31 @@
         if (!document.fullscreenElement && submissionFullscreen) submissionRestoreView();
     });
 
-    // Expose to window so toolbar onclick handlers (e.g. next page, expand) can call them
+    // Expose to window for onclick (in case script order varies)
     window.submissionNextPage = submissionNextPage;
     window.submissionPrevPage = submissionPrevPage;
     window.submissionZoomIn = submissionZoomIn;
     window.submissionZoomOut = submissionZoomOut;
     window.submissionToggleFullscreen = submissionToggleFullscreen;
+
+    // Bind buttons directly so controls work even if onclick fails (e.g. CSP, old cache)
+    function bindControls() {
+        var prevBtn = document.getElementById('submission-prev-btn');
+        var nextBtn = document.getElementById('submission-next-btn');
+        var zoomInBtn = document.getElementById('submission-zoom-in-btn');
+        var zoomOutBtn = document.getElementById('submission-zoom-out-btn');
+        var fullscreenBtn = document.getElementById('submission-fullscreen-btn');
+        if (prevBtn) prevBtn.addEventListener('click', submissionPrevPage);
+        if (nextBtn) nextBtn.addEventListener('click', submissionNextPage);
+        if (zoomInBtn) zoomInBtn.addEventListener('click', submissionZoomIn);
+        if (zoomOutBtn) zoomOutBtn.addEventListener('click', submissionZoomOut);
+        if (fullscreenBtn) fullscreenBtn.addEventListener('click', submissionToggleFullscreen);
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', bindControls);
+    } else {
+        bindControls();
+    }
 })();
 </script>
 {% endif %}
