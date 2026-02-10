@@ -581,25 +581,23 @@ if (window.mustChangePassword) {
 }
 
 // ============================================================================
-// Password Change
+// Password Change (run when DOM is ready so modal/button exist)
 // ============================================================================
-
-document.getElementById('save-password-btn').addEventListener('click', async () => {
-    const currentPassword = document.getElementById('current-password').value;
-    const newPassword = document.getElementById('new-password').value;
-    const confirmPassword = document.getElementById('confirm-password').value;
+function doChangePassword() {
+    const currentPassword = document.getElementById('current-password')?.value ?? '';
+    const newPassword = document.getElementById('new-password')?.value ?? '';
+    const confirmPassword = document.getElementById('confirm-password')?.value ?? '';
     const resultDiv = document.getElementById('password-change-result');
-    
+    if (!resultDiv) return;
+
     if (!currentPassword || !newPassword || !confirmPassword) {
         resultDiv.innerHTML = '<div class="alert alert-warning">Please fill in all fields</div>';
         return;
     }
-    
     if (newPassword !== confirmPassword) {
         resultDiv.innerHTML = '<div class="alert alert-warning">New passwords do not match</div>';
         return;
     }
-    
     if (newPassword.length < 6) {
         resultDiv.innerHTML = '<div class="alert alert-warning">Password must be at least 6 characters</div>';
         return;
@@ -608,39 +606,65 @@ document.getElementById('save-password-btn').addEventListener('click', async () 
         resultDiv.innerHTML = '<div class="alert alert-warning">Password must contain both letters and numbers</div>';
         return;
     }
-    
     try {
-        const response = await fetch('/student/change_password', {
+        fetch('/student/change_password', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 current_password: currentPassword,
                 new_password: newPassword
             })
-        });
-        
-        const data = await response.json();
-        
-        if (data.success) {
-            resultDiv.innerHTML = '<div class="alert alert-success"><i class="bi bi-check-circle me-1"></i>Password changed successfully!</div>';
-            document.getElementById('current-password').value = '';
-            document.getElementById('new-password').value = '';
-            document.getElementById('confirm-password').value = '';
-            
-            if (window.mustChangePassword) {
-                setTimeout(() => location.reload(), 1500);
-                return;
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                resultDiv.innerHTML = '<div class="alert alert-success"><i class="bi bi-check-circle me-1"></i>Password changed successfully!</div>';
+                const cur = document.getElementById('current-password');
+                const newP = document.getElementById('new-password');
+                const conf = document.getElementById('confirm-password');
+                if (cur) cur.value = '';
+                if (newP) newP.value = '';
+                if (conf) conf.value = '';
+                if (window.mustChangePassword) {
+                    setTimeout(() => location.reload(), 1500);
+                    return;
+                }
+                setTimeout(() => {
+                    const modalEl = document.getElementById('change-password-modal');
+                    if (modalEl) {
+                        const inst = bootstrap.Modal.getInstance(modalEl);
+                        if (inst) inst.hide();
+                    }
+                    resultDiv.innerHTML = '';
+                }, 2000);
+            } else {
+                resultDiv.innerHTML = `<div class="alert alert-danger"><i class="bi bi-x-circle me-1"></i>${data.error || 'Failed to change password'}</div>`;
             }
-            setTimeout(() => {
-                bootstrap.Modal.getInstance(document.getElementById('change-password-modal')).hide();
-                resultDiv.innerHTML = '';
-            }, 2000);
-        } else {
-            resultDiv.innerHTML = `<div class="alert alert-danger"><i class="bi bi-x-circle me-1"></i>${data.error || 'Failed to change password'}</div>`;
-        }
+        })
+        .catch(() => {
+            resultDiv.innerHTML = '<div class="alert alert-danger">Error changing password</div>';
+        });
     } catch (e) {
         resultDiv.innerHTML = '<div class="alert alert-danger">Error changing password</div>';
     }
-});
+}
+
+function initPasswordChange() {
+    const btn = document.getElementById('save-password-btn');
+    const form = document.getElementById('change-password-form');
+    if (btn) btn.addEventListener('click', doChangePassword);
+    if (form) {
+        form.addEventListener('submit', (e) => {
+            e.preventDefault();
+            doChangePassword();
+        });
+    }
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initPasswordChange);
+} else {
+    initPasswordChange();
+}
 </script>
 {% endblock %}
