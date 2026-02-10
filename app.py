@@ -110,11 +110,13 @@ def sgt_filter(dt):
         return dt.astimezone(SGT)
     return dt
 
-# Initialize rate limiter
+# Initialize rate limiter (explicit storage avoids "no storage specified" warning)
+# Set RATELIMIT_STORAGE_URI=redis://... for production (e.g. Railway Redis)
 limiter = Limiter(
     app=app,
     key_func=get_remote_address,
-    default_limits=["200 per day", "50 per hour"]
+    default_limits=["200 per day", "50 per hour"],
+    storage_uri=os.getenv("RATELIMIT_STORAGE_URI", "memory://"),
 )
 
 # Admin password from environment
@@ -1216,6 +1218,25 @@ def download_submission_pdf(submission_id):
             logger.error(f"Assignment not found for submission {submission_id}, assignment_id: {assignment_id}")
             return redirect(url_for('student_submissions'))
         
+        # For spreadsheet assignments, serve the stored feedback PDF if available
+        if assignment.get('marking_type') == 'spreadsheet' and submission.get('spreadsheet_feedback_pdf_id'):
+            from gridfs import GridFS
+            from bson import ObjectId
+            fs = GridFS(db.db)
+            try:
+                file_id = submission['spreadsheet_feedback_pdf_id']
+                if isinstance(file_id, str):
+                    file_id = ObjectId(file_id)
+                pdf_content = fs.get(file_id).read()
+                return send_file(
+                    io.BytesIO(pdf_content),
+                    mimetype='application/pdf',
+                    as_attachment=True,
+                    download_name=f"feedback_report_{submission_id}.pdf"
+                )
+            except Exception as e:
+                logger.warning(f"Could not read spreadsheet feedback PDF: {e}")
+        
         pdf_content = generate_feedback_pdf(submission, assignment, student)
         
         if not pdf_content:
@@ -1344,11 +1365,80 @@ def student_submit_files():
         else:
             Submission.insert_one(submission)
         
-        # Generate AI feedback
+        # Generate AI feedback (or spreadsheet evaluation)
         try:
             marking_type = assignment.get('marking_type', 'standard')
             
-            if marking_type == 'rubric':
+            if marking_type == 'spreadsheet':
+                # Evaluate Excel submission against answer key; generate PDF report and commented Excel
+                answer_key_bytes = None
+                if assignment.get('spreadsheet_answer_key_id'):
+                    try:
+                        ans_file = fs.get(assignment['spreadsheet_answer_key_id'])
+                        answer_key_bytes = ans_file.read()
+                    except Exception as e:
+                        logger.warning(f"Could not read spreadsheet answer key: {e}")
+                student_bytes = pages[0]['data'] if pages and pages[0].get('type') == 'excel' else None
+                if not answer_key_bytes or not student_bytes:
+                    ai_result = {'error': 'Missing answer key or Excel submission'}
+                else:
+                    from utils.spreadsheet_evaluator import (
+                        evaluate_spreadsheet_submission,
+                        generate_pdf_report as generate_spreadsheet_pdf,
+                        generate_commented_excel,
+                    )
+                    student_name = student.get('name') or session.get('student_name') or 'Student'
+                    result_dict = evaluate_spreadsheet_submission(
+                        answer_key_bytes=answer_key_bytes,
+                        student_bytes=student_bytes,
+                        student_name=student_name,
+                        student_filename=(files[0].filename if files else 'submission.xlsx'),
+                    )
+                    if result_dict is None:
+                        ai_result = {'error': 'Spreadsheet evaluation failed'}
+                    else:
+                        pdf_bytes = generate_spreadsheet_pdf(result_dict)
+                        excel_bytes = generate_commented_excel(student_bytes, result_dict)
+                        pdf_id = fs.put(
+                            pdf_bytes,
+                            filename=f"{submission_id}_feedback_report.pdf",
+                            content_type='application/pdf',
+                            submission_id=submission_id,
+                            file_type='spreadsheet_feedback_pdf',
+                        )
+                        excel_id = fs.put(
+                            excel_bytes,
+                            filename=f"{submission_id}_feedback_commented.xlsx",
+                            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                            submission_id=submission_id,
+                            file_type='spreadsheet_feedback_excel',
+                        )
+                        ai_result = {
+                            'spreadsheet_feedback': result_dict,
+                            'marks_awarded': result_dict.get('marks_awarded'),
+                            'total_marks': result_dict.get('total_marks'),
+                            'percentage': result_dict.get('percentage'),
+                        }
+                        update_fields = {
+                            'ai_feedback': ai_result,
+                            'status': 'ai_reviewed',
+                            'final_marks': result_dict.get('marks_awarded'),
+                            'spreadsheet_feedback_pdf_id': str(pdf_id),
+                            'spreadsheet_feedback_excel_id': str(excel_id),
+                        }
+                        if assignment.get('send_ai_feedback_immediately'):
+                            update_fields['feedback_sent'] = True
+                        Submission.update_one(
+                            {'submission_id': submission_id},
+                            {'$set': update_fields}
+                        )
+                        if update_fields.get('feedback_sent'):
+                            submission_after = Submission.find_one({'submission_id': submission_id})
+                            if submission_after:
+                                _update_profile_and_mastery_from_assignment(session['student_id'], assignment, submission_after)
+                        # Skip the common 413 / update block below for spreadsheet
+                        marking_type = None  # signal we already updated
+            elif marking_type == 'rubric':
                 # For rubric-based essays, use the essay analysis function
                 rubrics_content = None
                 if assignment.get('rubrics_id'):
@@ -1371,43 +1461,45 @@ def student_submit_files():
                 
                 ai_result = analyze_submission_images(pages, assignment, answer_key_content, teacher)
             
-            # If AI returned 413 (request too large), auto-reject so student can resubmit with smaller/fewer images
-            is_413 = ai_result.get('error_code') == 'request_too_large' or (
-                ai_result.get('error') and ('413' in str(ai_result.get('error')) or 'request_too_large' in str(ai_result.get('error')).lower())
-            )
-            if is_413:
-                rejection_reason = (
-                    "Your submission was too large to process. Please resubmit with fewer or smaller images: "
-                    "e.g. one photo per page, lower resolution, or fewer pages. This helps the system process your work."
+            # If already handled (e.g. spreadsheet), skip standard/rubric update
+            if marking_type is not None:
+                # If AI returned 413 (request too large), auto-reject so student can resubmit with smaller/fewer images
+                is_413 = ai_result.get('error_code') == 'request_too_large' or (
+                    ai_result.get('error') and ('413' in str(ai_result.get('error')) or 'request_too_large' in str(ai_result.get('error')).lower())
                 )
-                Submission.update_one(
-                    {'submission_id': submission_id},
-                    {'$set': {
+                if is_413:
+                    rejection_reason = (
+                        "Your submission was too large to process. Please resubmit with fewer or smaller images: "
+                        "e.g. one photo per page, lower resolution, or fewer pages. This helps the system process your work."
+                    )
+                    Submission.update_one(
+                        {'submission_id': submission_id},
+                        {'$set': {
+                            'ai_feedback': ai_result,
+                            'status': 'rejected',
+                            'rejection_reason': rejection_reason,
+                            'rejected_at': datetime.utcnow(),
+                            'rejected_by': 'system_413'
+                        }}
+                    )
+                    logger.info(f"Auto-rejected submission {submission_id} due to 413 request_too_large; student can resubmit.")
+                else:
+                    update_fields = {
                         'ai_feedback': ai_result,
-                        'status': 'rejected',
-                        'rejection_reason': rejection_reason,
-                        'rejected_at': datetime.utcnow(),
-                        'rejected_by': 'system_413'
-                    }}
-                )
-                logger.info(f"Auto-rejected submission {submission_id} due to 413 request_too_large; student can resubmit.")
-            else:
-                update_fields = {
-                    'ai_feedback': ai_result,
-                    'status': 'ai_reviewed'
-                }
-                # If assignment is set to send AI feedback straight away, student can see feedback without teacher review
-                if assignment.get('send_ai_feedback_immediately') and not ai_result.get('error'):
-                    update_fields['feedback_sent'] = True
-                Submission.update_one(
-                    {'submission_id': submission_id},
-                    {'$set': update_fields}
-                )
-                # Update profile/mastery when assignment is linked to module and feedback is sent
-                if update_fields.get('feedback_sent'):
-                    submission_after = Submission.find_one({'submission_id': submission_id})
-                    if submission_after:
-                        _update_profile_and_mastery_from_assignment(session['student_id'], assignment, submission_after)
+                        'status': 'ai_reviewed'
+                    }
+                    # If assignment is set to send AI feedback straight away, student can see feedback without teacher review
+                    if assignment.get('send_ai_feedback_immediately') and not ai_result.get('error'):
+                        update_fields['feedback_sent'] = True
+                    Submission.update_one(
+                        {'submission_id': submission_id},
+                        {'$set': update_fields}
+                    )
+                    # Update profile/mastery when assignment is linked to module and feedback is sent
+                    if update_fields.get('feedback_sent'):
+                        submission_after = Submission.find_one({'submission_id': submission_id})
+                        if submission_after:
+                            _update_profile_and_mastery_from_assignment(session['student_id'], assignment, submission_after)
         except Exception as e:
             logger.error(f"AI feedback error: {e}")
         
@@ -1551,7 +1643,7 @@ def student_preview_feedback():
 @app.route('/student/submission/<submission_id>/file/<int:file_index>')
 @login_required
 def view_student_submission_file(submission_id, file_index):
-    """Serve student's submission file"""
+    """Serve student's submission file. Optional query param: rotate=90|180|270 to rotate PDF or image."""
     from gridfs import GridFS
     from bson import ObjectId
     
@@ -1567,12 +1659,43 @@ def view_student_submission_file(submission_id, file_index):
     if file_index >= len(file_ids):
         return 'File not found', 404
     
+    rotate = request.args.get('rotate', type=int)
+    if rotate not in (90, 180, 270):
+        rotate = None
+    
     fs = GridFS(db.db)
     try:
         file_data = fs.get(ObjectId(file_ids[file_index]))
         content_type = file_data.content_type or 'application/octet-stream'
+        data = file_data.read()
+        
+        if rotate and content_type == 'application/pdf':
+            try:
+                from PyPDF2 import PdfReader, PdfWriter
+                reader = PdfReader(io.BytesIO(data))
+                writer = PdfWriter()
+                for page in reader.pages:
+                    page.rotate(rotate)
+                    writer.add_page(page)
+                out = io.BytesIO()
+                writer.write(out)
+                data = out.getvalue()
+            except Exception as rot_e:
+                logger.warning(f"PDF rotation failed: {rot_e}")
+        elif rotate and (content_type.startswith('image/') or content_type == 'application/octet-stream'):
+            try:
+                from PIL import Image
+                img = Image.open(io.BytesIO(data)).convert('RGB')
+                rotated = img.rotate(-rotate, expand=True)
+                out = io.BytesIO()
+                rotated.save(out, format='JPEG', quality=95)
+                data = out.getvalue()
+                content_type = 'image/jpeg'
+            except Exception as rot_e:
+                logger.warning(f"Image rotation failed: {rot_e}")
+        
         return Response(
-            file_data.read(),
+            data,
             mimetype=content_type,
             headers={'Content-Disposition': 'inline'}
         )
@@ -1961,6 +2084,26 @@ def _get_teacher_collab_settings(teacher_id):
         'max_infographic_per_space': doc.get('max_infographic_per_space', DEFAULT_MAX_INFOGraphic_PER_SPACE),
         'max_generation_per_space': doc.get('max_generation_per_space', DEFAULT_MAX_GENERATION_PER_SPACE),
     }
+
+
+def _set_teacher_collab_settings(teacher_id, nanobanana_api_key=None, max_infographic_per_space=None, max_generation_per_space=None):
+    """Save teacher Collab Space settings. Pass None to leave unchanged."""
+    upd = {'updated_at': datetime.utcnow()}
+    if nanobanana_api_key is not None:
+        upd['nanobanana_api_key_encrypted'] = encrypt_api_key(nanobanana_api_key) if nanobanana_api_key else None
+    if max_infographic_per_space is not None:
+        upd['max_infographic_per_space'] = max(1, min(20, int(max_infographic_per_space)))
+    if max_generation_per_space is not None:
+        upd['max_generation_per_space'] = max(1, min(20, int(max_generation_per_space)))
+    db.db.teacher_collab_settings.update_one(
+        {'teacher_id': teacher_id},
+        {'$set': {**upd, 'teacher_id': teacher_id}},
+        upsert=True,
+    )
+
+
+def _generate_space_id():
+    return f"CS-{uuid.uuid4().hex[:10].upper()}"
 
 
 def _collab_space_render(space, user_role):
@@ -3126,6 +3269,11 @@ def teacher_dashboard():
                          classes=classes_data,
                          teaching_groups=teaching_groups)
 
+def _generate_teacher_group_id():
+    """Generate unique ID for a teacher-created group (within class or teaching group)."""
+    return f"TGRP-{uuid.uuid4().hex[:8].upper()}"
+
+
 @app.route('/teacher/class/<class_id>')
 @teacher_required
 def view_class(class_id):
@@ -3232,6 +3380,84 @@ def view_teaching_group(group_id):
                          teaching_groups=[],
                          is_teaching_group=True)
 
+@app.route('/teacher/api/my-groups', methods=['POST'])
+@teacher_required
+def api_teacher_group_create():
+    """Create a group within a class or teaching group. Body: source_type, source_id, name, student_ids."""
+    try:
+        data = request.get_json() or {}
+        source_type = (data.get('source_type') or '').strip()
+        source_id = (data.get('source_id') or '').strip()
+        name = (data.get('name') or '').strip()[:200]
+        student_ids = list(data.get('student_ids') or [])
+        if source_type not in ('class', 'teaching_group') or not source_id or not name:
+            return jsonify({'error': 'source_type, source_id and name are required'}), 400
+        # Verify teacher has access to this source
+        if source_type == 'class':
+            teacher = Teacher.find_one({'teacher_id': session['teacher_id']})
+            if source_id not in (teacher.get('classes') or []):
+                students_in_class = Student.find({'class': source_id, 'teachers': session['teacher_id']})
+                if not any(1 for _ in students_in_class):
+                    return jsonify({'error': 'Access denied to this class'}), 403
+            allowed_ids = set(s['student_id'] for s in Student.find({'class': source_id}))
+        else:
+            tg = TeachingGroup.find_one({'group_id': source_id, 'teacher_id': session['teacher_id']})
+            if not tg:
+                return jsonify({'error': 'Teaching group not found'}), 404
+            allowed_ids = set(tg.get('student_ids') or [])
+        student_ids = [s for s in student_ids if s in allowed_ids]
+        group_id = _generate_teacher_group_id()
+        doc = {
+            'group_id': group_id,
+            'teacher_id': session['teacher_id'],
+            'source_type': source_type,
+            'source_id': source_id,
+            'name': name,
+            'student_ids': student_ids,
+            'created_at': datetime.utcnow(),
+            'updated_at': datetime.utcnow(),
+        }
+        db.db.teacher_groups.insert_one(doc)
+        return jsonify({'success': True, 'group_id': group_id, 'group': {'group_id': group_id, 'name': name, 'student_ids': student_ids}})
+    except Exception as e:
+        logger.exception("Create teacher group: %s", e)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/teacher/api/my-groups/<group_id>', methods=['PUT', 'DELETE'])
+@teacher_required
+def api_teacher_group_update_or_delete(group_id):
+    """Update or delete a teacher-created group."""
+    doc = db.db.teacher_groups.find_one({'group_id': group_id, 'teacher_id': session['teacher_id']})
+    if not doc:
+        return jsonify({'error': 'Group not found'}), 404
+    if request.method == 'DELETE':
+        db.db.teacher_groups.delete_one({'group_id': group_id})
+        return jsonify({'success': True})
+    try:
+        data = request.get_json() or {}
+        name = (data.get('name') or '').strip()[:200]
+        student_ids = data.get('student_ids')
+        source_type = doc.get('source_type')
+        source_id = doc.get('source_id')
+        if source_type == 'class':
+            allowed_ids = set(s['student_id'] for s in Student.find({'class': source_id}))
+        else:
+            tg = TeachingGroup.find_one({'group_id': source_id, 'teacher_id': session['teacher_id']})
+            allowed_ids = set(tg.get('student_ids') or []) if tg else set()
+        upd = {'updated_at': datetime.utcnow()}
+        if name:
+            upd['name'] = name
+        if student_ids is not None:
+            upd['student_ids'] = [s for s in list(student_ids) if s in allowed_ids]
+        db.db.teacher_groups.update_one({'group_id': group_id}, {'$set': upd})
+        updated = db.db.teacher_groups.find_one({'group_id': group_id})
+        return jsonify({'success': True, 'group': {'group_id': group_id, 'name': updated.get('name'), 'student_ids': updated.get('student_ids', [])}})
+    except Exception as e:
+        logger.exception("Update teacher group: %s", e)
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/teacher/assignments')
 @teacher_required
 def teacher_assignments():
@@ -3292,6 +3518,20 @@ def teacher_assignments():
                          folders_by_subject=folders_by_subject,
                          folders_by_class=folders_by_class,
                          folders_by_subject_class=folders_by_subject_class)
+
+def _build_student_status_for_submission(submission):
+    """Build display status dict for one submission (for class view and API)."""
+    status = submission.get('status', 'submitted')
+    sub_id = submission.get('submission_id')
+    feedback_sent = submission.get('feedback_sent', False)
+    if status == 'ai_reviewed' and feedback_sent:
+        return {'status': 'ai_feedback_sent', 'label': 'AI Feedback Sent', 'class': 'info', 'submission_id': sub_id}
+    if status in ['submitted', 'ai_reviewed']:
+        return {'status': 'pending', 'label': 'Pending Review', 'class': 'warning', 'submission_id': sub_id}
+    if status in ['reviewed', 'approved']:
+        return {'status': 'returned', 'label': 'Returned', 'class': 'success', 'submission_id': sub_id}
+    return {'status': status, 'label': status.title(), 'class': 'secondary', 'submission_id': sub_id}
+
 
 @app.route('/teacher/api/student-statuses')
 @teacher_required
@@ -5253,6 +5493,84 @@ def regenerate_ai_feedback(submission_id):
         
         marking_type = assignment.get('marking_type', 'standard')
         
+        if marking_type == 'spreadsheet':
+            # Re-run spreadsheet evaluation (answer key vs student Excel); do not call image AI
+            answer_key_bytes = None
+            if assignment.get('spreadsheet_answer_key_id'):
+                try:
+                    oid = assignment['spreadsheet_answer_key_id']
+                    if isinstance(oid, str):
+                        oid = ObjectId(oid)
+                    ans_file = fs.get(oid)
+                    answer_key_bytes = ans_file.read()
+                except Exception as e:
+                    logger.warning(f"Could not read spreadsheet answer key: {e}")
+            student_bytes = None
+            for p in pages:
+                if p.get('type') == 'excel':
+                    student_bytes = p['data']
+                    break
+            if not student_bytes:
+                student_bytes = pages[0]['data']
+            if not answer_key_bytes or not student_bytes:
+                return jsonify({
+                    'success': False,
+                    'error': 'Missing answer key or Excel file. Ensure the assignment has an answer key and the submission is an Excel file.'
+                }), 400
+            try:
+                from utils.spreadsheet_evaluator import (
+                    evaluate_spreadsheet_submission,
+                    generate_pdf_report as generate_spreadsheet_pdf,
+                    generate_commented_excel,
+                )
+            except ImportError as e:
+                logger.exception("Spreadsheet evaluator import failed")
+                return jsonify({'success': False, 'error': f'Spreadsheet evaluator unavailable: {e}'}), 500
+            student = Student.find_one({'student_id': submission['student_id']})
+            student_name = (student.get('name') or 'Student') if student else 'Student'
+            result_dict = evaluate_spreadsheet_submission(
+                answer_key_bytes=answer_key_bytes,
+                student_bytes=student_bytes,
+                student_name=student_name,
+                student_filename='submission.xlsx',
+            )
+            if result_dict is None:
+                return jsonify({'success': False, 'error': 'Spreadsheet evaluation failed. Check that the file is a valid Excel workbook.'}), 400
+            pdf_bytes = generate_spreadsheet_pdf(result_dict)
+            excel_bytes = generate_commented_excel(student_bytes, result_dict)
+            pdf_id = fs.put(
+                pdf_bytes,
+                filename=f"{submission_id}_feedback_report.pdf",
+                content_type='application/pdf',
+                submission_id=submission_id,
+                file_type='spreadsheet_feedback_pdf',
+            )
+            excel_id = fs.put(
+                excel_bytes,
+                filename=f"{submission_id}_feedback_commented.xlsx",
+                content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                submission_id=submission_id,
+                file_type='spreadsheet_feedback_excel',
+            )
+            ai_result = {
+                'spreadsheet_feedback': result_dict,
+                'marks_awarded': result_dict.get('marks_awarded'),
+                'total_marks': result_dict.get('total_marks'),
+                'percentage': result_dict.get('percentage'),
+            }
+            Submission.update_one(
+                {'submission_id': submission_id},
+                {'$set': {
+                    'ai_feedback': ai_result,
+                    'status': 'ai_reviewed',
+                    'final_marks': result_dict.get('marks_awarded'),
+                    'spreadsheet_feedback_pdf_id': str(pdf_id),
+                    'spreadsheet_feedback_excel_id': str(excel_id),
+                    'updated_at': datetime.utcnow(),
+                }}
+            )
+            return jsonify({'success': True, 'message': 'Spreadsheet evaluated successfully. View feedback via "View spreadsheet feedback".'})
+        
         if marking_type == 'rubric':
             rubrics_content = None
             if assignment.get('rubrics_id'):
@@ -5321,6 +5639,85 @@ def regenerate_ai_feedback(submission_id):
     except Exception as e:
         logger.error(f"Error regenerating AI feedback: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/teacher/review/<submission_id>/reevaluate-row', methods=['POST'])
+@teacher_required
+def reevaluate_row(submission_id):
+    """Re-evaluate a single feedback row (question/criterion/correction) using a cropped image region and optional teacher instructions."""
+    from gridfs import GridFS
+    from bson import ObjectId
+    from utils.ai_marking import reevaluate_single_item
+
+    try:
+        data = request.get_json() or {}
+        item_type = data.get('item_type')  # 'question' | 'criterion' | 'correction'
+        item_context = data.get('item_context', {})
+        additional_prompt = data.get('additional_prompt', '')
+        cropped_image = data.get('cropped_image')  # base64 JPEG (data URL or raw)
+        page_index = data.get('page_index')  # optional: include this page as full context
+        include_full_page = data.get('include_full_page', True)
+
+        if not item_type:
+            return jsonify({'success': False, 'error': 'item_type is required'}), 400
+        if not cropped_image and not additional_prompt:
+            return jsonify({'success': False, 'error': 'Provide a cropped image region or additional instructions'}), 400
+
+        submission = Submission.find_one({'submission_id': submission_id})
+        if not submission:
+            return jsonify({'success': False, 'error': 'Submission not found'}), 404
+
+        assignment = Assignment.find_one({'assignment_id': submission['assignment_id']})
+        if not assignment or assignment['teacher_id'] != session['teacher_id']:
+            return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
+        teacher = Teacher.find_one({'teacher_id': session['teacher_id']})
+
+        # Strip data URL prefix if present
+        cropped_b64 = None
+        if cropped_image:
+            if ',' in cropped_image:
+                cropped_b64 = cropped_image.split(',', 1)[1]
+            else:
+                cropped_b64 = cropped_image
+
+        # Optionally load a full page for context
+        full_page_images = None
+        if include_full_page and page_index is not None:
+            fs = GridFS(db.db)
+            file_ids = submission.get('file_ids', [])
+            idx = int(page_index)
+            if 0 <= idx < len(file_ids):
+                try:
+                    file_data = fs.get(ObjectId(file_ids[idx]))
+                    raw = file_data.read()
+                    ct = (file_data.content_type or '').lower()
+                    ptype = 'pdf' if 'pdf' in ct else 'image'
+                    full_page_images = [{'type': ptype, 'data': raw}]
+                except Exception as e:
+                    logger.warning(f"Could not read page {idx} for context: {e}")
+
+        result = reevaluate_single_item(
+            cropped_image_b64=cropped_b64,
+            item_type=item_type,
+            item_context=item_context,
+            additional_prompt=additional_prompt,
+            assignment=assignment,
+            teacher=teacher,
+            full_page_images=full_page_images,
+        )
+
+        if result.get('error') and not result.get('feedback') and not result.get('reasoning') and not result.get('correction'):
+            return jsonify({'success': False, 'error': result['error']}), 200
+
+        # Remove raw_response from client payload (large)
+        result.pop('raw_response', None)
+        return jsonify({'success': True, 'result': result})
+
+    except Exception as e:
+        logger.error(f"Error in reevaluate_row: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 
 @app.route('/teacher/review/<submission_id>/extract-answer-key', methods=['POST'])
 @teacher_required
@@ -7018,6 +7415,90 @@ def module_textbook(module_id):
         })
     except Exception as e:
         logger.exception("Error uploading textbook: %s", e)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/teacher/modules/<module_id>/textbook/embeddings', methods=['POST'])
+@teacher_required
+def module_textbook_embeddings(module_id):
+    """Upload pre-computed embeddings (JSON or JSONL) for RAG. No OpenAI call on Railway."""
+    if not _teacher_has_module_access(session['teacher_id']):
+        return jsonify({'error': 'Access denied'}), 403
+    root = Module.find_one({'module_id': module_id, 'teacher_id': session['teacher_id']})
+    if not root:
+        return jsonify({'error': 'Module not found'}), 404
+
+    if 'embeddings_file' not in request.files:
+        return jsonify({'error': 'No file provided. Use form field "embeddings_file".'}), 400
+    f = request.files['embeddings_file']
+    if not f or not f.filename:
+        return jsonify({'error': 'Please select an embeddings file (.json or .jsonl)'}), 400
+    fn = (f.filename or '').lower()
+    if not (fn.endswith('.json') or fn.endswith('.jsonl')):
+        return jsonify({'error': 'File must be .json or .jsonl (array of {"text": "...", "embedding": [float, ...]}).'}), 400
+
+    title = (request.form.get('title') or f.filename or 'Textbook').strip()[:200]
+    append = request.form.get('append', 'true').strip().lower() in ('1', 'true', 'yes')
+
+    try:
+        raw = f.read()
+        if len(raw) < 10:
+            return jsonify({'error': 'File is too small or empty'}), 400
+        # 50 MB max for embeddings file
+        if len(raw) > 50 * 1024 * 1024:
+            return jsonify({'error': 'Embeddings file must be 50 MB or smaller.'}), 400
+
+        items = []
+        if fn.endswith('.jsonl'):
+            import json as json_mod
+            for line in raw.decode('utf-8').splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    items.append(json_mod.loads(line))
+                except Exception as e:
+                    return jsonify({'error': f'Invalid JSONL line: {e}'}), 400
+        else:
+            import json as json_mod
+            try:
+                data = json_mod.loads(raw.decode('utf-8'))
+            except Exception as e:
+                return jsonify({'error': f'Invalid JSON: {e}'}), 400
+            if not isinstance(data, list):
+                return jsonify({'error': 'JSON must be an array of {"text": "...", "embedding": [...]}.'}), 400
+            items = data
+
+        if not items:
+            return jsonify({'error': 'No items in file.'}), 400
+
+        result = rag_service.ingest_precomputed_embeddings(module_id, items, title=title, append=append)
+        if not result.get('success'):
+            return jsonify({'error': result.get('error', 'Ingest failed')}), 500
+
+        total_chunks = result.get('total_chunk_count', result.get('chunk_count', 0))
+        ModuleTextbook.update_one(
+            {'module_id': module_id},
+            {
+                '$set': {
+                    'module_id': module_id,
+                    'name': title,
+                    'file_name': f.filename,
+                    'chunk_count': total_chunks,
+                    'updated_at': datetime.utcnow(),
+                },
+                '$inc': {'upload_count': 1},
+            },
+            upsert=True,
+        )
+        return jsonify({
+            'success': True,
+            'chunk_count': result.get('chunk_count', 0),
+            'total_chunk_count': total_chunks,
+            'name': title,
+        })
+    except Exception as e:
+        logger.exception("Error uploading embeddings: %s", e)
         return jsonify({'error': str(e)}), 500
 
 
