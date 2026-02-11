@@ -67,7 +67,7 @@
     
     <div class="row">
         <!-- Left: Assignment Details -->
-        <div class="col-lg-6 mb-4">
+        <div class="col-lg-{{ '4' if (assignment.question_paper_id or assignment.get('drive_file_refs', {}).get('question_paper_drive_id')) else '6' }} mb-4">
             <div class="card">
                 <div class="card-header bg-primary text-white">
                     <h5 class="mb-0"><i class="bi bi-file-text me-2"></i>Assignment Details</h5>
@@ -172,7 +172,7 @@
         </div>
         
         <!-- Right: Hard Copy Submission -->
-        <div class="col-lg-6 mb-4">
+        <div class="col-lg-{{ '4' if (assignment.question_paper_id or assignment.get('drive_file_refs', {}).get('question_paper_drive_id')) else '6' }} mb-4">
             {% if not existing_submission %}
             <div class="card h-100">
                 <div class="card-header bg-success text-white">
@@ -338,22 +338,24 @@
             </div>
             {% endif %}
         </div>
-    </div>
-    
-    <!-- Complete Question Paper Online (above the line) -->
-    {% if assignment.question_paper_id or assignment.get('drive_file_refs', {}).get('question_paper_drive_id') %}
-    <div class="card mb-4" id="editable-question-section">
-        <div class="card-header bg-secondary text-white d-flex justify-content-between align-items-center">
-            <h5 class="mb-0"><i class="bi bi-pencil-square me-2"></i>Complete Question Paper Online</h5>
-            <button type="button" class="btn btn-light btn-sm" id="btn-open-question-paper-annotator" title="Open PDF editor to draw, add text, and submit your work">
-                <i class="bi bi-pencil-fill me-1"></i>Open PDF Editor
-            </button>
+        
+        <!-- Third: Complete Question Paper Online (aligned with Assignment Details & Hard Copy) -->
+        {% if assignment.question_paper_id or assignment.get('drive_file_refs', {}).get('question_paper_drive_id') %}
+        <div class="col-lg-4 mb-4">
+            <div class="card h-100 mb-0" id="editable-question-section">
+                <div class="card-header bg-secondary text-white d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0"><i class="bi bi-pencil-square me-2"></i>Complete Question Paper Online</h5>
+                    <button type="button" class="btn btn-light btn-sm" id="btn-open-question-paper-annotator" title="Open PDF editor to draw, add text, and submit your work">
+                        <i class="bi bi-pencil-fill me-1"></i>Open PDF Editor
+                    </button>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted mb-0 small">Draw, highlight, add text and shapes on the question paper. Export a PDF or submit your work directly for teacher/AI review.</p>
+                </div>
+            </div>
         </div>
-        <div class="card-body">
-            <p class="text-muted mb-0 small">Draw, highlight, add text and shapes on the question paper. Export a PDF or submit your work directly for teacher/AI review.</p>
-        </div>
+        {% endif %}
     </div>
-    {% endif %}
     
     <!-- Visible divider -->
     <hr class="my-4 border-2 border-secondary">
@@ -702,7 +704,8 @@
 #questionPaperAnnotatorModal .annotator-slider-row { align-items: center; margin-bottom: 6px; }
 #questionPaperAnnotatorModal .annotator-slider-label { font-size: 0.78rem; color: #8b8fa3; min-width: 50px; }
 #questionPaperAnnotatorModal .annotator-canvas-area { flex: 1; display: flex; align-items: flex-start; justify-content: center; overflow: auto; padding: 24px; background: radial-gradient(circle at 20% 30%, rgba(108,138,255,0.03) 0%, transparent 50%), #0f1117; }
-#questionPaperAnnotatorModal .annotator-canvas-area.drawing { touch-action: none; }
+#questionPaperAnnotatorModal .annotator-canvas-area.drawing,
+#questionPaperAnnotatorModal .annotator-canvas-area.text-editing { touch-action: none; }
 #questionPaperAnnotatorModal .annotator-canvas-wrap { box-shadow: 0 4px 40px rgba(0,0,0,0.5); border-radius: 4px; overflow: hidden; background: #fff; }
 #questionPaperAnnotatorModal .annotator-canvas-wrap canvas { display: block; }
 #questionPaperAnnotatorModal .annotator-shortcut-hint { position: absolute; bottom: 24px; left: 24px; background: #1a1c25; border: 1px solid #2e3140; border-radius: 12px; padding: 14px 18px; font-size: 0.75rem; color: #8b8fa3; z-index: 50; line-height: 1.8; }
@@ -972,12 +975,20 @@
                 else { o.selectable = false; o.evented = false; }
             });
             document.getElementById('qp-canvas-area').classList.toggle('drawing', ['draw','highlight','eraser'].indexOf(tool) !== -1);
+            document.getElementById('qp-canvas-area').classList.toggle('text-editing', tool === 'text');
+        }
+        function focusHiddenTextarea() {
+            setTimeout(function() {
+                var el = canvas.hiddenTextarea;
+                if (el && typeof el.focus === 'function') el.focus();
+            }, 0);
         }
         function onTextClick(opt) {
             if (currentTool !== 'text') return;
             if (opt.target && opt.target.type === 'i-text' && (!opt.target.data || !opt.target.data.isBackground)) {
                 canvas.setActiveObject(opt.target);
                 opt.target.enterEditing();
+                focusHiddenTextarea();
                 return;
             }
             canvas.off('mouse:down', onTextClick);
@@ -987,6 +998,7 @@
             canvas.setActiveObject(text);
             text.enterEditing();
             text.selectAll();
+            focusHiddenTextarea();
             text.on('editing:exited', function() {
                 if (!text.text || text.text.trim() === '') canvas.remove(text);
                 canvas.renderAll();
@@ -1049,7 +1061,15 @@
             var modal = new bootstrap.Modal(document.getElementById('questionPaperAnnotatorModal'));
             modal.show();
         });
-        document.getElementById('questionPaperAnnotatorModal').addEventListener('shown.bs.modal', function() {
+        var modalEl = document.getElementById('questionPaperAnnotatorModal');
+        modalEl.addEventListener('keydown', function(e) {
+            if (!canvas) return;
+            var active = canvas.getActiveObject();
+            if (active && active.isEditing) {
+                e.stopPropagation();
+            }
+        }, true);
+        modalEl.addEventListener('shown.bs.modal', function() {
             pageAnnotations = {};
             try { var s = localStorage.getItem(storageKey); if (s) pageAnnotations = JSON.parse(s); } catch (e) {}
             document.getElementById('qp-canvas-wrap').innerHTML = '<canvas id="questionPaperCanvas"></canvas>';
@@ -1184,9 +1204,13 @@
             });
         });
         document.addEventListener('keydown', function(e) {
-            if (!canvas || e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+            if (!canvas) return;
             var active = canvas.getActiveObject();
-            if (active && active.isEditing) return;
+            if (active && active.isEditing) {
+                e.stopPropagation();
+                return;
+            }
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
             if (e.key === 'd' || e.key === 'D') setTool('draw');
             else if (e.key === 'h' || e.key === 'H') setTool('highlight');
             else if (e.key === 'e' || e.key === 'E') setTool('eraser');
