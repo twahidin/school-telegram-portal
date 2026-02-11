@@ -1729,6 +1729,118 @@ def view_student_submission_file(submission_id, file_index):
         logger.error(f"Error serving file: {e}")
         return 'File not found', 404
 
+
+@app.route('/student/submission/<submission_id>/save-annotations', methods=['POST'])
+@login_required
+def save_annotations(submission_id):
+    """Save student annotations for their submission. Expects JSON body: { "annotations": { "0": {...}, "1": {...} } }."""
+    submission = Submission.find_one({
+        'submission_id': submission_id,
+        'student_id': session['student_id']
+    })
+    if not submission:
+        return jsonify({'success': False, 'error': 'Not found'}), 404
+    data = request.get_json(silent=True) or {}
+    annotations = data.get('annotations', {})
+    Submission.collection.update_one(
+        {'submission_id': submission_id},
+        {'$set': {'student_annotations': annotations}}
+    )
+    return jsonify({'success': True})
+
+
+def _get_submission_pdf_bytes(submission):
+    """Get raw PDF bytes for the first file of a submission from GridFS. Returns None if not PDF or error."""
+    from gridfs import GridFS
+    from bson import ObjectId
+    file_ids = submission.get('file_ids', [])
+    if not file_ids or submission.get('file_type') != 'pdf':
+        return None
+    fs = GridFS(db.db)
+    try:
+        file_data = fs.get(ObjectId(file_ids[0]))
+        data = file_data.read()
+        if file_data.content_type == 'application/pdf' or (file_data.filename and file_data.filename.lower().endswith('.pdf')):
+            return data
+    except Exception as e:
+        logger.error(f"Error getting PDF from GridFS: {e}")
+    return None
+
+
+@app.route('/student/submission/<submission_id>/export-annotated', methods=['POST'])
+@login_required
+def export_annotated_pdf(submission_id):
+    """Merge annotated page images onto the submission PDF (or create PDF from images). Expects JSON: { "page_images": { "0": "data:image/png;base64,...", ... } }."""
+    submission = Submission.find_one({
+        'submission_id': submission_id,
+        'student_id': session['student_id']
+    })
+    if not submission:
+        return jsonify({'success': False, 'error': 'Not found'}), 404
+    page_images = (request.get_json(silent=True) or {}).get('page_images', {})
+    if not page_images:
+        return jsonify({'success': True})  # nothing to export
+    try:
+        import fitz
+    except ImportError:
+        logger.warning("pymupdf (fitz) not installed; cannot export annotated PDF")
+        return jsonify({'success': False, 'error': 'Export not available'}), 503
+    from gridfs import GridFS
+    from bson import ObjectId
+    fs = GridFS(db.db)
+    try:
+        pdf_bytes = _get_submission_pdf_bytes(submission)
+        page_count = submission.get('page_count') or len(submission.get('file_ids', []))
+        if pdf_bytes is not None:
+            doc = fitz.open(stream=pdf_bytes, filetype='pdf')
+            for page_num_str, data_url in page_images.items():
+                page_num = int(page_num_str)
+                if page_num < len(doc):
+                    page = doc[page_num]
+                    if ',' in data_url:
+                        img_b64 = data_url.split(',', 1)[1]
+                    else:
+                        img_b64 = data_url
+                    img_bytes = base64.b64decode(img_b64)
+                    rect = page.rect
+                    page.insert_image(rect, stream=img_bytes, overlay=True)
+            output = io.BytesIO()
+            doc.save(output)
+            doc.close()
+            output.seek(0)
+            new_file_id = fs.put(output.read(), filename=f'annotated_{submission_id}.pdf')
+        else:
+            doc = fitz.open()
+            for i in range(max(int(k) for k in page_images.keys()) + 1 if page_images else 0):
+                key = str(i)
+                if key not in page_images:
+                    continue
+                data_url = page_images[key]
+                if ',' in data_url:
+                    img_b64 = data_url.split(',', 1)[1]
+                else:
+                    img_b64 = data_url
+                img_bytes = base64.b64decode(img_b64)
+                img = fitz.open(stream=img_bytes, filetype='png')
+                r = img[0].rect
+                img.close()
+                page = doc.new_page(width=r.width, height=r.height)
+                page.insert_image(page.rect, stream=img_bytes)
+            output = io.BytesIO()
+            doc.save(output)
+            doc.close()
+            output.seek(0)
+            new_file_id = fs.put(output.read(), filename=f'annotated_{submission_id}.pdf')
+        Submission.collection.update_one(
+            {'submission_id': submission_id},
+            {'$set': {'annotated_file_id': str(new_file_id)}}
+        )
+        return jsonify({'success': True})
+    except Exception as e:
+        logger.error(f"Error exporting annotated PDF: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @app.route('/student/assignment/<assignment_id>/file/<file_type>')
 @login_required
 def download_student_assignment_file(assignment_id, file_type):
