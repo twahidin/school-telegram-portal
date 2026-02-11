@@ -460,59 +460,73 @@
     </div>
     {% endif %}
 
-    <!-- Annotation Editor Modal (fullscreen) -->
+    <!-- Annotation Editor Modal (fullscreen) - dark theme to match prototype -->
     {% if submission.file_ids %}
     <div class="modal fade" id="annotationModal" tabindex="-1" aria-labelledby="annotationModalLabel" aria-hidden="true" data-bs-backdrop="static">
         <div class="modal-dialog modal-fullscreen">
-            <div class="modal-content">
-                <div class="modal-header py-2 border-bottom">
-                    <h5 class="modal-title" id="annotationModalLabel"><i class="bi bi-pencil-fill me-2"></i>Annotate your submission</h5>
-                    <div class="d-flex align-items-center gap-2">
-                        <div class="btn-group btn-group-sm">
-                            <button type="button" class="btn btn-outline-secondary" id="annotator-prev-page" disabled><i class="bi bi-chevron-left"></i></button>
-                            <span class="btn btn-outline-secondary disabled" id="annotator-page-label">Page 1 / 1</span>
-                            <button type="button" class="btn btn-outline-secondary" id="annotator-next-page"><i class="bi bi-chevron-right"></i></button>
-                        </div>
-                        <button type="button" class="btn btn-outline-secondary btn-sm" id="annotator-undo" title="Undo (Ctrl+Z)"><i class="bi bi-arrow-counterclockwise"></i></button>
-                        <button type="button" class="btn btn-outline-secondary btn-sm" id="annotator-redo" title="Redo (Ctrl+Y)"><i class="bi bi-arrow-clockwise"></i></button>
-                        <button type="button" class="btn btn-outline-danger btn-sm" id="annotator-clear-page" title="Clear this page"><i class="bi bi-trash3 me-1"></i>Clear</button>
-                        <button type="button" class="btn btn-success btn-sm" id="annotator-save-close"><i class="bi bi-check-lg me-1"></i>Save & Close</button>
-                        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+            <div class="modal-content annotator-modal-theme">
+                <div class="annotator-top-bar">
+                    <div class="annotator-brand">
+                        <i class="bi bi-mortarboard-fill"></i>
+                        <span>Submission Annotator</span>
+                    </div>
+                    <div class="annotator-page-nav">
+                        <button type="button" class="annotator-page-btn" id="annotator-prev-page" disabled><i class="bi bi-chevron-left"></i></button>
+                        <span class="annotator-page-label" id="annotator-page-label">Page 1 / 1</span>
+                        <button type="button" class="annotator-page-btn" id="annotator-next-page"><i class="bi bi-chevron-right"></i></button>
+                    </div>
+                    <div class="annotator-top-actions">
+                        <button type="button" class="annotator-btn outline" id="annotator-undo" title="Undo (Ctrl+Z)"><i class="bi bi-arrow-counterclockwise"></i></button>
+                        <button type="button" class="annotator-btn outline" id="annotator-redo" title="Redo (Ctrl+Y)"><i class="bi bi-arrow-clockwise"></i></button>
+                        <button type="button" class="annotator-btn outline" id="annotator-clear-page" title="Clear this page"><i class="bi bi-trash3 me-1"></i>Clear</button>
+                        <button type="button" class="annotator-btn success" id="annotator-save-close"><i class="bi bi-check-lg me-1"></i>Save & Close</button>
+                        <button type="button" class="annotator-btn outline" data-bs-dismiss="modal">Cancel</button>
                     </div>
                 </div>
-                <div class="modal-body p-0 d-flex overflow-hidden" style="height: calc(100vh - 60px);">
-                    <div class="annotator-toolbar border-end bg-light d-flex flex-column align-items-center py-2" style="width: 56px;">
-                        <button type="button" class="tool-btn btn btn-outline-secondary active" data-tool="draw" title="Draw (D)"><i class="bi bi-pencil-fill"></i></button>
-                        <button type="button" class="tool-btn btn btn-outline-secondary" data-tool="highlight" title="Highlight (H)"><i class="bi bi-highlighter"></i></button>
-                        <button type="button" class="tool-btn btn btn-outline-secondary" data-tool="eraser" title="Eraser (E)"><i class="bi bi-eraser-fill"></i></button>
-                        <hr class="my-1 w-75">
-                        <button type="button" class="tool-btn btn btn-outline-secondary" data-tool="text" title="Text (T)"><i class="bi bi-fonts"></i></button>
-                        <button type="button" class="tool-btn btn btn-outline-secondary" data-tool="arrow" title="Arrow (A)"><i class="bi bi-arrow-up-right"></i></button>
-                        <button type="button" class="tool-btn btn btn-outline-secondary" data-tool="rect" title="Rectangle (R)"><i class="bi bi-square"></i></button>
-                        <button type="button" class="tool-btn btn btn-outline-secondary" data-tool="circle" title="Circle (C)"><i class="bi bi-circle"></i></button>
-                        <hr class="my-1 w-75">
-                        <button type="button" class="tool-btn btn btn-outline-secondary" data-tool="select" title="Select (V)"><i class="bi bi-cursor"></i></button>
+                <div class="annotator-body">
+                    <div class="annotator-toolbar" id="annotator-toolbar">
+                        <button type="button" class="annotator-tool-btn active" data-tool="draw" title="Freehand Draw (D)"><i class="bi bi-pencil-fill"></i></button>
+                        <button type="button" class="annotator-tool-btn" data-tool="highlight" title="Highlighter (H)"><i class="bi bi-highlighter"></i></button>
+                        <button type="button" class="annotator-tool-btn" data-tool="eraser" title="Eraser (E)"><i class="bi bi-eraser-fill"></i></button>
+                        <div class="annotator-tool-divider"></div>
+                        <button type="button" class="annotator-tool-btn" data-tool="text" title="Add Text (T)"><i class="bi bi-fonts"></i></button>
+                        <button type="button" class="annotator-tool-btn" data-tool="arrow" title="Arrow (A)"><i class="bi bi-arrow-up-right"></i></button>
+                        <button type="button" class="annotator-tool-btn" data-tool="rect" title="Rectangle (R)"><i class="bi bi-square"></i></button>
+                        <button type="button" class="annotator-tool-btn" data-tool="circle" title="Circle (C)"><i class="bi bi-circle"></i></button>
+                        <div class="annotator-tool-divider"></div>
+                        <button type="button" class="annotator-tool-btn" data-tool="select" title="Select / Move (V)"><i class="bi bi-cursor"></i></button>
                         <div class="dropdown mt-2">
-                            <button class="btn btn-outline-secondary btn-sm py-1 px-2" id="annotator-color-toggle" title="Color" data-bs-toggle="dropdown">
+                            <button class="annotator-tool-btn annotator-color-btn" id="annotator-color-toggle" title="Brush Options" data-bs-toggle="dropdown">
                                 <i class="bi bi-palette-fill"></i>
-                                <span class="d-inline-block rounded-circle border ms-1" id="annotator-color-dot" style="width:10px;height:10px;background:#0d6efd;"></span>
+                                <span class="annotator-color-dot" id="annotator-color-dot"></span>
                             </button>
-                            <div class="dropdown-menu dropdown-menu-end p-2" id="annotator-color-panel">
-                                <div class="color-grid-annotator d-flex flex-wrap gap-1" id="annotator-color-grid"></div>
-                                <div class="mt-2 small">Brush size</div>
-                                <input type="range" class="form-range" min="1" max="20" value="3" id="annotator-brush-size">
-                                <span class="small" id="annotator-brush-size-val">3</span>
-                                <div class="mt-2 small">Opacity</div>
-                                <input type="range" class="form-range" min="10" max="100" value="100" id="annotator-opacity">
-                                <span class="small" id="annotator-opacity-val">100%</span>
+                            <div class="dropdown-menu dropdown-menu-end annotator-options-panel p-3" id="annotator-color-panel">
+                                <h6 class="annotator-options-title">Color</h6>
+                                <div class="color-grid-annotator" id="annotator-color-grid"></div>
+                                <h6 class="annotator-options-title mt-2">Brush Size</h6>
+                                <div class="d-flex align-items-center gap-2 annotator-slider-row">
+                                    <label class="annotator-slider-label">Width</label>
+                                    <input type="range" class="form-range flex-grow-1" min="1" max="20" value="3" id="annotator-brush-size" style="accent-color: #6c8aff;">
+                                    <span class="annotator-val" id="annotator-brush-size-val">3</span>
+                                </div>
+                                <h6 class="annotator-options-title mt-2">Opacity</h6>
+                                <div class="d-flex align-items-center gap-2 annotator-slider-row">
+                                    <label class="annotator-slider-label">Alpha</label>
+                                    <input type="range" class="form-range flex-grow-1" min="10" max="100" value="100" id="annotator-opacity" style="accent-color: #6c8aff;">
+                                    <span class="annotator-val" id="annotator-opacity-val">100%</span>
+                                </div>
                             </div>
                         </div>
                     </div>
-                    <div class="annotator-canvas-area flex-grow-1 overflow-auto bg-dark bg-opacity-10 d-flex align-items-start justify-content-center p-3" id="annotator-canvas-area">
-                        <div class="canvas-wrap bg-white shadow" id="annotator-canvas-wrap">
+                    <div class="annotator-canvas-area" id="annotator-canvas-area">
+                        <div class="annotator-canvas-wrap" id="annotator-canvas-wrap">
                             <canvas id="annotationCanvas"></canvas>
                         </div>
                     </div>
+                </div>
+                <div class="annotator-shortcut-hint">
+                    <kbd>D</kbd> Draw &nbsp; <kbd>H</kbd> Highlight &nbsp; <kbd>E</kbd> Eraser &nbsp; <kbd>T</kbd> Text &nbsp; <kbd>V</kbd> Select<br>
+                    <kbd>Ctrl+Z</kbd> Undo &nbsp; <kbd>Ctrl+Y</kbd> Redo &nbsp; <kbd>Del</kbd> Delete selected
                 </div>
             </div>
         </div>
@@ -573,12 +587,222 @@
     font-weight: 500;
 }
 
-/* Annotation editor */
-.annotator-toolbar .tool-btn { width: 40px; height: 40px; padding: 0; }
-.annotator-toolbar .tool-btn.active { background: #0d6efd; color: #fff; border-color: #0d6efd; }
-.color-grid-annotator .color-swatch { width: 24px; height: 24px; border-radius: 4px; border: 2px solid transparent; cursor: pointer; }
-.color-grid-annotator .color-swatch.active { border-color: #212529; box-shadow: 0 0 0 1px #fff; }
-#annotator-canvas-area.drawing { touch-action: none; }
+/* Annotation editor — dark theme to match prototype */
+#annotationModal .modal-content.annotator-modal-theme {
+  background: #0f1117;
+  border: none;
+  position: relative;
+}
+#annotationModal .annotator-top-bar {
+  background: #1a1c25;
+  border-bottom: 1px solid #2e3140;
+  padding: 12px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+#annotationModal .annotator-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 700;
+  font-size: 1.05rem;
+  color: #6c8aff;
+}
+#annotationModal .annotator-brand i { font-size: 1.3rem; }
+#annotationModal .annotator-page-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+#annotationModal .annotator-page-btn {
+  background: #242732;
+  border: 1px solid #2e3140;
+  color: #e4e6ed;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+#annotationModal .annotator-page-btn:hover:not(:disabled) {
+  background: #6c8aff;
+  color: #fff;
+  border-color: #6c8aff;
+}
+#annotationModal .annotator-page-btn:disabled { opacity: 0.35; cursor: default; }
+#annotationModal .annotator-page-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.8rem;
+  color: #8b8fa3;
+  min-width: 75px;
+  text-align: center;
+}
+#annotationModal .annotator-top-actions { display: flex; gap: 8px; }
+#annotationModal .annotator-btn {
+  border: none;
+  padding: 8px 18px;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 0.85rem;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+#annotationModal .annotator-btn.outline {
+  background: transparent;
+  border: 1px solid #2e3140;
+  color: #8b8fa3;
+}
+#annotationModal .annotator-btn.outline:hover { border-color: #6c8aff; color: #6c8aff; }
+#annotationModal .annotator-btn.success {
+  background: #4ade80;
+  color: #000;
+}
+#annotationModal .annotator-btn.success:hover { background: #22c55e; }
+#annotationModal .annotator-body {
+  display: flex;
+  height: calc(100vh - 60px);
+  overflow: hidden;
+}
+#annotationModal .annotator-toolbar {
+  width: 60px;
+  background: #1e2030;
+  border-right: 1px solid #2e3140;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 14px 0;
+  gap: 4px;
+  overflow-y: auto;
+}
+#annotationModal .annotator-tool-btn {
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  border: none;
+  background: transparent;
+  color: #8b8fa3;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.15rem;
+  transition: all 0.15s;
+  position: relative;
+}
+#annotationModal .annotator-tool-btn:hover { background: #242732; color: #e4e6ed; }
+#annotationModal .annotator-tool-btn.active {
+  background: #6c8aff;
+  color: #fff;
+  box-shadow: 0 0 12px rgba(108, 138, 255, 0.35);
+}
+#annotationModal .annotator-color-dot {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #6c8aff;
+}
+#annotationModal .annotator-tool-divider {
+  width: 28px;
+  height: 1px;
+  background: #2e3140;
+  margin: 6px 0;
+}
+#annotationModal .annotator-options-panel {
+  --annotator-accent: #6c8aff;
+  background: #1a1c25;
+  border: 1px solid #2e3140;
+  border-radius: 12px;
+  min-width: 200px;
+}
+#annotationModal .annotator-options-title {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #8b8fa3;
+  margin-bottom: 8px;
+}
+#annotationModal .annotator-val {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  color: #e4e6ed;
+  min-width: 30px;
+  text-align: right;
+}
+#annotationModal .annotator-slider-row { align-items: center; margin-bottom: 6px; }
+#annotationModal .annotator-slider-label {
+  font-size: 0.78rem;
+  color: #8b8fa3;
+  min-width: 50px;
+}
+#annotationModal .annotator-canvas-area {
+  flex: 1;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  overflow: auto;
+  padding: 24px;
+  background: radial-gradient(circle at 20% 30%, rgba(108, 138, 255, 0.03) 0%, transparent 50%), #0f1117;
+}
+#annotationModal .annotator-canvas-area.drawing { touch-action: none; }
+#annotationModal .annotator-canvas-wrap {
+  box-shadow: 0 4px 40px rgba(0, 0, 0, 0.5);
+  border-radius: 4px;
+  overflow: hidden;
+  background: #fff;
+}
+#annotationModal .annotator-canvas-wrap canvas { display: block; }
+#annotationModal .annotator-shortcut-hint {
+  position: absolute;
+  bottom: 24px;
+  left: 24px;
+  background: #1a1c25;
+  border: 1px solid #2e3140;
+  border-radius: 12px;
+  padding: 14px 18px;
+  font-size: 0.75rem;
+  color: #8b8fa3;
+  z-index: 50;
+  line-height: 1.8;
+}
+#annotationModal .annotator-shortcut-hint kbd {
+  background: #242732;
+  border: 1px solid #2e3140;
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  color: #e4e6ed;
+}
+#annotationModal .color-grid-annotator {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 6px;
+}
+#annotationModal .color-grid-annotator .color-swatch {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: transform 0.12s;
+}
+#annotationModal .color-grid-annotator .color-swatch:hover { transform: scale(1.1); }
+#annotationModal .color-grid-annotator .color-swatch.active {
+  border-color: #fff;
+  box-shadow: 0 0 8px rgba(255, 255, 255, 0.3);
+}
+@media (max-width: 768px) {
+  #annotationModal .annotator-shortcut-hint { display: none; }
+}
 </style>
 {% endblock %}
 
@@ -802,7 +1026,7 @@
     var fileType = "{{ submission.file_type }}";
     var savedAnnotations = {{ submission.get('student_annotations', {}) | tojson }};
 
-    var COLORS = ['#0d6efd','#dc3545','#198754','#ffc107','#6f42c1','#fd7e14','#20c997','#e83e8c','#fff','#adb5bd','#495057','#212529'];
+    var COLORS = ['#6c8aff','#f87171','#4ade80','#fbbf24','#c084fc','#fb923c','#22d3ee','#f472b6','#ffffff','#a3a3a3','#525252','#000000'];
     var currentPage = 0, currentTool = 'draw', currentColor = COLORS[0], brushSize = 3, brushOpacity = 1;
     var canvas, pageAnnotations = {}, undoStack = [], redoStack = [], isDrawingShape = false, shapeStart = null, tempShape = null;
 
@@ -826,7 +1050,7 @@
 
     function setTool(tool) {
         currentTool = tool;
-        document.querySelectorAll('.tool-btn[data-tool]').forEach(function(b) {
+        document.querySelectorAll('.annotator-tool-btn[data-tool]').forEach(function(b) {
             b.classList.toggle('active', b.getAttribute('data-tool') === tool);
         });
         canvas.isDrawingMode = false;
@@ -872,8 +1096,12 @@
                     o.evented = true;
                     o.hasControls = true;
                     o.hasBorders = true;
-                    o.borderColor = '#0d6efd';
-                    o.cornerColor = '#0d6efd';
+                    o.borderColor = '#6c8aff';
+                    o.cornerColor = '#6c8aff';
+                    o.cornerStyle = 'circle';
+                    o.cornerSize = 8;
+                    o.transparentCorners = false;
+                    o.padding = 4;
                 }
             });
         } else if (['arrow','rect','circle'].indexOf(tool) !== -1) {
@@ -904,9 +1132,22 @@
         canvas.off('mouse:down', onTextClick);
         var pointer = canvas.getPointer(opt.e);
         var text = new fabric.IText('Type here...', {
-            left: pointer.x, top: pointer.y, fontSize: 16, fill: currentColor,
-            selectable: true, evented: true, hasControls: true, hasBorders: true,
-            borderColor: '#0d6efd', cornerColor: '#0d6efd', cornerStyle: 'circle', cornerSize: 8
+            left: pointer.x,
+            top: pointer.y,
+            fontSize: 16,
+            fontFamily: 'DM Sans, sans-serif',
+            fill: currentColor,
+            editable: true,
+            selectable: true,
+            evented: true,
+            hasControls: true,
+            hasBorders: true,
+            borderColor: '#6c8aff',
+            cornerColor: '#6c8aff',
+            cornerStyle: 'circle',
+            cornerSize: 8,
+            transparentCorners: false,
+            padding: 6
         });
         canvas.add(text);
         canvas.setActiveObject(text);
@@ -973,12 +1214,14 @@
         redoStack.push(undoStack.pop());
         var state = undoStack[undoStack.length - 1];
         canvas.loadFromJSON(state, function() { canvas.renderAll(); setTool(currentTool); });
+        showAnnotatorToast('Undo', 'info');
     }
     function redoAction() {
         if (redoStack.length === 0) return;
         var state = redoStack.pop();
         undoStack.push(state);
         canvas.loadFromJSON(state, function() { canvas.renderAll(); setTool(currentTool); });
+        showAnnotatorToast('Redo', 'info');
     }
     function clearPage() {
         if (!confirm('Clear all annotations on this page?')) return;
@@ -987,6 +1230,7 @@
         canvas.setBackgroundImage(bg, canvas.renderAll.bind(canvas));
         canvas.renderAll();
         pushUndo();
+        showAnnotatorToast('Page cleared', 'info');
     }
 
     function updatePageLabel() {
@@ -1052,7 +1296,7 @@
                 var el = document.createElement('div');
                 el.className = 'color-swatch' + (c === currentColor ? ' active' : '');
                 el.style.background = c;
-                if (c === '#fff' || c === '#ffffff') el.style.border = '1px solid #dee2e6';
+                if (c === '#ffffff' || c === '#fff') el.style.border = '2px solid #555';
                 el.onclick = function() {
                     currentColor = c;
                     document.querySelectorAll('#annotator-color-grid .color-swatch').forEach(function(s) { s.classList.remove('active'); });
@@ -1087,7 +1331,7 @@
         });
     });
 
-    document.querySelectorAll('.tool-btn[data-tool]').forEach(function(btn) {
+    document.querySelectorAll('.annotator-tool-btn[data-tool]').forEach(function(btn) {
         btn.addEventListener('click', function() { setTool(this.getAttribute('data-tool')); });
     });
     document.getElementById('annotator-prev-page').addEventListener('click', function() { changePage(-1); });
@@ -1171,6 +1415,7 @@
                 } else canvas.remove(active);
                 canvas.renderAll();
                 pushUndo();
+                showAnnotatorToast('Deleted', 'info');
             }
         }
     });
