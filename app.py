@@ -1742,7 +1742,7 @@ def save_annotations(submission_id):
         return jsonify({'success': False, 'error': 'Not found'}), 404
     data = request.get_json(silent=True) or {}
     annotations = data.get('annotations', {})
-    Submission.collection.update_one(
+    Submission.update_one(
         {'submission_id': submission_id},
         {'$set': {'student_annotations': annotations}}
     )
@@ -1862,7 +1862,7 @@ def export_annotated_pdf(submission_id):
             doc.close()
             output.seek(0)
             new_file_id = fs.put(output.read(), filename=f'annotated_{submission_id}.pdf')
-        Submission.collection.update_one(
+        Submission.update_one(
             {'submission_id': submission_id},
             {'$set': {'annotated_file_id': str(new_file_id)}}
         )
@@ -6226,7 +6226,7 @@ def save_annotated_answer_key(submission_id):
         doc.close()
         output.seek(0)
         new_file_id = fs.put(output.read(), filename=f'annotated_answer_key_{submission_id}.pdf')
-        Submission.collection.update_one(
+        Submission.update_one(
             {'submission_id': submission_id},
             {'$set': {'teacher_annotated_answer_key_id': str(new_file_id)}}
         )
