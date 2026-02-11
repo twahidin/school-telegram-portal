@@ -404,7 +404,7 @@
     
     <!-- Question paper PDF editor modal (fullscreen, dark theme) -->
     {% if assignment.question_paper_id or assignment.get('drive_file_refs', {}).get('question_paper_drive_id') %}
-    <div class="modal fade" id="questionPaperAnnotatorModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static">
+    <div class="modal fade" id="questionPaperAnnotatorModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static" data-bs-focus="false" data-bs-keyboard="false">
         <div class="modal-dialog modal-fullscreen">
             <div class="modal-content annotator-modal-theme">
                 <div class="annotator-top-bar">
@@ -972,11 +972,19 @@
             });
             document.getElementById('qp-canvas-area').classList.toggle('drawing', ['draw','highlight','eraser'].indexOf(tool) !== -1);
         }
+        function focusHiddenTextarea() {
+            // Fabric.js IText uses a hidden textarea for keyboard input;
+            // ensure it gets focus (Bootstrap modal focus trap can steal it)
+            if (canvas && canvas.getActiveObject() && canvas.getActiveObject().hiddenTextarea) {
+                canvas.getActiveObject().hiddenTextarea.focus();
+            }
+        }
         function onTextClick(opt) {
             if (currentTool !== 'text') return;
             if (opt.target && opt.target.type === 'i-text' && (!opt.target.data || !opt.target.data.isBackground)) {
                 canvas.setActiveObject(opt.target);
                 opt.target.enterEditing();
+                setTimeout(focusHiddenTextarea, 50);
                 return;
             }
             canvas.off('mouse:down', onTextClick);
@@ -986,6 +994,7 @@
             canvas.setActiveObject(text);
             text.enterEditing();
             text.selectAll();
+            setTimeout(focusHiddenTextarea, 50);
             text.on('editing:exited', function() {
                 if (!text.text || text.text.trim() === '') canvas.remove(text);
                 canvas.renderAll();
