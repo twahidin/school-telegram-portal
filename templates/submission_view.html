@@ -424,9 +424,15 @@
                 {% if submission.get('feedback_sent', False) %}
                 <div class="card-footer">
                     <a href="{{ url_for('download_student_feedback_pdf', submission_id=submission.submission_id) }}" 
-                       class="btn btn-primary w-100">
+                       class="btn btn-primary w-100 mb-2">
                         <i class="bi bi-download me-1"></i>Download Feedback PDF
                     </a>
+                    {% if submission.get('teacher_annotated_answer_key_id') %}
+                    <a href="{{ url_for('download_annotated_answer_key', submission_id=submission.submission_id) }}" 
+                       class="btn btn-outline-primary w-100" download>
+                        <i class="bi bi-key me-1"></i>Download annotated answer key
+                    </a>
+                    {% endif %}
                 </div>
                 {% endif %}
             </div>

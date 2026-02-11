@@ -1749,6 +1749,37 @@ def save_annotations(submission_id):
     return jsonify({'success': True})
 
 
+def _get_assignment_file_bytes(assignment, file_type):
+    """Get raw bytes for an assignment file (question_paper or answer_key) from GridFS or Drive. Returns None on error."""
+    file_id_field = f"{file_type}_id"
+    drive_ref_field = f"{file_type}_drive_id"
+    drive_file_refs = assignment.get('drive_file_refs', {})
+    drive_file_id = drive_file_refs.get(drive_ref_field)
+    if drive_file_id:
+        try:
+            from utils.google_drive import get_drive_service, DriveManager
+            service = get_drive_service()
+            if service:
+                manager = DriveManager(service)
+                return manager.get_file_content(drive_file_id, export_as_pdf=True)
+        except Exception as e:
+            logger.error(f"Error fetching assignment file from Drive: {e}")
+        return None
+    if file_id_field not in assignment or not assignment[file_id_field]:
+        return None
+    from gridfs import GridFS
+    from bson import ObjectId
+    fs = GridFS(db.db)
+    try:
+        file_id = assignment[file_id_field]
+        if isinstance(file_id, str):
+            file_id = ObjectId(file_id)
+        return fs.get(file_id).read()
+    except Exception as e:
+        logger.error(f"Error getting assignment file from GridFS: {e}")
+        return None
+
+
 def _get_submission_pdf_bytes(submission):
     """Get raw PDF bytes for the first file of a submission from GridFS. Returns None if not PDF or error."""
     from gridfs import GridFS
@@ -1921,6 +1952,116 @@ def download_student_assignment_file(assignment_id, file_type):
     except Exception as e:
         logger.error(f"Error downloading file {assignment.get(file_id_field)}: {e}")
         return 'File not found', 404
+
+
+@app.route('/student/assignment/<assignment_id>/question-paper-page/<int:page_num>')
+@login_required
+def student_question_paper_page_image(assignment_id, page_num):
+    """Return a single question paper page as PNG for the annotator. Headers: X-PDF-Page-Count."""
+    assignment = Assignment.find_one({'assignment_id': assignment_id})
+    if not assignment:
+        return 'Assignment not found', 404
+    student = Student.find_one({'student_id': session['student_id']})
+    teacher_ids = get_student_teacher_ids(session['student_id'])
+    if assignment['teacher_id'] not in teacher_ids or not can_student_access_assignment(student, assignment):
+        return 'Unauthorized', 403
+    data = _get_assignment_file_bytes(assignment, 'question_paper')
+    if not data:
+        return 'File not found', 404
+    try:
+        from pdf2image import convert_from_bytes
+        images = convert_from_bytes(
+            data,
+            first_page=page_num + 1,
+            last_page=page_num + 1,
+            dpi=200
+        )
+        img_buffer = io.BytesIO()
+        images[0].save(img_buffer, format='PNG')
+        png_bytes = img_buffer.getvalue()
+        pdf_reader = PyPDF2.PdfReader(io.BytesIO(data))
+        page_count = len(pdf_reader.pages)
+        return Response(
+            png_bytes,
+            mimetype='image/png',
+            headers={'Content-Disposition': 'inline', 'X-PDF-Page-Count': str(page_count)}
+        )
+    except Exception as e:
+        logger.error(f"Error rendering question paper page: {e}")
+        return 'Error', 500
+
+
+@app.route('/student/assignment/<assignment_id>/export-annotated-question-paper', methods=['POST'])
+@login_required
+def export_annotated_question_paper(assignment_id):
+    """Merge annotated page images onto question paper PDF; return PDF for download. JSON: { page_images: { "0": "data:image/png;base64,..." } }."""
+    assignment = Assignment.find_one({'assignment_id': assignment_id})
+    if not assignment:
+        return jsonify({'success': False, 'error': 'Not found'}), 404
+    student = Student.find_one({'student_id': session['student_id']})
+    teacher_ids = get_student_teacher_ids(session['student_id'])
+    if assignment['teacher_id'] not in teacher_ids or not can_student_access_assignment(student, assignment):
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+    page_images = (request.get_json(silent=True) or {}).get('page_images', {})
+    if not page_images:
+        return jsonify({'success': False, 'error': 'No page images'}), 400
+    try:
+        import fitz
+    except ImportError:
+        return jsonify({'success': False, 'error': 'Export not available'}), 503
+    data = _get_assignment_file_bytes(assignment, 'question_paper')
+    if not data:
+        return jsonify({'success': False, 'error': 'Question paper not found'}), 404
+    try:
+        doc = fitz.open(stream=data, filetype='pdf')
+        for page_num_str, data_url in page_images.items():
+            page_num = int(page_num_str)
+            if page_num < len(doc):
+                page = doc[page_num]
+                img_b64 = data_url.split(',', 1)[1] if ',' in data_url else data_url
+                img_bytes = base64.b64decode(img_b64)
+                page.insert_image(page.rect, stream=img_bytes, overlay=True)
+        output = io.BytesIO()
+        doc.save(output)
+        doc.close()
+        output.seek(0)
+        return Response(
+            output.read(),
+            mimetype='application/pdf',
+            headers={'Content-Disposition': f'attachment; filename="question_paper_with_answers_{assignment_id}.pdf"'}
+        )
+    except Exception as e:
+        logger.error(f"Error exporting annotated question paper: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/student/submission/<submission_id>/annotated-answer-key')
+@login_required
+def download_annotated_answer_key(submission_id):
+    """Download teacher-annotated answer key PDF for this submission (if teacher created one)."""
+    submission = Submission.find_one({
+        'submission_id': submission_id,
+        'student_id': session['student_id']
+    })
+    if not submission:
+        return 'Not found', 404
+    file_id = submission.get('teacher_annotated_answer_key_id')
+    if not file_id:
+        return 'Not found', 404
+    from gridfs import GridFS
+    from bson import ObjectId
+    fs = GridFS(db.db)
+    try:
+        file_data = fs.get(ObjectId(file_id))
+        return Response(
+            file_data.read(),
+            mimetype='application/pdf',
+            headers={'Content-Disposition': 'inline; filename="annotated_answer_key.pdf"'}
+        )
+    except Exception as e:
+        logger.error(f"Error serving annotated answer key: {e}")
+        return 'File not found', 404
+
 
 @app.route('/student/feedback/<submission_id>/pdf')
 @login_required
@@ -6010,6 +6151,88 @@ def regenerate_ai_feedback(submission_id):
         
     except Exception as e:
         logger.error(f"Error regenerating AI feedback: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/teacher/review/<submission_id>/answer-key-page/<int:page_num>')
+@teacher_required
+def teacher_answer_key_page_image(submission_id, page_num):
+    """Return a single answer key page as PNG for the annotator. Headers: X-PDF-Page-Count."""
+    submission = Submission.find_one({'submission_id': submission_id})
+    if not submission:
+        return 'Not found', 404
+    assignment = Assignment.find_one({'assignment_id': submission['assignment_id']})
+    if not assignment or assignment.get('teacher_id') != session['teacher_id']:
+        return 'Unauthorized', 403
+    data = _get_assignment_file_bytes(assignment, 'answer_key')
+    if not data:
+        return 'Answer key not found', 404
+    try:
+        from pdf2image import convert_from_bytes
+        images = convert_from_bytes(
+            data,
+            first_page=page_num + 1,
+            last_page=page_num + 1,
+            dpi=200
+        )
+        img_buffer = io.BytesIO()
+        images[0].save(img_buffer, format='PNG')
+        png_bytes = img_buffer.getvalue()
+        pdf_reader = PyPDF2.PdfReader(io.BytesIO(data))
+        page_count = len(pdf_reader.pages)
+        return Response(
+            png_bytes,
+            mimetype='image/png',
+            headers={'Content-Disposition': 'inline', 'X-PDF-Page-Count': str(page_count)}
+        )
+    except Exception as e:
+        logger.error(f"Error rendering answer key page: {e}")
+        return 'Error', 500
+
+
+@app.route('/teacher/review/<submission_id>/save-annotated-answer-key', methods=['POST'])
+@teacher_required
+def save_annotated_answer_key(submission_id):
+    """Merge teacher's annotated page images onto the answer key PDF; store on submission for student. JSON: { page_images: { "0": "data:image/png;base64,..." } }."""
+    submission = Submission.find_one({'submission_id': submission_id})
+    if not submission:
+        return jsonify({'success': False, 'error': 'Not found'}), 404
+    assignment = Assignment.find_one({'assignment_id': submission['assignment_id']})
+    if not assignment or assignment.get('teacher_id') != session['teacher_id']:
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+    page_images = (request.get_json(silent=True) or {}).get('page_images', {})
+    if not page_images:
+        return jsonify({'success': False, 'error': 'No page images'}), 400
+    try:
+        import fitz
+    except ImportError:
+        return jsonify({'success': False, 'error': 'Export not available'}), 503
+    data = _get_assignment_file_bytes(assignment, 'answer_key')
+    if not data:
+        return jsonify({'success': False, 'error': 'Answer key not found'}), 404
+    from gridfs import GridFS
+    fs = GridFS(db.db)
+    try:
+        doc = fitz.open(stream=data, filetype='pdf')
+        for page_num_str, data_url in page_images.items():
+            page_num = int(page_num_str)
+            if page_num < len(doc):
+                page = doc[page_num]
+                img_b64 = data_url.split(',', 1)[1] if ',' in data_url else data_url
+                img_bytes = base64.b64decode(img_b64)
+                page.insert_image(page.rect, stream=img_bytes, overlay=True)
+        output = io.BytesIO()
+        doc.save(output)
+        doc.close()
+        output.seek(0)
+        new_file_id = fs.put(output.read(), filename=f'annotated_answer_key_{submission_id}.pdf')
+        Submission.collection.update_one(
+            {'submission_id': submission_id},
+            {'$set': {'teacher_annotated_answer_key_id': str(new_file_id)}}
+        )
+        return jsonify({'success': True})
+    except Exception as e:
+        logger.error(f"Error saving annotated answer key: {e}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500
 
 

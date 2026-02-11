@@ -43,6 +43,9 @@
                     <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#answerKeyModal" title="View answer key">
                         <i class="bi bi-key me-1"></i>Answer key
                     </button>
+                    <button type="button" class="btn btn-outline-primary btn-sm" id="btn-annotate-answer-key" title="Annotate answer key for this student">
+                        <i class="bi bi-pencil-fill me-1"></i>Annotate answer key
+                    </button>
                     {% endif %}
                     <div class="form-check me-2">
                         <input class="form-check-input" type="checkbox" id="include-answer-key" 
@@ -381,6 +384,60 @@
     </div>
 </div>
 
+<!-- Annotate answer key fullscreen modal (Fabric.js) -->
+{% if assignment.answer_key_id or assignment.get('drive_file_refs', {}).get('answer_key_drive_id') %}
+<div class="modal fade" id="annotateAnswerKeyModal" tabindex="-1" data-bs-backdrop="static">
+    <div class="modal-dialog modal-fullscreen">
+        <div class="modal-content annotator-modal-theme">
+            <div class="annotator-top-bar">
+                <div class="annotator-brand"><i class="bi bi-key me-2"></i>Annotate answer key</div>
+                <div class="annotator-page-nav">
+                    <button type="button" class="annotator-page-btn" id="ak-prev-page" disabled><i class="bi bi-chevron-left"></i></button>
+                    <span class="annotator-page-label" id="ak-page-label">Page 1 / 1</span>
+                    <button type="button" class="annotator-page-btn" id="ak-next-page"><i class="bi bi-chevron-right"></i></button>
+                </div>
+                <div class="annotator-top-actions">
+                    <button type="button" class="annotator-btn outline" id="ak-undo"><i class="bi bi-arrow-counterclockwise"></i></button>
+                    <button type="button" class="annotator-btn outline" id="ak-redo"><i class="bi bi-arrow-clockwise"></i></button>
+                    <button type="button" class="annotator-btn outline" id="ak-clear-page"><i class="bi bi-trash3 me-1"></i>Clear</button>
+                    <button type="button" class="annotator-btn success" id="ak-save-close"><i class="bi bi-check-lg me-1"></i>Save & Close</button>
+                    <button type="button" class="annotator-btn outline" data-bs-dismiss="modal">Cancel</button>
+                </div>
+            </div>
+            <div class="annotator-body">
+                <div class="annotator-toolbar">
+                    <button type="button" class="annotator-tool-btn active" data-tool="draw"><i class="bi bi-pencil-fill"></i></button>
+                    <button type="button" class="annotator-tool-btn" data-tool="highlight"><i class="bi bi-highlighter"></i></button>
+                    <button type="button" class="annotator-tool-btn" data-tool="eraser"><i class="bi bi-eraser-fill"></i></button>
+                    <div class="annotator-tool-divider"></div>
+                    <button type="button" class="annotator-tool-btn" data-tool="text"><i class="bi bi-fonts"></i></button>
+                    <button type="button" class="annotator-tool-btn" data-tool="arrow"><i class="bi bi-arrow-up-right"></i></button>
+                    <button type="button" class="annotator-tool-btn" data-tool="rect"><i class="bi bi-square"></i></button>
+                    <button type="button" class="annotator-tool-btn" data-tool="circle"><i class="bi bi-circle"></i></button>
+                    <div class="annotator-tool-divider"></div>
+                    <button type="button" class="annotator-tool-btn" data-tool="select"><i class="bi bi-cursor"></i></button>
+                    <div class="dropdown mt-2">
+                        <button class="annotator-tool-btn annotator-color-btn" id="ak-color-toggle" data-bs-toggle="dropdown"><i class="bi bi-palette-fill"></i><span class="annotator-color-dot" id="ak-color-dot"></span></button>
+                        <div class="dropdown-menu dropdown-menu-end annotator-options-panel p-3">
+                            <h6 class="annotator-options-title">Color</h6>
+                            <div class="color-grid-annotator" id="ak-color-grid"></div>
+                            <h6 class="annotator-options-title mt-2">Brush</h6>
+                            <div class="d-flex align-items-center gap-2"><label class="annotator-slider-label">Width</label><input type="range" class="form-range" min="1" max="20" value="3" id="ak-brush-size" style="accent-color:#6c8aff"><span class="annotator-val" id="ak-brush-size-val">3</span></div>
+                            <h6 class="annotator-options-title mt-2">Opacity</h6>
+                            <div class="d-flex align-items-center gap-2"><label class="annotator-slider-label">Alpha</label><input type="range" class="form-range" min="10" max="100" value="100" id="ak-opacity" style="accent-color:#6c8aff"><span class="annotator-val" id="ak-opacity-val">100%</span></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="annotator-canvas-area" id="ak-canvas-area">
+                    <div class="annotator-canvas-wrap" id="ak-canvas-wrap"><canvas id="answerKeyCanvas"></canvas></div>
+                </div>
+            </div>
+            <div class="annotator-shortcut-hint"><kbd>D</kbd> Draw <kbd>H</kbd> Highlight <kbd>E</kbd> Eraser <kbd>T</kbd> Text <kbd>V</kbd> Select · <kbd>Ctrl+Z</kbd> Undo <kbd>Del</kbd> Delete</div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
 <!-- Remark (choose model) Modal -->
 <div class="modal fade" id="remarkModal" tabindex="-1" aria-labelledby="remarkModalLabel" aria-hidden="true">
     <div class="modal-dialog">
@@ -676,10 +733,46 @@
     user-select: none;
     -webkit-user-select: none;
 }
+
+/* Annotate answer key modal - dark theme */
+#annotateAnswerKeyModal .modal-content.annotator-modal-theme { background: #0f1117; border: none; position: relative; }
+#annotateAnswerKeyModal .annotator-top-bar { background: #1a1c25; border-bottom: 1px solid #2e3140; padding: 12px 24px; display: flex; align-items: center; justify-content: space-between; }
+#annotateAnswerKeyModal .annotator-brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 1.05rem; color: #6c8aff; }
+#annotateAnswerKeyModal .annotator-page-nav { display: flex; align-items: center; gap: 8px; }
+#annotateAnswerKeyModal .annotator-page-btn { background: #242732; border: 1px solid #2e3140; color: #e4e6ed; width: 34px; height: 34px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; font-size: 0.85rem; }
+#annotateAnswerKeyModal .annotator-page-btn:hover:not(:disabled) { background: #6c8aff; color: #fff; border-color: #6c8aff; }
+#annotateAnswerKeyModal .annotator-page-btn:disabled { opacity: 0.35; cursor: default; }
+#annotateAnswerKeyModal .annotator-page-label { font-family: monospace; font-size: 0.8rem; color: #8b8fa3; min-width: 75px; text-align: center; }
+#annotateAnswerKeyModal .annotator-top-actions { display: flex; gap: 8px; }
+#annotateAnswerKeyModal .annotator-btn { border: none; padding: 8px 18px; border-radius: 8px; font-weight: 600; font-size: 0.85rem; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+#annotateAnswerKeyModal .annotator-btn.outline { background: transparent; border: 1px solid #2e3140; color: #8b8fa3; }
+#annotateAnswerKeyModal .annotator-btn.outline:hover { border-color: #6c8aff; color: #6c8aff; }
+#annotateAnswerKeyModal .annotator-btn.success { background: #4ade80; color: #000; }
+#annotateAnswerKeyModal .annotator-body { display: flex; height: calc(100vh - 60px); overflow: hidden; }
+#annotateAnswerKeyModal .annotator-toolbar { width: 60px; background: #1e2030; border-right: 1px solid #2e3140; display: flex; flex-direction: column; align-items: center; padding: 14px 0; gap: 4px; }
+#annotateAnswerKeyModal .annotator-tool-btn { width: 42px; height: 42px; border-radius: 10px; border: none; background: transparent; color: #8b8fa3; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 1.15rem; position: relative; }
+#annotateAnswerKeyModal .annotator-tool-btn:hover { background: #242732; color: #e4e6ed; }
+#annotateAnswerKeyModal .annotator-tool-btn.active { background: #6c8aff; color: #fff; box-shadow: 0 0 12px rgba(108,138,255,0.35); }
+#annotateAnswerKeyModal .annotator-color-dot { position: absolute; top: 6px; right: 6px; width: 8px; height: 8px; border-radius: 50%; background: #6c8aff; }
+#annotateAnswerKeyModal .annotator-tool-divider { width: 28px; height: 1px; background: #2e3140; margin: 6px 0; }
+#annotateAnswerKeyModal .annotator-options-panel { background: #1a1c25; border: 1px solid #2e3140; border-radius: 12px; min-width: 200px; }
+#annotateAnswerKeyModal .annotator-options-title { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 1px; color: #8b8fa3; margin-bottom: 8px; }
+#annotateAnswerKeyModal .annotator-val { font-size: 0.75rem; color: #e4e6ed; }
+#annotateAnswerKeyModal .annotator-slider-label { font-size: 0.78rem; color: #8b8fa3; min-width: 50px; }
+#annotateAnswerKeyModal .annotator-canvas-area { flex: 1; display: flex; align-items: flex-start; justify-content: center; overflow: auto; padding: 24px; background: #0f1117; }
+#annotateAnswerKeyModal .annotator-canvas-wrap { box-shadow: 0 4px 40px rgba(0,0,0,0.5); border-radius: 4px; overflow: hidden; background: #fff; }
+#annotateAnswerKeyModal .annotator-shortcut-hint { position: absolute; bottom: 24px; left: 24px; background: #1a1c25; border: 1px solid #2e3140; border-radius: 12px; padding: 14px 18px; font-size: 0.75rem; color: #8b8fa3; z-index: 50; line-height: 1.8; }
+#annotateAnswerKeyModal .annotator-shortcut-hint kbd { background: #242732; border: 1px solid #2e3140; border-radius: 4px; padding: 1px 6px; font-size: 0.7rem; color: #e4e6ed; }
+#annotateAnswerKeyModal .color-grid-annotator { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; }
+#annotateAnswerKeyModal .color-grid-annotator .color-swatch { width: 28px; height: 28px; border-radius: 6px; border: 2px solid transparent; cursor: pointer; }
+#annotateAnswerKeyModal .color-grid-annotator .color-swatch.active { border-color: #fff; box-shadow: 0 0 8px rgba(255,255,255,0.3); }
 </style>
 {% endblock %}
 
 {% block scripts %}
+{% if assignment.answer_key_id or assignment.get('drive_file_refs', {}).get('answer_key_drive_id') %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js"></script>
+{% endif %}
 <script>
     const submissionId = "{{ submission.submission_id }}";
     const pageCount = {{ page_count }};
@@ -1645,5 +1738,237 @@
             btn.innerHTML = originalHtml;
         }
     }
+
+    // === ANNOTATE ANSWER KEY (Fabric.js) ===
+    (function() {
+        const openBtn = document.getElementById('btn-annotate-answer-key');
+        if (!openBtn || typeof fabric === 'undefined') return;
+        const COLORS = ['#6c8aff','#f87171','#4ade80','#fbbf24','#c084fc','#fb923c','#22d3ee','#f472b6','#ffffff','#a3a3a3','#525252','#000000'];
+        let totalPages = 1, currentPage = 0, currentTool = 'draw', currentColor = COLORS[0], brushSize = 3, brushOpacity = 1;
+        let canvas, pageAnnotations = {}, undoStack = [], redoStack = [], isDrawingShape = false, shapeStart = null, tempShape = null;
+        function getPageUrl(n) { return `/teacher/review/${submissionId}/answer-key-page/${n}`; }
+        function loadPageBackground(pageNum, done) {
+            fabric.Image.fromURL(getPageUrl(pageNum), function(img) {
+                if (!canvas) return;
+                const w = img.getScaledWidth(), h = img.getScaledHeight();
+                canvas.setDimensions({ width: w, height: h });
+                canvas.setBackgroundImage(img, canvas.renderAll.bind(canvas), { scaleX: 1, scaleY: 1 });
+                canvas.renderAll();
+                if (typeof done === 'function') done();
+            }, { crossOrigin: 'anonymous' });
+        }
+        function setTool(tool) {
+            currentTool = tool;
+            document.querySelectorAll('#annotateAnswerKeyModal .annotator-tool-btn[data-tool]').forEach(b => {
+                b.classList.toggle('active', b.getAttribute('data-tool') === tool);
+            });
+            canvas.isDrawingMode = false;
+            canvas.selection = false;
+            canvas.defaultCursor = 'crosshair';
+            canvas.hoverCursor = 'crosshair';
+            isDrawingShape = false;
+            canvas.off('mouse:down', onShapeMouseDown);
+            canvas.off('mouse:move', onShapeMouseMove);
+            canvas.off('mouse:up', onShapeMouseUp);
+            canvas.off('mouse:down', onTextClick);
+            if (tool === 'draw') {
+                canvas.isDrawingMode = true;
+                canvas.freeDrawingBrush = new fabric.PencilBrush(canvas);
+                canvas.freeDrawingBrush.color = currentColor;
+                canvas.freeDrawingBrush.width = brushSize;
+                canvas.freeDrawingBrush.globalCompositeOperation = 'source-over';
+                canvas.freeDrawingBrush.opacity = brushOpacity;
+            } else if (tool === 'highlight') {
+                canvas.isDrawingMode = true;
+                canvas.freeDrawingBrush = new fabric.PencilBrush(canvas);
+                canvas.freeDrawingBrush.color = '#fbbf24';
+                canvas.freeDrawingBrush.width = 20;
+                canvas.freeDrawingBrush.globalCompositeOperation = 'multiply';
+                canvas.freeDrawingBrush.opacity = 0.35;
+            } else if (tool === 'eraser') {
+                canvas.isDrawingMode = true;
+                canvas.freeDrawingBrush = new fabric.PencilBrush(canvas);
+                canvas.freeDrawingBrush.color = '#ffffff';
+                canvas.freeDrawingBrush.width = 20;
+                canvas.freeDrawingBrush.globalCompositeOperation = 'source-over';
+            } else if (tool === 'text') {
+                canvas.defaultCursor = 'text';
+                canvas.on('mouse:down', onTextClick);
+            } else if (tool === 'select') {
+                canvas.selection = true;
+                canvas.defaultCursor = 'default';
+                canvas.hoverCursor = 'move';
+                canvas.forEachObject(o => {
+                    if (!o.data || !o.data.isBackground) {
+                        o.selectable = true; o.evented = true; o.hasControls = true; o.hasBorders = true;
+                        o.borderColor = o.cornerColor = '#6c8aff'; o.cornerStyle = 'circle'; o.cornerSize = 8; o.transparentCorners = false; o.padding = 4;
+                    }
+                });
+            } else if (['arrow','rect','circle'].includes(tool)) {
+                canvas.on('mouse:down', onShapeMouseDown);
+                canvas.on('mouse:move', onShapeMouseMove);
+                canvas.on('mouse:up', onShapeMouseUp);
+            }
+            if (tool !== 'select' && tool !== 'text') canvas.forEachObject(o => { o.selectable = false; o.evented = false; });
+            document.getElementById('ak-canvas-area').classList.toggle('drawing', ['draw','highlight','eraser'].includes(tool));
+        }
+        function onTextClick(opt) {
+            if (currentTool !== 'text') return;
+            if (opt.target && opt.target.type === 'i-text' && (!opt.target.data || !opt.target.data.isBackground)) {
+                canvas.setActiveObject(opt.target);
+                opt.target.enterEditing();
+                return;
+            }
+            canvas.off('mouse:down', onTextClick);
+            const p = canvas.getPointer(opt.e);
+            const text = new fabric.IText('Type here...', { left: p.x, top: p.y, fontSize: 16, fontFamily: 'DM Sans, sans-serif', fill: currentColor, editable: true, selectable: true, evented: true, hasControls: true, hasBorders: true, borderColor: '#6c8aff', cornerColor: '#6c8aff', cornerStyle: 'circle', cornerSize: 8, transparentCorners: false, padding: 6 });
+            canvas.add(text);
+            canvas.setActiveObject(text);
+            text.enterEditing();
+            text.selectAll();
+            text.on('editing:exited', () => {
+                if (!text.text || text.text.trim() === '') canvas.remove(text);
+                canvas.renderAll();
+                if (currentTool === 'text') setTimeout(() => canvas.on('mouse:down', onTextClick), 150);
+            });
+        }
+        function onShapeMouseDown(opt) {
+            if (!['arrow','rect','circle'].includes(currentTool)) return;
+            isDrawingShape = true;
+            const p = canvas.getPointer(opt.e);
+            shapeStart = { x: p.x, y: p.y };
+            if (currentTool === 'rect') tempShape = new fabric.Rect({ left: p.x, top: p.y, width: 0, height: 0, fill: 'transparent', stroke: currentColor, strokeWidth: brushSize, selectable: false });
+            else if (currentTool === 'circle') tempShape = new fabric.Ellipse({ left: p.x, top: p.y, rx: 0, ry: 0, fill: 'transparent', stroke: currentColor, strokeWidth: brushSize, selectable: false });
+            else if (currentTool === 'arrow') tempShape = new fabric.Line([p.x, p.y, p.x, p.y], { stroke: currentColor, strokeWidth: brushSize, selectable: false });
+            if (tempShape) canvas.add(tempShape);
+        }
+        function onShapeMouseMove(opt) {
+            if (!isDrawingShape || !tempShape) return;
+            const p = canvas.getPointer(opt.e);
+            if (currentTool === 'rect') { const w = p.x - shapeStart.x, h = p.y - shapeStart.y; tempShape.set({ left: w > 0 ? shapeStart.x : p.x, top: h > 0 ? shapeStart.y : p.y, width: Math.abs(w), height: Math.abs(h) }); }
+            else if (currentTool === 'circle') { const rx = Math.abs(p.x - shapeStart.x) / 2, ry = Math.abs(p.y - shapeStart.y) / 2; tempShape.set({ left: Math.min(shapeStart.x, p.x), top: Math.min(shapeStart.y, p.y), rx, ry }); }
+            else if (currentTool === 'arrow') tempShape.set({ x2: p.x, y2: p.y });
+            canvas.renderAll();
+        }
+        function onShapeMouseUp() {
+            if (!isDrawingShape) return;
+            isDrawingShape = false;
+            if (currentTool === 'arrow' && tempShape) {
+                const [x1, y1, x2, y2] = [tempShape.x1, tempShape.y1, tempShape.x2, tempShape.y2];
+                const angle = Math.atan2(y2 - y1, x2 - x1), headLen = 14;
+                const head = new fabric.Polygon([{ x: x2, y: y2 }, { x: x2 - headLen * Math.cos(angle - Math.PI / 6), y: y2 - headLen * Math.sin(angle - Math.PI / 6) }, { x: x2 - headLen * Math.cos(angle + Math.PI / 6), y: y2 - headLen * Math.sin(angle + Math.PI / 6) }], { fill: currentColor, selectable: false });
+                canvas.add(head);
+            }
+            tempShape = null;
+            canvas.renderAll();
+        }
+        function pushUndo() { undoStack.push(canvas.toJSON(['data'])); if (undoStack.length > 50) undoStack.shift(); }
+        function undoAction() { if (undoStack.length <= 1) return; redoStack.push(undoStack.pop()); canvas.loadFromJSON(undoStack[undoStack.length - 1], () => { canvas.renderAll(); setTool(currentTool); }); }
+        function redoAction() { if (redoStack.length === 0) return; const s = redoStack.pop(); undoStack.push(s); canvas.loadFromJSON(s, () => { canvas.renderAll(); setTool(currentTool); }); }
+        function clearPage() { if (!confirm('Clear all annotations on this page?')) return; const bg = canvas.backgroundImage; canvas.clear(); canvas.setBackgroundImage(bg, canvas.renderAll.bind(canvas)); canvas.renderAll(); pushUndo(); }
+        function updatePageLabel() {
+            document.getElementById('ak-page-label').textContent = `Page ${currentPage + 1} / ${totalPages}`;
+            document.getElementById('ak-prev-page').disabled = currentPage === 0;
+            document.getElementById('ak-next-page').disabled = currentPage >= totalPages - 1;
+        }
+        function changePage(delta) {
+            pageAnnotations[currentPage] = canvas.toJSON(['data']);
+            currentPage = Math.max(0, Math.min(totalPages - 1, currentPage + delta));
+            updatePageLabel();
+            loadPageBackground(currentPage, () => {
+                if (pageAnnotations[currentPage]) canvas.loadFromJSON(pageAnnotations[currentPage], () => { canvas.renderAll(); setTool(currentTool); });
+                else { canvas.getObjects().forEach(o => canvas.remove(o)); canvas.renderAll(); }
+                undoStack = [canvas.toJSON(['data'])]; redoStack = [];
+            });
+        }
+        openBtn.addEventListener('click', () => { const m = new bootstrap.Modal(document.getElementById('annotateAnswerKeyModal')); m.show(); });
+        document.getElementById('annotateAnswerKeyModal').addEventListener('shown.bs.modal', () => {
+            pageAnnotations = {};
+            document.getElementById('ak-canvas-wrap').innerHTML = '<canvas id="answerKeyCanvas"></canvas>';
+            canvas = new fabric.Canvas('answerKeyCanvas', { width: 800, height: 1056, backgroundColor: '#fff', isDrawingMode: true, selection: false });
+            canvas.freeDrawingBrush = new fabric.PencilBrush(canvas);
+            canvas.freeDrawingBrush.color = currentColor;
+            canvas.freeDrawingBrush.width = brushSize;
+            canvas.freeDrawingBrush.opacity = brushOpacity;
+            canvas.on('object:added', () => { pushUndo(); redoStack = []; });
+            const grid = document.getElementById('ak-color-grid');
+            if (grid) {
+                grid.innerHTML = '';
+                COLORS.forEach(c => {
+                    const el = document.createElement('div');
+                    el.className = 'color-swatch' + (c === currentColor ? ' active' : '');
+                    el.style.background = c;
+                    if (c === '#ffffff' || c === '#fff') el.style.border = '2px solid #555';
+                    el.onclick = () => { currentColor = c; grid.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('active')); el.classList.add('active'); document.getElementById('ak-color-dot').style.background = c; if (canvas.freeDrawingBrush) canvas.freeDrawingBrush.color = c; };
+                    grid.appendChild(el);
+                });
+            }
+            document.getElementById('ak-brush-size').oninput = function() { brushSize = parseInt(this.value, 10); document.getElementById('ak-brush-size-val').textContent = brushSize; if (canvas.freeDrawingBrush) canvas.freeDrawingBrush.width = brushSize; };
+            document.getElementById('ak-opacity').oninput = function() { brushOpacity = parseInt(this.value, 10) / 100; document.getElementById('ak-opacity-val').textContent = this.value + '%'; if (canvas.freeDrawingBrush) canvas.freeDrawingBrush.opacity = brushOpacity; };
+            fetch(getPageUrl(0)).then(r => {
+                totalPages = parseInt(r.headers.get('X-PDF-Page-Count') || '1', 10);
+                currentPage = 0;
+                updatePageLabel();
+                loadPageBackground(0, () => {
+                    undoStack = [canvas.toJSON(['data'])]; redoStack = [];
+                    setTool('draw');
+                });
+            }).catch(() => { totalPages = 1; updatePageLabel(); loadPageBackground(0, () => setTool('draw')); });
+        });
+        document.querySelectorAll('#annotateAnswerKeyModal .annotator-tool-btn[data-tool]').forEach(btn => btn.addEventListener('click', () => setTool(btn.getAttribute('data-tool'))));
+        document.getElementById('ak-prev-page').addEventListener('click', () => changePage(-1));
+        document.getElementById('ak-next-page').addEventListener('click', () => changePage(1));
+        document.getElementById('ak-undo').addEventListener('click', undoAction);
+        document.getElementById('ak-redo').addEventListener('click', redoAction);
+        document.getElementById('ak-clear-page').addEventListener('click', clearPage);
+        document.getElementById('ak-save-close').addEventListener('click', function() {
+            pageAnnotations[currentPage] = canvas.toJSON(['data']);
+            const btn = this;
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Saving...';
+            const pageImages = {};
+            function collectPage(i) {
+                if (i >= totalPages) return Promise.resolve(pageImages);
+                return new Promise(resolve => {
+                    loadPageBackground(i, () => {
+                        const d = pageAnnotations[i] || pageAnnotations[String(i)];
+                        if (d) canvas.loadFromJSON(d, () => { pageImages[i] = canvas.toDataURL({ format: 'png', quality: 1 }); canvas.renderAll(); resolve(collectPage(i + 1)); });
+                        else { canvas.getObjects().forEach(o => canvas.remove(o)); canvas.renderAll(); pageImages[i] = canvas.toDataURL({ format: 'png', quality: 1 }); resolve(collectPage(i + 1)); }
+                    });
+                });
+            }
+            collectPage(0).then(images => fetch(`/teacher/review/${submissionId}/save-annotated-answer-key`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ page_images: images }) }).then(r => r.json()))
+                .then(result => {
+                    if (result && result.success) {
+                        showToast('Success', 'Annotated answer key saved. Student can download it from their submission view.');
+                        bootstrap.Modal.getInstance(document.getElementById('annotateAnswerKeyModal')).hide();
+                    } else throw new Error(result && result.error || 'Save failed');
+                })
+                .catch(err => showToast('Error', err.message || 'Save failed'))
+                .finally(() => { btn.disabled = false; btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Save & Close'; });
+        });
+        document.addEventListener('keydown', e => {
+            if (!canvas || ['INPUT','TEXTAREA'].includes(e.target.tagName)) return;
+            const active = canvas.getActiveObject();
+            if (active && active.isEditing) return;
+            if (e.key === 'd' || e.key === 'D') setTool('draw');
+            else if (e.key === 'h' || e.key === 'H') setTool('highlight');
+            else if (e.key === 'e' || e.key === 'E') setTool('eraser');
+            else if (e.key === 't' || e.key === 'T') setTool('text');
+            else if (e.key === 'a' || e.key === 'A') setTool('arrow');
+            else if (e.key === 'r' || e.key === 'R') setTool('rect');
+            else if (e.key === 'c' || e.key === 'C') setTool('circle');
+            else if (e.key === 'v' || e.key === 'V') setTool('select');
+            else if ((e.key === 'z' || e.key === 'Z') && (e.ctrlKey || e.metaKey)) { e.preventDefault(); undoAction(); }
+            else if ((e.key === 'y' || e.key === 'Y') && (e.ctrlKey || e.metaKey)) { e.preventDefault(); redoAction(); }
+            else if (e.key === 'Delete' || (e.key === 'Backspace' && currentTool === 'select')) {
+                if (active && !active.isEditing && (!active.data || !active.data.isBackground)) {
+                    if (active.type === 'activeSelection') { active.forEachObject(obj => { if (!obj.data || !obj.data.isBackground) canvas.remove(obj); }); canvas.discardActiveObject(); }
+                    else canvas.remove(active);
+                    canvas.renderAll(); pushUndo();
+                }
+            }
+        });
+    })();
 </script>
 {% endblock %}
