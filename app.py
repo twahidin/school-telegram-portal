@@ -825,6 +825,7 @@ def get_question_help_api():
         question_image = data.get('question_image')  # Base64 encoded image
         answer_image = data.get('answer_image')  # Base64 encoded image
         help_type = data.get('help_type', 'stuck')
+        image_only = data.get('image_only', False)  # When True, focus prompt on image content only
         
         # Check if at least question text or image is provided
         if not question_text and not question_image:
@@ -873,7 +874,8 @@ def get_question_help_api():
             teacher=teacher,
             db_instance=db,
             question_image=question_image,
-            answer_image=answer_image
+            answer_image=answer_image,
+            image_only=image_only
         )
         
         # Increment usage count on success

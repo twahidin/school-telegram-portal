@@ -203,6 +203,14 @@
     // Update notification button state
     updateNotificationButton();
     
+    // Pre-fill message from URL (e.g. from "Ask Teacher for Help" on assignment view)
+    const params = new URLSearchParams(window.location.search);
+    const prefill = params.get('prefill');
+    if (prefill) {
+        const input = document.getElementById('message-input');
+        if (input) input.value = prefill;
+    }
+    
     // Initialize chat
     initChat(teacherId, lastMessageTime);
 </script>

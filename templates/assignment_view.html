@@ -378,6 +378,10 @@
             </div>
         </div>
         <div class="col-md-4">
+            {% set teacher_help_prefill = 'Dear Sir/Mdm, I need assistance on this assignment (' ~ assignment.title ~ ') on this particular question ____. I would like you to help me on _________________. Thank you' %}
+            {% if teacher %}
+            <a href="{{ url_for('chat', teacher_id=teacher.teacher_id) }}?prefill={{ teacher_help_prefill | urlencode }}" class="text-decoration-none text-dark d-block h-100">
+            {% endif %}
             <div class="card h-100 border-warning action-box-card" id="ask-teacher-box" style="cursor: pointer;">
                 <div class="card-body text-center py-4">
                     <i class="bi bi-person-raised-hand text-warning" style="font-size: 2.5rem;"></i>
@@ -385,6 +389,9 @@
                     <p class="text-muted small mb-0">Request help from your teacher</p>
                 </div>
             </div>
+            {% if teacher %}
+            </a>
+            {% endif %}
         </div>
     </div>
     
@@ -722,13 +729,50 @@
                 <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
-                <p class="text-muted small mb-3">Get AI assistance for one question at a time. Type or upload a photo of your question and answer.</p>
+                <p class="text-muted small mb-3">Get AI assistance for one question at a time. Type, upload a photo, or capture a region from the question paper.</p>
                 <div class="mb-3">
                     <label class="form-label fw-semibold">Question</label>
                     <textarea class="form-control mb-2" id="modal-help-question" rows="3" placeholder="Type or paste the question you need help with..."></textarea>
-                    <div class="d-flex align-items-center gap-2">
+                    <div class="d-flex align-items-center gap-2 flex-wrap mb-2">
                         <label class="btn btn-sm btn-outline-secondary mb-0" for="modal-question-image-input"><i class="bi bi-camera me-1"></i>Upload Photo</label>
                         <input type="file" id="modal-question-image-input" accept="image/*" class="d-none">
+                        {% if assignment.question_paper_id or assignment.get('drive_file_refs', {}).get('question_paper_drive_id') %}
+                        <button type="button" class="btn btn-sm btn-outline-primary mb-0" id="btn-capture-from-pdf" title="Select a region from the question paper PDF">
+                            <i class="bi bi-crop me-1"></i>Capture from PDF
+                        </button>
+                        {% endif %}
+                    </div>
+                    <div id="modal-help-question-preview" class="mt-2" style="display: none;">
+                        <small class="text-muted">Question image:</small>
+                        <div class="d-flex align-items-center gap-2 mt-1">
+                            <img id="modal-help-question-preview-img" src="" alt="Preview" style="max-height: 80px; max-width: 150px; border: 1px solid #dee2e6; border-radius: 4px;">
+                            <button type="button" class="btn btn-sm btn-outline-danger" onclick="clearModalQuestionImage()">Clear</button>
+                        </div>
+                    </div>
+                    <!-- Capture from PDF panel (collapsible) -->
+                    <div id="capture-from-pdf-panel" class="mt-3 border rounded p-3 bg-light" style="display: none;">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <label class="form-label fw-bold mb-0">Select region from question paper</label>
+                            <div class="d-flex align-items-center gap-2">
+                                <div class="btn-group btn-group-sm">
+                                    <button type="button" class="btn btn-outline-secondary" id="capture-prev-page"><i class="bi bi-chevron-left"></i></button>
+                                    <span class="btn btn-outline-secondary disabled" id="capture-page-indicator">Page 1/1</span>
+                                    <button type="button" class="btn btn-outline-secondary" id="capture-next-page"><i class="bi bi-chevron-right"></i></button>
+                                </div>
+                                <button type="button" class="btn btn-outline-warning btn-sm" id="capture-clear-btn"><i class="bi bi-x-circle me-1"></i>Clear</button>
+                                <button type="button" class="btn btn-secondary btn-sm" id="capture-close-btn">Close</button>
+                            </div>
+                        </div>
+                        <div class="position-relative border rounded bg-dark" style="overflow: auto; max-height: 50vh; cursor: crosshair;" id="capture-image-container">
+                            <canvas id="capture-canvas" style="display: block; max-width: 100%;"></canvas>
+                            <div id="capture-selection-overlay" class="position-absolute border border-2 border-primary" style="display: none; pointer-events: none; box-shadow: 0 0 0 9999px rgba(0,0,0,0.4);"></div>
+                        </div>
+                        <small class="text-muted d-block mt-1"><i class="bi bi-info-circle me-1"></i>Click and drag to select a region. The AI will focus on this area only.</small>
+                        <div id="capture-preview-wrap" class="mt-2" style="display: none;">
+                            <small class="text-muted">Selected region:</small>
+                            <div class="mt-1"><img id="capture-crop-preview" src="" alt="Selected" style="max-height: 120px; max-width: 200px; border: 1px solid #dee2e6; border-radius: 4px;"></div>
+                            <button type="button" class="btn btn-sm btn-primary mt-2" id="capture-use-btn"><i class="bi bi-check-lg me-1"></i>Use this capture</button>
+                        </div>
                     </div>
                 </div>
                 <div class="mb-3">
@@ -880,11 +924,16 @@
         }
         if (askAiBox) {
             askAiBox.addEventListener('click', () => {
-                const modal = new bootstrap.Modal(document.getElementById('askAiModal'));
+                const modalEl = document.getElementById('askAiModal');
+                const modal = new bootstrap.Modal(modalEl);
                 modal.show();
+                modalEl.addEventListener('shown.bs.modal', function onShown() {
+                    modalEl.removeEventListener('shown.bs.modal', onShown);
+                    if (typeof updateModalQuestionPreview === 'function') updateModalQuestionPreview();
+                }, { once: true });
             });
         }
-        if (askTeacherBox) {
+        if (askTeacherBox && !askTeacherBox.closest('a')) {
             askTeacherBox.addEventListener('click', () => {
                 const modal = new bootstrap.Modal(document.getElementById('askTeacherModal'));
                 modal.show();
@@ -1221,26 +1270,196 @@
     // === ASK AI FROM MODAL ===
     let modalQuestionImageData = null;
     let modalAnswerImageData = null;
+    let modalQuestionImageFromCapture = false;
     document.addEventListener('DOMContentLoaded', function() {
         const qImg = document.getElementById('modal-question-image-input');
         const aImg = document.getElementById('modal-answer-image-input');
         if (qImg) qImg.onchange = function() {
             const f = this.files?.[0];
-            if (f) { const r = new FileReader(); r.onload = e => modalQuestionImageData = e.target.result; r.readAsDataURL(f); }
+            if (f) {
+                const r = new FileReader();
+                r.onload = e => { modalQuestionImageData = e.target.result; modalQuestionImageFromCapture = false; updateModalQuestionPreview(); };
+                r.readAsDataURL(f);
+            }
         };
         if (aImg) aImg.onchange = function() {
             const f = this.files?.[0];
             if (f) { const r = new FileReader(); r.onload = e => modalAnswerImageData = e.target.result; r.readAsDataURL(f); }
         };
     });
+    function updateModalQuestionPreview() {
+        const wrap = document.getElementById('modal-help-question-preview');
+        const img = document.getElementById('modal-help-question-preview-img');
+        if (wrap && img) {
+            if (modalQuestionImageData) { img.src = modalQuestionImageData; wrap.style.display = 'block'; }
+            else { wrap.style.display = 'none'; img.src = ''; }
+        }
+    }
+    function clearModalQuestionImage() {
+        modalQuestionImageData = null;
+        modalQuestionImageFromCapture = false;
+        updateModalQuestionPreview();
+        const qInput = document.getElementById('modal-question-image-input');
+        if (qInput) qInput.value = '';
+    }
+    // === CAPTURE FROM PDF (for Ask AI) ===
+    {% if assignment.question_paper_id or assignment.get('drive_file_refs', {}).get('question_paper_drive_id') %}
+    (function() {
+        var capturePage = 0, captureTotalPages = 1, captureImage = null, captureRect = null;
+        var captureSelecting = false, captureStartX = 0, captureStartY = 0;
+        var assignmentId = '{{ assignment.assignment_id }}';
+        function getCapturePageUrl(n) { return '/student/assignment/' + assignmentId + '/question-paper-page/' + n; }
+        function loadCapturePage(pageIdx) {
+            capturePage = pageIdx;
+            var canvas = document.getElementById('capture-canvas');
+            var ctx = canvas && canvas.getContext('2d');
+            captureRect = null;
+            document.getElementById('capture-preview-wrap').style.display = 'none';
+            if (!canvas || !ctx) return;
+            canvas.width = 400; canvas.height = 100;
+            ctx.fillStyle = '#333'; ctx.font = '14px sans-serif';
+            ctx.fillText('Loading page...', 150, 55);
+            fetch(getCapturePageUrl(pageIdx)).then(function(r) {
+                var p = r.headers.get('X-PDF-Page-Count');
+                if (p) captureTotalPages = parseInt(p, 10);
+                var indicator = document.getElementById('capture-page-indicator');
+                if (indicator) indicator.textContent = 'Page ' + (capturePage + 1) + '/' + captureTotalPages;
+                var prev = document.getElementById('capture-prev-page'), next = document.getElementById('capture-next-page');
+                if (prev) prev.disabled = capturePage === 0;
+                if (next) next.disabled = capturePage >= captureTotalPages - 1;
+                return r.blob();
+            }).then(function(blob) {
+                var url = URL.createObjectURL(blob);
+                var img = new Image();
+                img.onload = function() {
+                    captureImage = img;
+                    canvas.width = img.naturalWidth;
+                    canvas.height = img.naturalHeight;
+                    canvas.style.width = '100%';
+                    canvas.style.height = 'auto';
+                    ctx.drawImage(img, 0, 0);
+                    URL.revokeObjectURL(url);
+                };
+                img.onerror = function() {
+                    canvas.width = 400; canvas.height = 100;
+                    ctx.fillStyle = '#c00';
+                    ctx.fillText('Failed to load page.', 100, 55);
+                    URL.revokeObjectURL(url);
+                };
+                img.src = url;
+            }).catch(function() {
+                canvas.width = 400; canvas.height = 100;
+                ctx.fillStyle = '#c00';
+                ctx.fillText('Failed to load page.', 100, 55);
+            });
+        }
+        function getCaptureCoords(e) {
+            var canvas = document.getElementById('capture-canvas');
+            var container = document.getElementById('capture-image-container');
+            if (!canvas || !container) return { x: 0, y: 0 };
+            var rect = canvas.getBoundingClientRect();
+            var scaleX = canvas.width / rect.width;
+            var scaleY = canvas.height / rect.height;
+            return { x: (e.clientX - rect.left) * scaleX, y: (e.clientY - rect.top + container.scrollTop) * scaleY };
+        }
+        function clearCaptureSelection() {
+            captureRect = null;
+            document.getElementById('capture-preview-wrap').style.display = 'none';
+            if (captureImage) {
+                var canvas = document.getElementById('capture-canvas');
+                var ctx = canvas && canvas.getContext('2d');
+                if (ctx) ctx.drawImage(captureImage, 0, 0);
+            }
+        }
+        function updateCaptureCropPreview() {
+            if (!captureRect || !captureImage) return;
+            var c = document.createElement('canvas');
+            c.width = captureRect.w; c.height = captureRect.h;
+            var ctx = c.getContext('2d');
+            ctx.drawImage(captureImage, captureRect.x, captureRect.y, captureRect.w, captureRect.h, 0, 0, captureRect.w, captureRect.h);
+            document.getElementById('capture-crop-preview').src = c.toDataURL('image/jpeg', 0.9);
+            document.getElementById('capture-preview-wrap').style.display = 'block';
+        }
+        function getCaptureCroppedDataUrl() {
+            if (!captureRect || !captureImage) return null;
+            var c = document.createElement('canvas');
+            c.width = captureRect.w; c.height = captureRect.h;
+            var ctx = c.getContext('2d');
+            ctx.drawImage(captureImage, captureRect.x, captureRect.y, captureRect.w, captureRect.h, 0, 0, captureRect.w, captureRect.h);
+            return c.toDataURL('image/jpeg', 0.9);
+        }
+        var btnCapture = document.getElementById('btn-capture-from-pdf');
+        var panel = document.getElementById('capture-from-pdf-panel');
+        if (btnCapture && panel) {
+            btnCapture.addEventListener('click', function() {
+                panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+                if (panel.style.display === 'block') loadCapturePage(0);
+            });
+        }
+        document.getElementById('capture-prev-page')?.addEventListener('click', function() { if (capturePage > 0) loadCapturePage(capturePage - 1); });
+        document.getElementById('capture-next-page')?.addEventListener('click', function() { if (capturePage < captureTotalPages - 1) loadCapturePage(capturePage + 1); });
+        document.getElementById('capture-clear-btn')?.addEventListener('click', clearCaptureSelection);
+        document.getElementById('capture-close-btn')?.addEventListener('click', function() { if (panel) panel.style.display = 'none'; });
+        document.getElementById('capture-use-btn')?.addEventListener('click', function() {
+            var data = getCaptureCroppedDataUrl();
+            if (data) {
+                modalQuestionImageData = data;
+                modalQuestionImageFromCapture = true;
+                updateModalQuestionPreview();
+                if (panel) panel.style.display = 'none';
+            }
+        });
+        var canvas = document.getElementById('capture-canvas');
+        var container = document.getElementById('capture-image-container');
+        if (canvas && container) {
+            canvas.addEventListener('mousedown', function(e) {
+                if (!captureImage) return;
+                captureSelecting = true;
+                var co = getCaptureCoords(e);
+                captureStartX = co.x; captureStartY = co.y;
+                captureRect = null;
+            });
+            canvas.addEventListener('mousemove', function(e) {
+                if (!captureSelecting || !captureImage) return;
+                var co = getCaptureCoords(e);
+                var ctx = canvas.getContext('2d');
+                ctx.drawImage(captureImage, 0, 0);
+                var x = Math.min(captureStartX, co.x), y = Math.min(captureStartY, co.y);
+                var w = Math.abs(co.x - captureStartX), h = Math.abs(co.y - captureStartY);
+                ctx.fillStyle = 'rgba(0,0,0,0.4)';
+                ctx.fillRect(0, 0, canvas.width, y);
+                ctx.fillRect(0, y, x, h);
+                ctx.fillRect(x + w, y, canvas.width - x - w, h);
+                ctx.fillRect(0, y + h, canvas.width, canvas.height - y - h);
+                ctx.strokeStyle = '#0d6efd';
+                ctx.lineWidth = 3;
+                ctx.strokeRect(x, y, w, h);
+            });
+            canvas.addEventListener('mouseup', function(e) {
+                if (!captureSelecting || !captureImage) return;
+                captureSelecting = false;
+                var co = getCaptureCoords(e);
+                var x = Math.min(captureStartX, co.x), y = Math.min(captureStartY, co.y);
+                var w = Math.abs(co.x - captureStartX), h = Math.abs(co.y - captureStartY);
+                if (w < 10 || h < 10) { clearCaptureSelection(); return; }
+                captureRect = { x, y, w, h };
+                updateCaptureCropPreview();
+            });
+            canvas.addEventListener('mouseleave', function() {
+                if (captureSelecting) { captureSelecting = false; if (!captureRect && captureImage) { var ctx = canvas.getContext('2d'); ctx.drawImage(captureImage, 0, 0); } }
+            });
+        }
+    })();
+    {% endif %}
     async function askForHelpFromModal(helpType) {
         const question = document.getElementById('modal-help-question')?.value?.trim() || '';
         const answer = document.getElementById('modal-help-answer')?.value?.trim() || '';
         const hasQuestion = question || modalQuestionImageData;
         if (!hasQuestion) {
-            alert('Please enter the question text or upload a photo of the question.');
+            alert('Please enter the question text, upload a photo, or capture a region from the question paper.');
             return;
         }
+        const imageOnly = !!modalQuestionImageData && !question;
         const helpContent = document.getElementById('modal-help-content');
         const helpResult = document.getElementById('modal-help-result');
         if (helpContent) helpContent.innerHTML = '<div class="text-center py-3"><div class="spinner-border text-info"></div><p class="mb-0 mt-2">AI is analyzing...</p></div>';
@@ -1255,7 +1474,8 @@
                     question, answer,
                     question_image: modalQuestionImageData,
                     answer_image: modalAnswerImageData,
-                    help_type: helpType
+                    help_type: helpType,
+                    image_only: imageOnly
                 })
             });
             const result = await res.json();

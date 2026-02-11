@@ -1220,7 +1220,7 @@ def save_ai_prompts(db_instance, prompts: dict) -> bool:
         logger.error(f"Error saving prompts: {e}")
         return False
 
-def get_question_help(question: str, student_answer: str, help_type: str, assignment: dict, teacher: dict = None, db_instance=None, question_image: str = None, answer_image: str = None) -> dict:
+def get_question_help(question: str, student_answer: str, help_type: str, assignment: dict, teacher: dict = None, db_instance=None, question_image: str = None, answer_image: str = None, image_only: bool = False) -> dict:
     """
     Get AI help for a specific question.
     
@@ -1280,6 +1280,8 @@ def get_question_help(question: str, student_answer: str, help_type: str, assign
             student_answer=student_answer or 'Not provided in text',
             answer_context=answer_context
         )
+        if image_only and question_image:
+            user_text = "IMPORTANT: The student has captured a region from the question paper. Base your response ONLY on what appears in the image below - do not assume any other context. " + user_text
         
         # Build message content with images if provided
         content_parts = []
@@ -1294,9 +1296,10 @@ def get_question_help(question: str, student_answer: str, help_type: str, assign
                 image_data = question_image
                 media_type = 'image/jpeg'
             
+            image_label = "QUESTION IMAGE (focus on this only - analyze solely what appears in the image):" if image_only else "QUESTION IMAGE:"
             content_parts.append({
                 "type": "text",
-                "text": "QUESTION IMAGE:"
+                "text": image_label
             })
             content_parts.append({
                 "type": "image",
